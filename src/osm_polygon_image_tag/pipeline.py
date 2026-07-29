@@ -172,3 +172,12 @@ def build_one(
         accepted_rows=accepted_rows,
         rejections=counts.rejections,
     )
+
+
+def verify_one(source: PbfSource, paths: PipelinePaths) -> bool:
+    output_path, manifest_path = artifact_paths(source, paths.data_root)
+    current_source = source_identity(
+        source.absolute_path,
+        relative_path=source.relative_path.as_posix(),
+    )
+    return _is_reusable(manifest_path, output_path, current_source=current_source) is not None
