@@ -6,7 +6,7 @@
 
 **Architecture:** A packaged, versioned `osmium export` configuration selects polygon geometry only and emits PostgreSQL COPY records. A bounded subprocess adapter parses immutable `ExportRecord` values without shell execution, and a pure target-tag predicate keeps only objects whose own tag map contains one of the six approved keys.
 
-**Tech Stack:** Python 3.12 standard library, osmium-tool PostgreSQL COPY export, pytest, Ruff, and mypy.
+**Tech Stack:** Python 3.12, Pyosmium 4.x, osmium-tool PostgreSQL COPY export, pytest, Ruff, and mypy.
 
 ---
 
@@ -147,6 +147,11 @@ def has_target_tag(tags: Mapping[str, str]) -> bool:
   XML to PBF, streams the PBF through the packaged policy, filters with
   `has_target_tag`, and asserts the exact `(osm_type, osm_id)` inclusion set and
   exact full tag maps.
+- [ ] Preserve source tags through a bounded Pyosmium callback scan keyed by
+  `(osm_type, osm_id)`, then replace the assembled area's exported tag map with
+  the source tag map. This is required because area assembly removes structural
+  relation tags and configured export attributes can collide with arbitrary OSM
+  tag keys. The scan must retain no Pyosmium object beyond its callback.
 - [ ] Mark the test `integration`; fail rather than skip when `osmium` is absent,
   because production readiness requires the executable.
 - [ ] Run the integration test and observe RED before fixture/policy correction.

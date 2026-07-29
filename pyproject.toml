@@ -17,7 +17,9 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Typing :: Typed",
 ]
-dependencies = []
+dependencies = [
+    "osmium>=4.3,<5",
+]
 
 [project.scripts]
 osm-polygon-image-tag = "osm_polygon_image_tag.cli:run"
@@ -46,6 +48,7 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers --cov=osm_polygon_image_tag --cov-report=term-missing"
+markers = ["integration: requires the real osmium executable"]
 
 [tool.ruff]
 line-length = 100
@@ -64,6 +67,10 @@ line-ending = "lf"
 python_version = "3.12"
 strict = true
 packages = ["osm_polygon_image_tag"]
+
+[[tool.mypy.overrides]]
+module = ["osmium.*"]
+ignore_missing_imports = true
 
 [tool.coverage.run]
 branch = true

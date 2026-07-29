@@ -1,10 +1,12 @@
 import json
 import subprocess
 import threading
-from collections.abc import Generator, Iterable, Iterator, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, BinaryIO
+
+import osmium
 
 from osm_polygon_image_tag.errors import ImageTagPipelineError
 
@@ -37,6 +39,13 @@ class ExportRecord:
     version: int | None
     changeset: int | None
     timestamp: str | None
+    tags: dict[str, str]
+
+
+@dataclass(frozen=True, slots=True)
+class SourceTagRecord:
+    osm_type: str
+    osm_id: int
     tags: dict[str, str]
 
 
@@ -162,6 +171,48 @@ def iter_records(lines: Iterable[bytes]) -> Iterator[ExportRecord]:
 
 def has_target_tag(tags: Mapping[str, str]) -> bool:
     return any(key in tags for key in TARGET_TAG_KEYS)
+
+
+class _SourceTagHandler(osmium.SimpleHandler):
+    def __init__(self, emit: Callable[[SourceTagRecord], None]) -> None:
+        super().__init__()
+        self._emit = emit
+
+    def _handle(self, osm_type: str, osm_object: Any) -> None:
+        tags = dict(osm_object.tags)
+        if has_target_tag(tags):
+            self._emit(
+                SourceTagRecord(
+                    osm_type=osm_type,
+                    osm_id=int(osm_object.id),
+                    tags=tags,
+                )
+            )
+
+    def way(self, way: Any) -> None:
+        self._handle("way", way)
+
+    def relation(self, relation: Any) -> None:
+        self._handle("relation", relation)
+
+
+def scan_target_source_tags(
+    pbf_path: Path,
+    *,
+    emit: Callable[[SourceTagRecord], None],
+) -> None:
+    _SourceTagHandler(emit).apply_file(str(pbf_path), locations=False)
+
+
+def restore_original_tags(
+    records: Iterable[ExportRecord],
+    *,
+    lookup: Callable[[str, int], Mapping[str, str] | None],
+) -> Iterator[ExportRecord]:
+    for record in records:
+        tags = lookup(record.osm_type, record.osm_id)
+        if tags is not None:
+            yield replace(record, tags=dict(tags))
 
 
 def _drain_stderr(stream: BinaryIO, retained: _BoundedBytes) -> None:

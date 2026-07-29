@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="osm-polygon-image-tag-tests">
+  <node id="1" lat="0.0000" lon="0.0000" version="1">
+    <tag k="image" v="node-is-not-an-area.jpg"/>
+  </node>
+  <node id="2" lat="0.0000" lon="0.0010" version="1"/>
+  <node id="3" lat="0.0010" lon="0.0010" version="1"/>
+
+  <node id="10" lat="1.0000" lon="1.0000" version="1"/>
+  <node id="11" lat="1.0000" lon="1.0010" version="1"/>
+  <node id="12" lat="1.0010" lon="1.0010" version="1"/>
+  <node id="13" lat="1.0010" lon="1.0000" version="1"/>
+
+  <node id="20" lat="2.0000" lon="2.0000" version="1"/>
+  <node id="21" lat="2.0000" lon="2.0010" version="1"/>
+  <node id="22" lat="2.0010" lon="2.0010" version="1"/>
+  <node id="23" lat="2.0010" lon="2.0000" version="1"/>
+
+  <node id="30" lat="3.0000" lon="3.0000" version="1"/>
+  <node id="31" lat="3.0000" lon="3.0010" version="1"/>
+  <node id="32" lat="3.0010" lon="3.0010" version="1"/>
+  <node id="33" lat="3.0010" lon="3.0000" version="1"/>
+
+  <node id="40" lat="4.0000" lon="4.0000" version="1"/>
+  <node id="41" lat="4.0000" lon="4.0010" version="1"/>
+  <node id="42" lat="4.0010" lon="4.0010" version="1"/>
+  <node id="43" lat="4.0010" lon="4.0000" version="1"/>
+
+  <node id="50" lat="5.0000" lon="5.0000" version="1"/>
+  <node id="51" lat="5.0000" lon="5.0010" version="1"/>
+  <node id="52" lat="5.0010" lon="5.0010" version="1"/>
+  <node id="53" lat="5.0010" lon="5.0000" version="1"/>
+
+  <node id="60" lat="6.0000" lon="6.0000" version="1"/>
+  <node id="61" lat="6.0000" lon="6.0010" version="1"/>
+  <node id="62" lat="6.0010" lon="6.0010" version="1"/>
+  <node id="63" lat="6.0010" lon="6.0000" version="1"/>
+
+  <node id="70" lat="7.0000" lon="7.0000" version="1"/>
+  <node id="71" lat="7.0000" lon="7.0010" version="1"/>
+  <node id="72" lat="7.0010" lon="7.0010" version="1"/>
+  <node id="73" lat="7.0010" lon="7.0000" version="1"/>
+
+  <node id="80" lat="8.0000" lon="8.0000" version="1"/>
+  <node id="81" lat="8.0000" lon="8.0010" version="1"/>
+  <node id="82" lat="8.0010" lon="8.0010" version="1"/>
+  <node id="83" lat="8.0010" lon="8.0000" version="1"/>
+
+  <node id="90" lat="9.0000" lon="9.0000" version="1"/>
+  <node id="91" lat="9.0000" lon="9.0010" version="1"/>
+  <node id="92" lat="9.0010" lon="9.0010" version="1"/>
+  <node id="93" lat="9.0010" lon="9.0000" version="1"/>
+
+  <node id="100" lat="10.0000" lon="10.0000" version="1"/>
+  <node id="101" lat="10.0000" lon="10.0010" version="1"/>
+  <node id="102" lat="10.0010" lon="10.0010" version="1"/>
+  <node id="103" lat="10.0010" lon="10.0000" version="1"/>
+
+  <way id="1000" version="1">
+    <nd ref="1"/><nd ref="2"/><nd ref="3"/>
+    <tag k="image" v="open-way.jpg"/>
+  </way>
+  <way id="1001" version="1">
+    <nd ref="10"/><nd ref="11"/><nd ref="12"/><nd ref="13"/><nd ref="10"/>
+    <tag k="building" v="yes"/><tag k="name" v="No image reference"/>
+  </way>
+  <way id="1100" version="1">
+    <nd ref="20"/><nd ref="21"/><nd ref="22"/><nd ref="23"/><nd ref="20"/>
+    <tag k="building" v="yes"/><tag k="image" v="File:Exact View.jpg"/>
+    <tag k="name" v="Image building"/>
+  </way>
+  <way id="1101" version="1">
+    <nd ref="30"/><nd ref="31"/><nd ref="32"/><nd ref="33"/><nd ref="30"/>
+    <tag k="landuse" v="grass"/><tag k="wikimedia_commons" v="Category:Exact"/>
+  </way>
+  <way id="1102" version="1">
+    <nd ref="40"/><nd ref="41"/><nd ref="42"/><nd ref="43"/><nd ref="40"/>
+    <tag k="building" v="yes"/><tag k="mapillary" v="mapillary-key"/>
+  </way>
+  <way id="1103" version="1">
+    <nd ref="50"/><nd ref="51"/><nd ref="52"/><nd ref="53"/><nd ref="50"/>
+    <tag k="building" v="yes"/><tag k="panoramax" v="panoramax-id"/>
+  </way>
+  <way id="1104" version="1">
+    <nd ref="60"/><nd ref="61"/><nd ref="62"/><nd ref="63"/><nd ref="60"/>
+    <tag k="building" v="yes"/><tag k="kartaview" v="kartaview-id"/>
+  </way>
+  <way id="1105" version="1">
+    <nd ref="70"/><nd ref="71"/><nd ref="72"/><nd ref="73"/><nd ref="70"/>
+    <tag k="building" v="yes"/><tag k="flickr" v="flickr-id"/>
+  </way>
+  <way id="1106" version="1">
+    <nd ref="80"/><nd ref="81"/><nd ref="82"/><nd ref="83"/><nd ref="80"/>
+    <tag k="building" v="yes"/><tag k="area" v="no"/><tag k="image" v="excluded.jpg"/>
+  </way>
+  <way id="1200" version="1">
+    <nd ref="90"/><nd ref="91"/><nd ref="92"/><nd ref="93"/><nd ref="90"/>
+  </way>
+  <way id="1201" version="1">
+    <nd ref="100"/><nd ref="101"/><nd ref="102"/><nd ref="103"/><nd ref="100"/>
+  </way>
+
+  <relation id="2000" version="1">
+    <member type="way" ref="1200" role="outer"/>
+    <tag k="type" v="multipolygon"/>
+    <tag k="wikimedia_commons" v="Category:Relation"/>
+    <tag k="name" v="Relation area"/>
+  </relation>
+  <relation id="2001" version="1">
+    <member type="way" ref="1201" role="outer"/>
+    <tag k="type" v="boundary"/>
+    <tag k="boundary" v="protected_area"/>
+    <tag k="flickr" v="boundary-photo"/>
+  </relation>
+</osm>
