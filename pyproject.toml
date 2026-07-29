@@ -19,6 +19,9 @@ classifiers = [
 ]
 dependencies = [
     "osmium>=4.3,<5",
+    "pyarrow>=21,<22",
+    "pyproj>=3.7,<4",
+    "shapely>=2.1,<3",
 ]
 
 [project.scripts]
