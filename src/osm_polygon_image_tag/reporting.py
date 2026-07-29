@@ -147,7 +147,7 @@ Provider observations:
 Rows include OSM type/ID/version/changeset/timestamp, source PBF identity, full
 OGC:CRS84 WKB geometry, geodesic `area_m2`, bounds, every original OSM tag, and
 the exact raw `image`, `wikimedia_commons`, `mapillary`, `panoramax`,
-`kartaview`, and `flickr` values.
+`panoramax_values`, `kartaview`, `flickr`, and `bubbleid` values.
 
 ## Provenance and license
 

@@ -14,6 +14,7 @@ from osm_polygon_image_tag.resources import osmium_export_config
 
 FIXTURE = Path("tests/fixtures/image_tag_coverage.osm")
 EXPECTED = {
+    ("way", 1001),
     ("way", 1100),
     ("way", 1101),
     ("way", 1102),
@@ -59,6 +60,9 @@ def test_real_osmium_emits_exact_image_tag_area_set_and_all_tags(tmp_path: Path)
         "image": "File:Exact View.jpg",
         "name": "Image building",
     }
+    assert by_identity[("way", 1001)]["panoramax:0"] == "panoramax-first"
+    assert by_identity[("way", 1001)]["panoramax:2"] == "panoramax-third"
+    assert by_identity[("way", 1001)]["bubbleid"] == "bing-streetside-id"
     assert by_identity[("relation", 2000)] == {
         "type": "multipolygon",
         "wikimedia_commons": "Category:Relation",
@@ -71,7 +75,6 @@ def test_real_osmium_emits_exact_image_tag_area_set_and_all_tags(tmp_path: Path)
         "image": "excluded.jpg",
     }
     assert ("way", 1000) not in by_identity
-    assert ("way", 1001) not in by_identity
     assert ("way", 1106) not in by_identity
     assert ("way", 1200) not in by_identity
     assert ("way", 1201) not in by_identity

@@ -36,7 +36,7 @@ def test_real_pipeline_second_run_reuses_identical_verified_shard(tmp_path: Path
     second = build_one(source, paths, batch_size=3)
 
     assert first.status == "built"
-    assert first.accepted_rows == 8
+    assert first.accepted_rows == 9
     assert second.status == "skipped"
     assert second.output_path.read_bytes() == first_output
     assert second.manifest_path.read_bytes() == first_manifest

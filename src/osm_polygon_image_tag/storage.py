@@ -29,7 +29,7 @@ def _schema_matches(actual: pa.Schema, expected: pa.Schema) -> bool:
     for actual_field, expected_field in zip(actual, expected, strict=True):
         if actual_field.nullable != expected_field.nullable:
             return False
-        if expected_field.name == "tags":
+        if expected_field.name in {"tags", "panoramax_values"}:
             if not (
                 pa.types.is_map(actual_field.type)
                 and actual_field.type.key_type == pa.string()

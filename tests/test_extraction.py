@@ -7,6 +7,7 @@ from osm_polygon_image_tag.extraction import (
     ExportRecord,
     export_command,
     has_target_tag,
+    is_target_tag_key,
     iter_records,
     parse_copy_record,
 )
@@ -99,10 +100,22 @@ def test_export_record_is_frozen() -> None:
 
 @pytest.mark.parametrize(
     "key",
-    ["image", "wikimedia_commons", "mapillary", "panoramax", "kartaview", "flickr"],
+    [
+        "image",
+        "wikimedia_commons",
+        "mapillary",
+        "panoramax",
+        "panoramax:0",
+        "panoramax:27",
+        "kartaview",
+        "flickr",
+        "bubbleid",
+    ],
 )
-def test_each_target_key_matches_by_presence_including_empty_value(key: str) -> None:
-    assert has_target_tag({key: ""})
+def test_each_target_key_matches_with_non_empty_value(key: str) -> None:
+    assert is_target_tag_key(key)
+    assert has_target_tag({key: "reference"})
+    assert not has_target_tag({key: ""})
 
 
 @pytest.mark.parametrize(
@@ -113,6 +126,9 @@ def test_each_target_key_matches_by_presence_including_empty_value(key: str) -> 
         {"image:license": "CC0"},
         {"contact:flickr": "account"},
         {"wikimedia": "commons"},
+        {"panoramax:left": "reference"},
+        {"panoramax:": "reference"},
+        {"panoramax:1:foo": "reference"},
     ],
 )
 def test_similarly_named_or_unrelated_keys_do_not_match(tags: dict[str, str]) -> None:

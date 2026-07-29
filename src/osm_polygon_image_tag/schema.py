@@ -3,7 +3,7 @@ import json
 import pyarrow as pa
 from pyproj import CRS
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 GEOPARQUET_VERSION = "1.1.0"
 
 
@@ -43,8 +43,14 @@ def dataset_schema() -> pa.Schema:
         pa.field("wikimedia_commons", pa.string(), nullable=True),
         pa.field("mapillary", pa.string(), nullable=True),
         pa.field("panoramax", pa.string(), nullable=True),
+        pa.field(
+            "panoramax_values",
+            pa.map_(pa.string(), pa.string(), keys_sorted=True),
+            nullable=False,
+        ),
         pa.field("kartaview", pa.string(), nullable=True),
         pa.field("flickr", pa.string(), nullable=True),
+        pa.field("bubbleid", pa.string(), nullable=True),
     ]
     return pa.schema(
         fields,

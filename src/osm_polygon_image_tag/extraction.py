@@ -17,6 +17,7 @@ TARGET_TAG_KEYS = (
     "panoramax",
     "kartaview",
     "flickr",
+    "bubbleid",
 )
 STDERR_CAP_BYTES = 64 * 1024
 
@@ -169,8 +170,25 @@ def iter_records(lines: Iterable[bytes]) -> Iterator[ExportRecord]:
             raise ValueError(message) from error
 
 
+def is_target_tag_key(key: str) -> bool:
+    if key in TARGET_TAG_KEYS:
+        return True
+    prefix = "panoramax:"
+    suffix = key.removeprefix(prefix)
+    return key.startswith(prefix) and suffix.isascii() and suffix.isdigit()
+
+
 def has_target_tag(tags: Mapping[str, str]) -> bool:
-    return any(key in tags for key in TARGET_TAG_KEYS)
+    return any(value != "" and is_target_tag_key(key) for key, value in tags.items())
+
+
+def panoramax_tag_values(tags: Mapping[str, str]) -> dict[str, str]:
+    return {
+        key: value
+        for key, value in sorted(tags.items())
+        if value != ""
+        and (key == "panoramax" or (is_target_tag_key(key) and key.startswith("panoramax:")))
+    }
 
 
 class _SourceTagHandler(osmium.SimpleHandler):

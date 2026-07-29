@@ -25,6 +25,7 @@ def test_empty_metadata_is_deterministic_and_factual(tmp_path: Path) -> None:
     assert statistics["shards"] == 0
     assert statistics["rows"] == 0
     assert statistics["provider_counts"] == {
+        "bubbleid": 0,
         "flickr": 0,
         "image": 0,
         "kartaview": 0,
@@ -59,15 +60,16 @@ def test_real_shard_produces_exact_global_statistics_and_stable_card(tmp_path: P
     generate_metadata(paths.data_root)
 
     assert statistics["shards"] == 1
-    assert statistics["rows"] == 8
-    assert statistics["osm_types"] == {"relation": 2, "way": 6}
-    assert statistics["geometry_types"] == {"MultiPolygon": 2, "Polygon": 6}
+    assert statistics["rows"] == 9
+    assert statistics["osm_types"] == {"relation": 2, "way": 7}
+    assert statistics["geometry_types"] == {"MultiPolygon": 2, "Polygon": 7}
     assert statistics["provider_counts"] == {
+        "bubbleid": 1,
         "flickr": 2,
         "image": 1,
         "kartaview": 1,
         "mapillary": 1,
-        "panoramax": 1,
+        "panoramax": 2,
         "wikimedia_commons": 2,
     }
     assert statistics["duplicate_observations"] == 0

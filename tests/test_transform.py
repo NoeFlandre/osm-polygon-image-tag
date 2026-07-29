@@ -81,6 +81,31 @@ def test_transforms_multipolygon_and_hole_with_positive_geodesic_area() -> None:
     assert outcome.values["tags"] == {"flickr": "photo", "type": "multipolygon"}
 
 
+def test_preserves_bubbleid_and_sorted_indexed_panoramax_values() -> None:
+    polygon = Polygon([(0, 0), (0, 1), (1, 1), (1, 0)])
+    record = _record(
+        polygon,
+        tags={
+            "panoramax:2": "second",
+            "bubbleid": "bing-360",
+            "panoramax": "primary",
+            "panoramax:0": "first",
+            "panoramax:3": "",
+            "panoramax:left": "not-indexed",
+        },
+    )
+
+    outcome = transform_record(record, source_pbf="region.osm.pbf")
+
+    assert isinstance(outcome, AcceptedRow)
+    assert outcome.values["bubbleid"] == "bing-360"
+    assert outcome.values["panoramax_values"] == {
+        "panoramax": "primary",
+        "panoramax:0": "first",
+        "panoramax:2": "second",
+    }
+
+
 def test_normalizes_single_part_way_multipolygon_to_polygon() -> None:
     polygon = Polygon([(0, 0), (0, 1), (1, 1), (1, 0)])
 

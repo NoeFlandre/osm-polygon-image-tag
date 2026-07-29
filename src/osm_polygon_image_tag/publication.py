@@ -15,7 +15,12 @@ from huggingface_hub import (
 
 from osm_polygon_image_tag.catalog import verified_manifests
 from osm_polygon_image_tag.errors import PublicationError
-from osm_polygon_image_tag.manifest import file_sha256
+from osm_polygon_image_tag.manifest import (
+    DATASET_SCHEMA_VERSION,
+    PROCESSING_CONTRACT_VERSION,
+    file_sha256,
+    read_manifest,
+)
 
 EXPECTED_REPO = "NoeFlandre/osm-polygon-image-tag"
 
@@ -117,8 +122,22 @@ def publication_inventory(data_root: Path) -> tuple[PublicationFile, ...]:
     allowed.update(
         path.relative_to(root).as_posix()
         for path in sorted((root / "manifests").glob("*.manifest.json"))
+        if read_manifest(path).processing_contract_version == PROCESSING_CONTRACT_VERSION
+        and read_manifest(path).dataset_schema_version == DATASET_SCHEMA_VERSION
     )
-    internal = {"catalog/catalog.sqlite", "receipts/publication.json"}
+    managed = set()
+    for path in sorted((root / "manifests").glob("*.manifest.json")):
+        manifest = read_manifest(path)
+        managed.add(path.relative_to(root).as_posix())
+        output = (root / manifest.output.relative_path).resolve()
+        if root not in output.parents:
+            raise PublicationError(f"managed output escapes data root: {output}")
+        managed.add(output.relative_to(root).as_posix())
+    internal = {
+        "catalog/catalog.sqlite",
+        "receipts/publication.json",
+        *(managed - allowed),
+    }
     actual: set[str] = set()
     for path in root.rglob("*"):
         relative = path.relative_to(root).as_posix()

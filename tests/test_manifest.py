@@ -3,6 +3,8 @@ from pathlib import Path
 import pytest
 
 from osm_polygon_image_tag.manifest import (
+    DATASET_SCHEMA_VERSION,
+    PROCESSING_CONTRACT_VERSION,
     Manifest,
     ManifestError,
     OutputIdentity,
@@ -12,6 +14,11 @@ from osm_polygon_image_tag.manifest import (
     source_identity,
     write_manifest,
 )
+
+
+def test_compatibility_versions_invalidate_old_shards() -> None:
+    assert DATASET_SCHEMA_VERSION == 2
+    assert PROCESSING_CONTRACT_VERSION == 2
 
 
 def _manifest(source: Path, output: Path) -> Manifest:

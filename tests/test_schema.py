@@ -28,8 +28,10 @@ def test_dataset_schema_has_exact_columns_and_nullability() -> None:
         "wikimedia_commons",
         "mapillary",
         "panoramax",
+        "panoramax_values",
         "kartaview",
         "flickr",
+        "bubbleid",
     ]
     nullable = {field.name: field.nullable for field in schema}
     assert nullable == {
@@ -52,10 +54,15 @@ def test_dataset_schema_has_exact_columns_and_nullability() -> None:
         "wikimedia_commons": True,
         "mapillary": True,
         "panoramax": True,
+        "panoramax_values": False,
         "kartaview": True,
         "flickr": True,
+        "bubbleid": True,
     }
     assert schema.field("tags").type == pa.map_(pa.string(), pa.string(), keys_sorted=True)
+    assert schema.field("panoramax_values").type == pa.map_(
+        pa.string(), pa.string(), keys_sorted=True
+    )
 
 
 def test_schema_contains_geoparquet_1_1_crs84_wkb_metadata() -> None:

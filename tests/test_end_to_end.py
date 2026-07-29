@@ -56,7 +56,7 @@ def test_real_pipeline_build_publish_verify_and_resume(tmp_path: Path) -> None:
     second = run_all(paths, publisher=publish)
 
     assert first.built == 1
-    assert first.accepted_rows == 8
+    assert first.accepted_rows == 9
     assert second.skipped == 1
     assert len(hub.commits) == 1
     assert (paths.data_root / "receipts/publication.json").is_file()

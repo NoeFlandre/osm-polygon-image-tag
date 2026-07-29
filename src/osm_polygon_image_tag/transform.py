@@ -7,7 +7,12 @@ from pyproj import Geod
 from shapely import from_wkb, orient_polygons, to_wkb
 from shapely.errors import GEOSException
 
-from osm_polygon_image_tag.extraction import TARGET_TAG_KEYS, ExportRecord, has_target_tag
+from osm_polygon_image_tag.extraction import (
+    TARGET_TAG_KEYS,
+    ExportRecord,
+    has_target_tag,
+    panoramax_tag_values,
+)
 
 _GEOD = Geod(ellps="WGS84")
 
@@ -91,4 +96,5 @@ def transform_record(
         "tags": sorted_tags,
     }
     values.update({key: sorted_tags.get(key) for key in TARGET_TAG_KEYS})
+    values["panoramax_values"] = panoramax_tag_values(sorted_tags)
     return AcceptedRow(values=values)

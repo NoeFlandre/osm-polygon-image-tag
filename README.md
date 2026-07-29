@@ -44,6 +44,15 @@ reuses verified shards and publication receipts.
 
 No provider APIs are called and no images are downloaded.
 
+Selected references include `image`, `wikimedia_commons`, `mapillary`,
+`panoramax`, numeric indexed keys such as `panoramax:0`, `kartaview`, `flickr`,
+and Bing Streetside `bubbleid`. Indexed Panoramax values are stored with their
+original keys in the non-null `panoramax_values` map; `bubbleid` has a dedicated
+nullable column, and every original OSM tag remains in `tags`.
+
+Dataset schema and processing contract version 2 introduced these fields.
+Resuming a version-1 data root safely rebuilds its old shards before publication.
+
 ## License
 
 Pipeline code is Apache-2.0. OpenStreetMap-derived data remains subject to the

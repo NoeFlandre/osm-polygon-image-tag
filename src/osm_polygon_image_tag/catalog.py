@@ -3,7 +3,13 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 
-from osm_polygon_image_tag.manifest import Manifest, file_sha256, read_manifest
+from osm_polygon_image_tag.manifest import (
+    DATASET_SCHEMA_VERSION,
+    PROCESSING_CONTRACT_VERSION,
+    Manifest,
+    file_sha256,
+    read_manifest,
+)
 from osm_polygon_image_tag.storage import validate_geoparquet
 
 PROVIDERS = (
@@ -13,6 +19,7 @@ PROVIDERS = (
     "panoramax",
     "kartaview",
     "flickr",
+    "bubbleid",
 )
 
 
@@ -47,6 +54,11 @@ def verified_manifests(data_root: Path) -> list[tuple[Manifest, Path]]:
     verified: list[tuple[Manifest, Path]] = []
     for manifest_path in sorted((data_root / "manifests").glob("*.manifest.json")):
         manifest = read_manifest(manifest_path)
+        if (
+            manifest.processing_contract_version != PROCESSING_CONTRACT_VERSION
+            or manifest.dataset_schema_version != DATASET_SCHEMA_VERSION
+        ):
+            continue
         output = (data_root / manifest.output.relative_path).resolve()
         if data_root.resolve() not in output.parents:
             raise ValueError(f"output escapes data root: {output}")
@@ -84,6 +96,7 @@ def sync_catalog(data_root: Path, *, batch_size: int = 8192) -> Path:
                 "area_m2",
                 "osm_timestamp",
                 *PROVIDERS,
+                "panoramax_values",
             ]
             for batch in parquet.iter_batches(batch_size=batch_size, columns=columns):
                 values = []
@@ -91,7 +104,11 @@ def sync_catalog(data_root: Path, *, batch_size: int = 8192) -> Path:
                     mask = sum(
                         1 << index
                         for index, provider in enumerate(PROVIDERS)
-                        if row[provider] is not None
+                        if (
+                            bool(row["panoramax_values"])
+                            if provider == "panoramax"
+                            else row[provider] is not None
+                        )
                     )
                     timestamp = row["osm_timestamp"]
                     values.append(

@@ -19,6 +19,7 @@ from osm_polygon_image_tag.transform import AcceptedRow, transform_record
 
 FIXTURE = Path("tests/fixtures/image_tag_coverage.osm")
 EXPECTED = {
+    ("way", 1001),
     ("way", 1100),
     ("way", 1101),
     ("way", 1102),
@@ -61,7 +62,7 @@ def test_real_osmium_builds_exact_lossless_geoparquet_shard(tmp_path: Path) -> N
     validate_geoparquet(shard)
     table = pq.read_table(shard)
 
-    assert result.row_count == 8
+    assert result.row_count == 9
     identities = set(
         zip(
             table.column("osm_type").to_pylist(),
@@ -80,4 +81,10 @@ def test_real_osmium_builds_exact_lossless_geoparquet_shard(tmp_path: Path) -> N
         "wikimedia_commons": "Category:Relation",
     }
     assert relation["wikimedia_commons"] == "Category:Relation"
+    indexed = next(row for row in rows if row["osm_type"] == "way" and row["osm_id"] == 1001)
+    assert indexed["bubbleid"] == "bing-streetside-id"
+    assert dict(indexed["panoramax_values"]) == {
+        "panoramax:0": "panoramax-first",
+        "panoramax:2": "panoramax-third",
+    }
     assert all(row["source_pbf"] == "coverage.osm.pbf" for row in rows)
