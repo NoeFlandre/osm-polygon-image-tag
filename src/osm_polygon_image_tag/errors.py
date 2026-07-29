@@ -8,3 +8,7 @@ class ConfigurationError(ImageTagPipelineError):
 
 class PreflightError(ImageTagPipelineError):
     """Raised when a read-only environment check fails."""
+
+
+class PublicationError(ImageTagPipelineError):
+    """Raised when publication cannot be proven safe and complete."""

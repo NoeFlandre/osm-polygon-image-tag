@@ -1,10 +1,12 @@
 import json
 from pathlib import Path
 
+import pytest
 from _pytest.capture import CaptureFixture
 
 from osm_polygon_image_tag.cli import run
 from osm_polygon_image_tag.orchestrator import RunSummary, VerifySummary
+from osm_polygon_image_tag.publication import EXPECTED_REPO, PublicationResult
 
 
 def test_run_command_emits_canonical_local_summary(
@@ -37,3 +39,68 @@ def test_verify_command_emits_canonical_summary(
 
     assert exit_code == 0
     assert capsys.readouterr().out == json.dumps(expected.to_dict(), sort_keys=True) + "\n"
+
+
+def test_publish_command_requires_and_forwards_exact_confirmation(
+    tmp_path: Path, capsys: CaptureFixture[str]
+) -> None:
+    source = tmp_path / "raw"
+    source.mkdir()
+    expected = PublicationResult("published", "abc", 4)
+
+    def publish(_paths: object, confirmation: str) -> PublicationResult:
+        assert confirmation == EXPECTED_REPO
+        return expected
+
+    exit_code = run(
+        [
+            "publish",
+            "--source-root",
+            str(source),
+            "--data-root",
+            str(tmp_path / "output"),
+            "--confirm-repo",
+            EXPECTED_REPO,
+        ],
+        execute_publish=publish,
+    )
+
+    assert exit_code == 0
+    assert capsys.readouterr().out == json.dumps(expected.to_dict(), sort_keys=True) + "\n"
+
+
+@pytest.mark.parametrize("command", ["publish", "run-and-publish"])
+def test_publication_commands_reject_wrong_confirmation_before_execution(
+    tmp_path: Path, capsys: CaptureFixture[str], command: str
+) -> None:
+    source = tmp_path / "raw"
+    source.mkdir()
+    called = False
+
+    def execute_publish(_paths: object, _confirmation: str) -> PublicationResult:
+        nonlocal called
+        called = True
+        raise AssertionError
+
+    def execute_run_publish(_paths: object, _confirmation: str) -> RunSummary:
+        nonlocal called
+        called = True
+        raise AssertionError
+
+    exit_code = run(
+        [
+            command,
+            "--source-root",
+            str(source),
+            "--data-root",
+            str(tmp_path / "output"),
+            "--confirm-repo",
+            "wrong/repo",
+        ],
+        execute_publish=execute_publish,
+        execute_run_publish=execute_run_publish,
+    )
+
+    assert exit_code == 2
+    assert called is False
+    assert "confirmation" in capsys.readouterr().err

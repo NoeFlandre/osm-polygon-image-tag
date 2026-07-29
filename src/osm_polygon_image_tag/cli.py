@@ -15,6 +15,12 @@ from osm_polygon_image_tag.orchestrator import (
     verify_all,
 )
 from osm_polygon_image_tag.preflight import PreflightReport, run_preflight
+from osm_polygon_image_tag.publication import (
+    EXPECTED_REPO,
+    HuggingFaceHub,
+    PublicationResult,
+    publish_dataset,
+)
 from osm_polygon_image_tag.reporting import MetadataResult, generate_metadata
 
 
@@ -33,6 +39,11 @@ def _parser() -> argparse.ArgumentParser:
     metadata = commands.add_parser("rebuild-metadata")
     metadata.add_argument("--source-root", type=Path, required=True)
     metadata.add_argument("--data-root", type=Path, required=True)
+    for command in ("publish", "run-and-publish"):
+        publication = commands.add_parser(command)
+        publication.add_argument("--source-root", type=Path, required=True)
+        publication.add_argument("--data-root", type=Path, required=True)
+        publication.add_argument("--confirm-repo", required=True)
     return parser
 
 
@@ -42,6 +53,25 @@ def _run_with_signals(paths: PipelinePaths) -> RunSummary:
         return run_all(paths, stop_token=token)
 
 
+def _publish(paths: PipelinePaths, confirmation: str) -> PublicationResult:
+    return publish_dataset(
+        paths.data_root,
+        confirm_repo=confirmation,
+        hub=HuggingFaceHub(),
+    )
+
+
+def _run_and_publish(paths: PipelinePaths, confirmation: str) -> RunSummary:
+    token = StopToken()
+    hub = HuggingFaceHub()
+
+    def publisher(root: Path) -> PublicationResult:
+        return publish_dataset(root, confirm_repo=confirmation, hub=hub)
+
+    with graceful_stop_signals(token):
+        return run_all(paths, stop_token=token, publisher=publisher)
+
+
 def run(
     argv: Sequence[str] | None = None,
     *,
@@ -49,6 +79,8 @@ def run(
     execute_run: Callable[[PipelinePaths], RunSummary] = _run_with_signals,
     execute_verify: Callable[[PipelinePaths], VerifySummary] = verify_all,
     execute_metadata: Callable[[Path], MetadataResult] = generate_metadata,
+    execute_publish: Callable[[PipelinePaths, str], PublicationResult] = _publish,
+    execute_run_publish: Callable[[PipelinePaths, str], RunSummary] = _run_and_publish,
 ) -> int:
     arguments = _parser().parse_args(argv)
     try:
@@ -56,16 +88,24 @@ def run(
             source_root=arguments.source_root,
             data_root=arguments.data_root,
         )
+        if arguments.command in {"publish", "run-and-publish"} and (
+            arguments.confirm_repo != EXPECTED_REPO
+        ):
+            raise ImageTagPipelineError(f"repository confirmation must equal {EXPECTED_REPO}")
         if arguments.command == "preflight":
-            report: PreflightReport | RunSummary | VerifySummary | MetadataResult = (
-                execute_preflight(paths)
-            )
+            report: (
+                PreflightReport | RunSummary | VerifySummary | MetadataResult | PublicationResult
+            ) = execute_preflight(paths)
         elif arguments.command == "run":
             report = execute_run(paths)
         elif arguments.command == "verify":
             report = execute_verify(paths)
-        else:
+        elif arguments.command == "rebuild-metadata":
             report = execute_metadata(paths.data_root)
+        elif arguments.command == "publish":
+            report = execute_publish(paths, arguments.confirm_repo)
+        else:
+            report = execute_run_publish(paths, arguments.confirm_repo)
     except ImageTagPipelineError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2

@@ -14,10 +14,38 @@ uv run osm-polygon-image-tag preflight \
   --data-root "/Volumes/Seagate M3/projects/osm-polygon-image-tag"
 ```
 
+Construct or resume locally:
+
+```bash
+uv run osm-polygon-image-tag run \
+  --source-root "/Volumes/Seagate M3/projects/osm-polygon-wikidata-only/raw" \
+  --data-root "/Volumes/Seagate M3/projects/osm-polygon-image-tag"
+```
+
+Publish verified existing artifacts, or construct and publish after each PBF:
+
+```bash
+uv run osm-polygon-image-tag publish \
+  --source-root "/Volumes/Seagate M3/projects/osm-polygon-wikidata-only/raw" \
+  --data-root "/Volumes/Seagate M3/projects/osm-polygon-image-tag" \
+  --confirm-repo NoeFlandre/osm-polygon-image-tag
+
+uv run osm-polygon-image-tag run-and-publish \
+  --source-root "/Volumes/Seagate M3/projects/osm-polygon-wikidata-only/raw" \
+  --data-root "/Volumes/Seagate M3/projects/osm-polygon-image-tag" \
+  --confirm-repo NoeFlandre/osm-polygon-image-tag
+```
+
+Authenticate first with `hf auth login`. Publication sends only verified
+GeoParquet shards, their manifests, exact statistics, and the generated dataset
+card. It verifies every changed remote file before atomically recording a local
+receipt. `SIGINT` or `SIGTERM` finishes the current PBF boundary; rerunning
+reuses verified shards and publication receipts.
+
 No provider APIs are called and no images are downloaded.
 
 ## License
 
 Pipeline code is Apache-2.0. OpenStreetMap-derived data remains subject to the
-Open Database License; see the generated dataset card once publication support
-is implemented.
+Open Database License; the generated dataset card records attribution and
+factual statistics.
