@@ -4,3 +4,7 @@ class ImageTagPipelineError(Exception):
 
 class ConfigurationError(ImageTagPipelineError):
     """Raised when configured paths violate the storage contract."""
+
+
+class PreflightError(ImageTagPipelineError):
+    """Raised when a read-only environment check fails."""
