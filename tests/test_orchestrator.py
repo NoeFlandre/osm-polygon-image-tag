@@ -4,6 +4,7 @@ from osm_polygon_image_tag.config import PipelinePaths
 from osm_polygon_image_tag.discovery import PbfSource
 from osm_polygon_image_tag.orchestrator import StopToken, run_all
 from osm_polygon_image_tag.pipeline import BuildResult
+from osm_polygon_image_tag.reporting import MetadataResult
 
 
 def _result(source: str) -> BuildResult:
@@ -15,6 +16,10 @@ def _result(source: str) -> BuildResult:
         accepted_rows=1,
         rejections={},
     )
+
+
+def _metadata(root: Path) -> MetadataResult:
+    return MetadataResult(root / "statistics.json", root / "README.md")
 
 
 def test_run_all_uses_deterministic_source_order(tmp_path: Path) -> None:
@@ -30,7 +35,7 @@ def test_run_all_uses_deterministic_source_order(tmp_path: Path) -> None:
         seen.append(name)
         return _result(name)
 
-    summary = run_all(paths, build=build)
+    summary = run_all(paths, build=build, metadata_builder=_metadata)
 
     assert seen == ["a.osm.pbf", "z.osm.pbf"]
     assert summary.stopped is False
@@ -53,7 +58,12 @@ def test_stop_token_prevents_starting_the_next_pbf(tmp_path: Path) -> None:
         token.request()
         return _result(name)
 
-    summary = run_all(paths, build=build, stop_token=token)
+    summary = run_all(
+        paths,
+        build=build,
+        stop_token=token,
+        metadata_builder=_metadata,
+    )
 
     assert seen == ["a.osm.pbf"]
     assert summary.stopped is True

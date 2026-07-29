@@ -3,13 +3,16 @@ import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 from osm_polygon_image_tag.config import PipelinePaths
 from osm_polygon_image_tag.discovery import PbfSource, discover_pbfs
 from osm_polygon_image_tag.pipeline import BuildResult, build_one, verify_one
+from osm_polygon_image_tag.reporting import MetadataResult, generate_metadata
 
 Build = Callable[[PbfSource, PipelinePaths], BuildResult]
+MetadataBuilder = Callable[[Path], MetadataResult]
 
 
 class StopToken:
@@ -51,6 +54,7 @@ def run_all(
     *,
     build: Build = build_one,
     stop_token: StopToken | None = None,
+    metadata_builder: MetadataBuilder = generate_metadata,
 ) -> RunSummary:
     token = stop_token or StopToken()
     results: list[BuildResult] = []
@@ -58,6 +62,9 @@ def run_all(
         if token.requested:
             break
         results.append(build(source, paths))
+        metadata_builder(paths.data_root)
+    if not results:
+        metadata_builder(paths.data_root)
     return RunSummary(
         processed=len(results),
         built=sum(result.status == "built" for result in results),

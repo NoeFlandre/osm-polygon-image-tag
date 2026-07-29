@@ -15,6 +15,7 @@ from osm_polygon_image_tag.orchestrator import (
     verify_all,
 )
 from osm_polygon_image_tag.preflight import PreflightReport, run_preflight
+from osm_polygon_image_tag.reporting import MetadataResult, generate_metadata
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -29,6 +30,9 @@ def _parser() -> argparse.ArgumentParser:
     verify = commands.add_parser("verify")
     verify.add_argument("--source-root", type=Path, required=True)
     verify.add_argument("--data-root", type=Path, required=True)
+    metadata = commands.add_parser("rebuild-metadata")
+    metadata.add_argument("--source-root", type=Path, required=True)
+    metadata.add_argument("--data-root", type=Path, required=True)
     return parser
 
 
@@ -44,6 +48,7 @@ def run(
     execute_preflight: Callable[[PipelinePaths], PreflightReport] = run_preflight,
     execute_run: Callable[[PipelinePaths], RunSummary] = _run_with_signals,
     execute_verify: Callable[[PipelinePaths], VerifySummary] = verify_all,
+    execute_metadata: Callable[[Path], MetadataResult] = generate_metadata,
 ) -> int:
     arguments = _parser().parse_args(argv)
     try:
@@ -52,11 +57,15 @@ def run(
             data_root=arguments.data_root,
         )
         if arguments.command == "preflight":
-            report: PreflightReport | RunSummary | VerifySummary = execute_preflight(paths)
+            report: PreflightReport | RunSummary | VerifySummary | MetadataResult = (
+                execute_preflight(paths)
+            )
         elif arguments.command == "run":
             report = execute_run(paths)
-        else:
+        elif arguments.command == "verify":
             report = execute_verify(paths)
+        else:
+            report = execute_metadata(paths.data_root)
     except ImageTagPipelineError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
