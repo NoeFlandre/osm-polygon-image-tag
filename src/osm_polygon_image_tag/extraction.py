@@ -1,8 +1,12 @@
 import json
-from collections.abc import Iterable, Iterator, Mapping
+import subprocess
+import threading
+from collections.abc import Generator, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
+
+from osm_polygon_image_tag.errors import ImageTagPipelineError
 
 TARGET_TAG_KEYS = (
     "image",
@@ -12,6 +16,7 @@ TARGET_TAG_KEYS = (
     "kartaview",
     "flickr",
 )
+STDERR_CAP_BYTES = 64 * 1024
 
 _COPY_ESCAPES = {
     ord("b"): b"\b",
@@ -33,6 +38,30 @@ class ExportRecord:
     changeset: int | None
     timestamp: str | None
     tags: dict[str, str]
+
+
+class OsmiumExportError(ImageTagPipelineError):
+    def __init__(self, message: str, *, stderr: bytes = b"") -> None:
+        super().__init__(message)
+        self.stderr = stderr
+
+
+class _BoundedBytes:
+    def __init__(self, capacity: int) -> None:
+        self._capacity = capacity
+        self._buffer = bytearray()
+
+    def append(self, chunk: bytes) -> None:
+        if len(chunk) >= self._capacity:
+            self._buffer[:] = chunk[-self._capacity :]
+            return
+        overflow = len(self._buffer) + len(chunk) - self._capacity
+        if overflow > 0:
+            del self._buffer[:overflow]
+        self._buffer.extend(chunk)
+
+    def value(self) -> bytes:
+        return bytes(self._buffer)
 
 
 def export_command(
@@ -127,8 +156,93 @@ def iter_records(lines: Iterable[bytes]) -> Iterator[ExportRecord]:
         try:
             yield parse_copy_record(line)
         except ValueError as error:
-            raise ValueError(f"malformed osmium COPY record at line {line_number}: {error}") from error
+            message = f"malformed osmium COPY record at line {line_number}: {error}"
+            raise ValueError(message) from error
 
 
 def has_target_tag(tags: Mapping[str, str]) -> bool:
     return any(key in tags for key in TARGET_TAG_KEYS)
+
+
+def _drain_stderr(stream: BinaryIO, retained: _BoundedBytes) -> None:
+    while chunk := stream.read(8192):
+        retained.append(chunk)
+
+
+def _stop_process(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+
+
+def stream_export(
+    pbf_path: Path,
+    config_path: Path,
+    *,
+    executable: str = "osmium",
+) -> Generator[ExportRecord, None, None]:
+    command = export_command(pbf_path, config_path, executable=executable)
+    try:
+        process = subprocess.Popen(  # noqa: S603 - fixed argv; no shell.
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=False,
+        )
+    except FileNotFoundError as error:
+        raise OsmiumExportError(f"osmium executable not found: {executable}") from error
+    if process.stdout is None or process.stderr is None:
+        _stop_process(process)
+        raise OsmiumExportError("osmium pipes were not created")
+
+    retained = _BoundedBytes(STDERR_CAP_BYTES)
+    stderr_thread = threading.Thread(
+        target=_drain_stderr,
+        args=(process.stderr, retained),
+        name="osmium-stderr",
+        daemon=True,
+    )
+    stderr_thread.start()
+    try:
+        yield from iter_records(process.stdout)
+        return_code = process.wait()
+        stderr_thread.join(timeout=5)
+        if return_code != 0:
+            raise OsmiumExportError(
+                f"osmium export exited {return_code}",
+                stderr=retained.value(),
+            )
+    finally:
+        _stop_process(process)
+        process.stdout.close()
+        stderr_thread.join(timeout=5)
+        process.stderr.close()
+
+
+def osmium_version(*, executable: str = "osmium") -> str:
+    try:
+        completed = subprocess.run(  # noqa: S603 - fixed version argv; no shell.
+            [executable, "--version"],
+            check=False,
+            capture_output=True,
+            shell=False,
+            timeout=10,
+        )
+    except FileNotFoundError as error:
+        raise OsmiumExportError(f"osmium executable not found: {executable}") from error
+    except subprocess.TimeoutExpired as error:
+        raise OsmiumExportError("osmium version probe timed out") from error
+    if completed.returncode != 0:
+        raise OsmiumExportError(
+            f"osmium version probe exited {completed.returncode}",
+            stderr=completed.stderr[-STDERR_CAP_BYTES:],
+        )
+    lines = completed.stdout.decode("utf-8", errors="replace").splitlines()
+    if not lines:
+        raise OsmiumExportError("osmium returned no version text")
+    return lines[0].strip()
