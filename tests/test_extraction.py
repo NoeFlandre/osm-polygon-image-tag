@@ -59,6 +59,14 @@ def test_copy_parser_handles_nulls_and_postgres_escaped_json() -> None:
     assert record.tags == {"mapillary": value}
 
 
+def test_copy_parser_treats_empty_optional_metadata_as_null() -> None:
+    record = parse_copy_record(b"0103\tway\t7\t\t\t\t{}\n")
+
+    assert record.version is None
+    assert record.changeset is None
+    assert record.timestamp is None
+
+
 @pytest.mark.parametrize(
     "line",
     [

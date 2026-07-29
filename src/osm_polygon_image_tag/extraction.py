@@ -113,7 +113,7 @@ def _decode_copy_field(field: bytes) -> str:
 
 
 def _optional_text(field: bytes) -> str | None:
-    return None if field == b"\\N" else _decode_copy_field(field)
+    return None if field in {b"", b"\\N"} else _decode_copy_field(field)
 
 
 def _optional_int(field: bytes, *, name: str) -> int | None:

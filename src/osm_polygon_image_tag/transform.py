@@ -48,6 +48,13 @@ def transform_record(
         return RejectedRow(reason="non_polygon_geometry")
     if not geometry.is_valid:
         return RejectedRow(reason="invalid_geometry")
+    is_single_way_polygon = (
+        record.osm_type == "way"
+        and geometry.geom_type == "MultiPolygon"
+        and len(geometry.geoms) == 1
+    )
+    if is_single_way_polygon:
+        geometry = geometry.geoms[0]
 
     oriented = orient_polygons(geometry, exterior_cw=False)
     bounds = tuple(float(value) for value in oriented.bounds)

@@ -81,6 +81,15 @@ def test_transforms_multipolygon_and_hole_with_positive_geodesic_area() -> None:
     assert outcome.values["tags"] == {"flickr": "photo", "type": "multipolygon"}
 
 
+def test_normalizes_single_part_way_multipolygon_to_polygon() -> None:
+    polygon = Polygon([(0, 0), (0, 1), (1, 1), (1, 0)])
+
+    outcome = transform_record(_record(MultiPolygon([polygon])), source_pbf="region.osm.pbf")
+
+    assert isinstance(outcome, AcceptedRow)
+    assert outcome.values["geometry_type"] == "Polygon"
+
+
 @pytest.mark.parametrize(
     ("record", "reason"),
     [
