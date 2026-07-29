@@ -39,7 +39,7 @@ def probe_osmium() -> ToolVersion:
     executable = shutil.which("osmium")
     if executable is None:
         raise PreflightError("required executable not found: osmium")
-    completed = subprocess.run(
+    completed = subprocess.run(  # noqa: S603 - executable is resolved; argv is fixed.
         [executable, "--version"],
         check=False,
         capture_output=True,

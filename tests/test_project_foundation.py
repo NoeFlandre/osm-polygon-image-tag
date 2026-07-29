@@ -1,5 +1,6 @@
 from importlib.metadata import metadata, version
 from pathlib import Path
+from tomllib import loads
 
 import osm_polygon_image_tag
 
@@ -17,3 +18,11 @@ def test_public_metadata_targets_only_this_project() -> None:
     pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
     assert "osm-polygon-description-tag" not in pyproject
     assert "osm-polygon-wikidata-only" not in pyproject
+
+
+def test_default_pytest_command_enforces_coverage() -> None:
+    pyproject = loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+
+    addopts = pyproject["tool"]["pytest"]["ini_options"]["addopts"]
+    assert "--cov=osm_polygon_image_tag" in addopts
+    assert "--cov-report=term-missing" in addopts
