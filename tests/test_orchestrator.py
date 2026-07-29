@@ -101,3 +101,40 @@ def test_run_all_publishes_after_each_completed_pbf(tmp_path: Path) -> None:
         "metadata",
         "publish",
     ]
+
+
+def test_run_all_reports_ordered_per_pbf_progress(tmp_path: Path) -> None:
+    source = tmp_path / "raw"
+    source.mkdir()
+    (source / "region.osm.pbf").write_bytes(b"source")
+    paths = PipelinePaths.build(source_root=source, data_root=tmp_path / "generated")
+    events: list[dict[str, object]] = []
+
+    run_all(
+        paths,
+        build=lambda pbf, _paths: _result(pbf.relative_path.as_posix()),
+        metadata_builder=_metadata,
+        publisher=lambda _root: PublicationResult("published", "abc", 4),
+        progress=events.append,
+    )
+
+    assert [event["event"] for event in events] == [
+        "run_started",
+        "pbf_started",
+        "pbf_completed",
+        "metadata_started",
+        "metadata_completed",
+        "publication_started",
+        "publication_completed",
+        "run_completed",
+    ]
+    assert events[0] == {
+        "event": "run_started",
+        "pbf_count": 1,
+        "pbf_bytes": 6,
+    }
+    assert events[1]["source_pbf"] == "region.osm.pbf"
+    assert events[1]["pbf_index"] == 1
+    assert events[1]["pbf_count"] == 1
+    assert events[2]["status"] == "built"
+    assert events[-1]["processed"] == 1

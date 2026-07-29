@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from _pytest.capture import CaptureFixture
 
-from osm_polygon_image_tag.cli import run
+from osm_polygon_image_tag.cli import _emit_progress, run
 from osm_polygon_image_tag.orchestrator import RunSummary, VerifySummary
 from osm_polygon_image_tag.publication import EXPECTED_REPO, PublicationResult
 
@@ -104,3 +104,15 @@ def test_publication_commands_reject_wrong_confirmation_before_execution(
     assert exit_code == 2
     assert called is False
     assert "confirmation" in capsys.readouterr().err
+
+
+def test_progress_events_are_canonical_json_on_stderr(
+    capsys: CaptureFixture[str],
+) -> None:
+    _emit_progress({"source_pbf": "a.osm.pbf", "event": "pbf_started", "pbf_index": 1})
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        'progress {"event":"pbf_started","pbf_index":1,"source_pbf":"a.osm.pbf"}\n'
+    )

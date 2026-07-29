@@ -24,6 +24,14 @@ from osm_polygon_image_tag.publication import (
 from osm_polygon_image_tag.reporting import MetadataResult, generate_metadata
 
 
+def _emit_progress(event: dict[str, object]) -> None:
+    print(
+        f"progress {json.dumps(event, sort_keys=True, separators=(',', ':'))}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="osm-polygon-image-tag")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -50,15 +58,18 @@ def _parser() -> argparse.ArgumentParser:
 def _run_with_signals(paths: PipelinePaths) -> RunSummary:
     token = StopToken()
     with graceful_stop_signals(token):
-        return run_all(paths, stop_token=token)
+        return run_all(paths, stop_token=token, progress=_emit_progress)
 
 
 def _publish(paths: PipelinePaths, confirmation: str) -> PublicationResult:
-    return publish_dataset(
+    _emit_progress({"event": "publication_started"})
+    result = publish_dataset(
         paths.data_root,
         confirm_repo=confirmation,
         hub=HuggingFaceHub(),
     )
+    _emit_progress({"event": "publication_completed", **result.to_dict()})
+    return result
 
 
 def _run_and_publish(paths: PipelinePaths, confirmation: str) -> RunSummary:
@@ -69,7 +80,12 @@ def _run_and_publish(paths: PipelinePaths, confirmation: str) -> RunSummary:
         return publish_dataset(root, confirm_repo=confirmation, hub=hub)
 
     with graceful_stop_signals(token):
-        return run_all(paths, stop_token=token, publisher=publisher)
+        return run_all(
+            paths,
+            stop_token=token,
+            publisher=publisher,
+            progress=_emit_progress,
+        )
 
 
 def run(

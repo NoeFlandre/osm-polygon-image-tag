@@ -15,6 +15,7 @@ from osm_polygon_image_tag.reporting import MetadataResult, generate_metadata
 Build = Callable[[PbfSource, PipelinePaths], BuildResult]
 MetadataBuilder = Callable[[Path], MetadataResult]
 Publisher = Callable[[Path], PublicationResult]
+Progress = Callable[[dict[str, object]], None]
 
 
 class StopToken:
@@ -58,27 +59,80 @@ def run_all(
     stop_token: StopToken | None = None,
     metadata_builder: MetadataBuilder = generate_metadata,
     publisher: Publisher | None = None,
+    progress: Progress | None = None,
 ) -> RunSummary:
     token = stop_token or StopToken()
+    sources = discover_pbfs(paths.source_root)
+    emit = progress or (lambda _event: None)
+    emit(
+        {
+            "event": "run_started",
+            "pbf_count": len(sources),
+            "pbf_bytes": sum(source.size_bytes for source in sources),
+        }
+    )
     results: list[BuildResult] = []
-    for source in discover_pbfs(paths.source_root):
+    for index, source in enumerate(sources, start=1):
         if token.requested:
             break
-        results.append(build(source, paths))
-        metadata_builder(paths.data_root)
+        emit(
+            {
+                "event": "pbf_started",
+                "pbf_index": index,
+                "pbf_count": len(sources),
+                "source_pbf": source.relative_path.as_posix(),
+                "source_bytes": source.size_bytes,
+            }
+        )
+        result = build(source, paths)
+        results.append(result)
+        emit(
+            {
+                "event": "pbf_completed",
+                "pbf_index": index,
+                "pbf_count": len(sources),
+                "source_pbf": result.source_pbf,
+                "status": result.status,
+                "accepted_rows": result.accepted_rows,
+                "rejections": result.rejections,
+            }
+        )
+        emit({"event": "metadata_started"})
+        metadata = metadata_builder(paths.data_root)
+        emit(
+            {
+                "event": "metadata_completed",
+                "statistics_path": str(metadata.statistics_path),
+                "card_path": str(metadata.card_path),
+            }
+        )
         if publisher is not None:
-            publisher(paths.data_root)
+            emit({"event": "publication_started"})
+            publication = publisher(paths.data_root)
+            emit({"event": "publication_completed", **publication.to_dict()})
     if not results:
-        metadata_builder(paths.data_root)
+        emit({"event": "metadata_started"})
+        metadata = metadata_builder(paths.data_root)
+        emit(
+            {
+                "event": "metadata_completed",
+                "statistics_path": str(metadata.statistics_path),
+                "card_path": str(metadata.card_path),
+            }
+        )
         if publisher is not None:
-            publisher(paths.data_root)
-    return RunSummary(
+            emit({"event": "publication_started"})
+            publication = publisher(paths.data_root)
+            emit({"event": "publication_completed", **publication.to_dict()})
+    summary = RunSummary(
         processed=len(results),
         built=sum(result.status == "built" for result in results),
         skipped=sum(result.status == "skipped" for result in results),
         accepted_rows=sum(result.accepted_rows for result in results),
         stopped=token.requested,
     )
+    emit({"event": "run_completed", **summary.to_dict()})
+    return summary
 
 
 def verify_all(paths: PipelinePaths) -> VerifySummary:
