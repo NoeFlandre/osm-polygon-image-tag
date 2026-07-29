@@ -72,7 +72,7 @@ strict = true
 packages = ["osm_polygon_image_tag"]
 
 [[tool.mypy.overrides]]
-module = ["osmium.*"]
+module = ["osmium.*", "pyarrow.*", "shapely.*"]
 ignore_missing_imports = true
 
 [tool.coverage.run]
