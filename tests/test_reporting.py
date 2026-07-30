@@ -5,9 +5,13 @@ from pathlib import Path
 
 import pytest
 
+import osm_polygon_image_tag.reporting as reporting
+from osm_polygon_image_tag.catalog import verified_manifests as catalog_verified_manifests
 from osm_polygon_image_tag.config import PipelinePaths
 from osm_polygon_image_tag.discovery import discover_pbfs
+from osm_polygon_image_tag.manifest import Manifest
 from osm_polygon_image_tag.pipeline import build_one
+from osm_polygon_image_tag.progress import Progress
 from osm_polygon_image_tag.reporting import generate_metadata
 
 FIXTURE = Path("tests/fixtures/image_tag_coverage.osm")
@@ -35,6 +39,38 @@ def test_empty_metadata_is_deterministic_and_factual(tmp_path: Path) -> None:
     }
     assert b"Open Database License" in first_card
     assert b"does not establish image copyright" in first_card
+
+
+def test_metadata_reports_detailed_progress_and_scans_manifests_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[dict[str, object]] = []
+    calls = 0
+
+    def counted(
+        data_root: Path, *, progress: Progress | None = None
+    ) -> list[tuple[Manifest, Path]]:
+        nonlocal calls
+        calls += 1
+        return catalog_verified_manifests(data_root, progress=progress)
+
+    monkeypatch.setattr(reporting, "verified_manifests", counted)
+
+    generate_metadata(tmp_path, progress=events.append)
+
+    assert calls == 1
+    assert [event["event"] for event in events] == [
+        "metadata_manifest_scan_started",
+        "metadata_manifest_scan_completed",
+        "metadata_catalog_sync_started",
+        "metadata_catalog_sync_completed",
+        "metadata_statistics_started",
+        "metadata_statistics_completed",
+        "metadata_write_started",
+        "metadata_write_completed",
+    ]
+    assert events[1]["manifest_count"] == 0
+    assert events[3]["active_shards"] == 0
 
 
 @pytest.mark.integration

@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from osm_polygon_image_tag.catalog import PROVIDERS, sync_catalog, verified_manifests
+from osm_polygon_image_tag.manifest import Manifest
+from osm_polygon_image_tag.progress import Progress
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,8 +53,9 @@ def _pairs(connection: sqlite3.Connection, column: str) -> dict[str, int]:
     return {str(key): int(value) for key, value in connection.execute(queries[column])}
 
 
-def _statistics(data_root: Path, catalog_path: Path) -> dict[str, Any]:
-    manifests = verified_manifests(data_root)
+def _statistics(
+    catalog_path: Path, manifests: list[tuple[Manifest, Path]]
+) -> dict[str, Any]:
     rejections: Counter[str] = Counter()
     for manifest, _output in manifests:
         rejections.update(manifest.counts.rejections)
@@ -169,14 +172,34 @@ from cryptographically verified manifests and GeoParquet shards.
     return text.encode("utf-8")
 
 
-def generate_metadata(data_root: Path) -> MetadataResult:
-    catalog_path = sync_catalog(data_root)
-    statistics = _statistics(data_root, catalog_path)
+def generate_metadata(
+    data_root: Path, *, progress: Progress | None = None
+) -> MetadataResult:
+    emit = progress or (lambda _event: None)
+    manifests = verified_manifests(data_root, progress=emit)
+    catalog_path = sync_catalog(data_root, manifests=manifests, progress=emit)
+    emit({"event": "metadata_statistics_started"})
+    statistics = _statistics(catalog_path, manifests)
+    emit(
+        {
+            "event": "metadata_statistics_completed",
+            "shards": statistics["shards"],
+            "rows": statistics["rows"],
+        }
+    )
     statistics_path = data_root / "statistics" / "dataset-statistics.json"
     card_path = data_root / "README.md"
     serialized = (
         json.dumps(statistics, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"
     ).encode("utf-8")
+    emit({"event": "metadata_write_started"})
     _atomic_write(statistics_path, serialized)
     _atomic_write(card_path, _card(statistics))
+    emit(
+        {
+            "event": "metadata_write_completed",
+            "statistics_path": str(statistics_path),
+            "card_path": str(card_path),
+        }
+    )
     return MetadataResult(statistics_path=statistics_path, card_path=card_path)

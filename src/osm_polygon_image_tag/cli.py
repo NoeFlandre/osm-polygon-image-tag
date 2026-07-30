@@ -15,6 +15,7 @@ from osm_polygon_image_tag.orchestrator import (
     verify_all,
 )
 from osm_polygon_image_tag.preflight import PreflightReport, run_preflight
+from osm_polygon_image_tag.progress import ProgressReporter
 from osm_polygon_image_tag.publication import (
     EXPECTED_REPO,
     HuggingFaceHub,
@@ -57,8 +58,13 @@ def _parser() -> argparse.ArgumentParser:
 
 def _run_with_signals(paths: PipelinePaths) -> RunSummary:
     token = StopToken()
-    with graceful_stop_signals(token):
-        return run_all(paths, stop_token=token, progress=_emit_progress)
+    with ProgressReporter(_emit_progress) as reporter, graceful_stop_signals(token):
+        return run_all(
+            paths,
+            stop_token=token,
+            metadata_builder=lambda root: generate_metadata(root, progress=reporter.emit),
+            progress=reporter.emit,
+        )
 
 
 def _publish(paths: PipelinePaths, confirmation: str) -> PublicationResult:
@@ -79,12 +85,13 @@ def _run_and_publish(paths: PipelinePaths, confirmation: str) -> RunSummary:
     def publisher(root: Path) -> PublicationResult:
         return publish_dataset(root, confirm_repo=confirmation, hub=hub)
 
-    with graceful_stop_signals(token):
+    with ProgressReporter(_emit_progress) as reporter, graceful_stop_signals(token):
         return run_all(
             paths,
             stop_token=token,
+            metadata_builder=lambda root: generate_metadata(root, progress=reporter.emit),
             publisher=publisher,
-            progress=_emit_progress,
+            progress=reporter.emit,
         )
 
 
