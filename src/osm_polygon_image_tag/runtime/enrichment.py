@@ -12,6 +12,7 @@ from osm_polygon_image_tag.core.manifest import Manifest
 from osm_polygon_image_tag.core.progress import Progress
 
 AssetBuilder = Callable[..., Awaitable[AssetBuildResult]]
+Checkpoint = Callable[[], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +57,15 @@ class EnrichmentWorker:
         self._summary = EnrichmentSummary()
         self._error: BaseException | None = None
         self._submitted = 0
+        self._checkpoint_lock = threading.Lock()
+        self._checkpoint: Checkpoint | None = None
+        self._checkpoint_every = 0
+        self._checkpoint_next = 0
+        self._completed = 0
+        self._pause_requested = threading.Event()
+        self._paused = threading.Event()
+        self._resume = threading.Event()
+        self._resume.set()
 
     def start(self, initial_jobs: Iterable[AssetJob] = ()) -> None:
         if self._thread is not None:
@@ -87,10 +97,43 @@ class EnrichmentWorker:
                 continue
         return True
 
+    def enable_checkpoints(self, callback: Checkpoint, *, every: int) -> None:
+        if every <= 0:
+            raise ValueError("checkpoint interval must be positive")
+        with self._checkpoint_lock:
+            self._checkpoint = callback
+            self._checkpoint_every = every
+            self._checkpoint_next = self._completed + every
+
+    def checkpoint(self, callback: Checkpoint) -> None:
+        if self._thread is None:
+            raise RuntimeError("enrichment worker was not started")
+        if not self._thread.is_alive():
+            callback()
+            return
+        self._resume.clear()
+        self._pause_requested.set()
+        while self._thread.is_alive() and not self._paused.wait(timeout=0.1):
+            continue
+        if self._error is not None:
+            self._pause_requested.clear()
+            self._resume.set()
+            raise self._error
+        try:
+            callback()
+        finally:
+            self._pause_requested.clear()
+            self._resume.set()
+
     def finish(self) -> EnrichmentSummary:
         if self._thread is None:
             raise RuntimeError("enrichment worker was not started")
-        self._jobs.put(None)
+        while self._thread.is_alive() and self._error is None:
+            try:
+                self._jobs.put(None, timeout=0.1)
+                break
+            except queue.Full:
+                continue
         self._thread.join()
         if self._error is not None:
             raise self._error
@@ -114,7 +157,17 @@ class EnrichmentWorker:
             }
         )
         try:
-            while (job := self._jobs.get()) is not None:
+            while True:
+                if self._pause_requested.is_set():
+                    self._paused.set()
+                    self._resume.wait()
+                    self._paused.clear()
+                try:
+                    job = self._jobs.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                if job is None:
+                    break
                 index += 1
                 if self._stop_requested():
                     pending += 1
@@ -127,6 +180,14 @@ class EnrichmentWorker:
                         "polygon_shard": job.manifest.output.relative_path,
                     }
                 )
+                callback: Checkpoint | None = None
+                with self._checkpoint_lock:
+                    self._completed += 1
+                    if self._checkpoint is not None and self._completed >= self._checkpoint_next:
+                        callback = self._checkpoint
+                        self._checkpoint_next += self._checkpoint_every
+                if callback is not None:
+                    callback()
                 result = await self._builder(
                     job.manifest,
                     job.polygon_path,

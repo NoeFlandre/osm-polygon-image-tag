@@ -40,6 +40,7 @@ way or relation carries at least one raw image-reference tag.
 - Duplicate observations across source PBFs: {statistics["duplicate_observations"]}
 - Resolved asset rows: {assets["rows"]}
 - Direct image URLs: {assets["direct_urls"]}
+- Stable direct image URLs: {assets["stable_direct_urls"]}
 - Page URLs: {assets["page_urls"]}
 
 Provider observations:
@@ -57,6 +58,13 @@ The `image_assets` configuration is one-to-many. Join it to `polygons` with
 exact source key/value, canonical provider reference, resolution status, page
 URL, direct image URL when returned, expiry, MIME type, dimensions, and
 structured license/author metadata when available.
+
+```python
+from datasets import load_dataset
+
+polygons = load_dataset("NoeFlandre/osm-polygon-image-tag", "polygons")
+image_assets = load_dataset("NoeFlandre/osm-polygon-image-tag", "image_assets")
+```
 
 ## Provenance and license
 

@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 import pytest
 
 from osm_polygon_image_tag.assets.references import SourceReference
-from osm_polygon_image_tag.resolvers.policy import ProviderRateLimited
+from osm_polygon_image_tag.resolvers.policy import ProviderRateLimited, SafeHttpError
 from osm_polygon_image_tag.resolvers.registry import ProviderLimit, ResolverRegistry
 from osm_polygon_image_tag.resolvers.types import (
     ResolutionResult,
@@ -178,3 +178,103 @@ async def test_registry_turns_rate_limits_into_retryable_records_and_progress() 
             "retry_after_seconds": 120,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_delays_following_provider_request() -> None:
+    now = 0.0
+    observed: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        nonlocal now
+        now += seconds
+
+    class Resolver:
+        provider = "mapillary"
+
+        async def resolve(
+            self, canonical_reference: str, *, context: ResolverContext
+        ) -> ResolutionResult:
+            del canonical_reference, context
+            observed.append(now)
+            if len(observed) == 1:
+                raise ProviderRateLimited(120)
+            return ResolutionResult(status="not_found")
+
+    class Http:
+        async def aclose(self) -> None:
+            return None
+
+    registry = ResolverRegistry(
+        {"mapillary": Resolver()},
+        environment={},
+        http=Http(),
+        monotonic=lambda: now,
+        sleep=sleep,
+    )
+    for value in ("first", "second"):
+        await registry.resolve_reference(
+            SourceReference("mapillary", "mapillary", value, value, "mapillary"),
+            bbox=(0, 0, 1, 1),
+            resolver_contract_version=1,
+        )
+
+    assert observed == [0.0, 120.0]
+
+
+@pytest.mark.asyncio
+async def test_registry_turns_transient_http_errors_into_retryable_records() -> None:
+    class Resolver:
+        provider = "mapillary"
+
+        async def resolve(
+            self, canonical_reference: str, *, context: ResolverContext
+        ) -> ResolutionResult:
+            del canonical_reference, context
+            raise SafeHttpError("provider request failed")
+
+    class Http:
+        async def aclose(self) -> None:
+            return None
+
+    registry = ResolverRegistry(
+        {"mapillary": Resolver()},
+        environment={},
+        http=Http(),
+    )
+    reference = SourceReference("mapillary", "mapillary", "id", "id", "mapillary")
+
+    record = await registry.resolve_reference(
+        reference,
+        bbox=(0, 0, 1, 1),
+        resolver_contract_version=1,
+    )
+
+    assert record.status == "temporary_failure"
+    assert record.reason == "provider_request_failed"
+    assert record.retry_after is None
+
+
+@pytest.mark.asyncio
+async def test_registry_records_invalid_reference_without_dispatch() -> None:
+    class Http:
+        async def aclose(self) -> None:
+            return None
+
+    registry = ResolverRegistry({}, environment={}, http=Http())
+    reference = SourceReference(
+        "mapillary",
+        "mapillary",
+        "not-an-id",
+        "not-an-id",
+        "invalid",
+    )
+
+    record = await registry.resolve_reference(
+        reference,
+        bbox=(0, 0, 1, 1),
+        resolver_contract_version=1,
+    )
+
+    assert record.status == "invalid_reference"
+    assert record.reason == "invalid_provider_reference"

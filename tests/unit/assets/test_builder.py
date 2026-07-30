@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import asdict
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pyarrow.parquet as pq
@@ -9,7 +10,11 @@ from shapely.geometry import Polygon
 
 from osm_polygon_image_tag.artifacts.storage import write_geoparquet
 from osm_polygon_image_tag.assets.builder import build_asset_shard
-from osm_polygon_image_tag.assets.cache import ResolutionCache, ResolutionRecord
+from osm_polygon_image_tag.assets.cache import (
+    ResolutionCache,
+    ResolutionKey,
+    ResolutionRecord,
+)
 from osm_polygon_image_tag.assets.manifest import read_asset_manifest
 from osm_polygon_image_tag.assets.polygon_input import POLYGON_COLUMNS
 from osm_polygon_image_tag.assets.references import SourceReference
@@ -217,6 +222,148 @@ async def test_cache_hit_rebuilds_missing_asset_without_network(tmp_path: Path) 
 
     assert rebuilt.status == "built"
     assert resolver.calls == []
+
+
+@pytest.mark.asyncio
+async def test_temporary_failure_manifest_is_rebuilt_for_future_retry(tmp_path: Path) -> None:
+    manifest, polygon_path, data_root = polygon_fixture(tmp_path)
+
+    class TemporaryRegistry:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def resolve_reference(
+            self,
+            reference: SourceReference,
+            *,
+            bbox: tuple[float, float, float, float],
+            resolver_contract_version: int,
+        ) -> ResolutionRecord:
+            del bbox
+            self.calls += 1
+            return ResolutionRecord(
+                reference.provider,
+                reference.canonical_reference,
+                resolver_contract_version,
+                "temporary_failure",
+                (),
+                datetime.now(UTC) + timedelta(hours=1),
+            )
+
+    registry = TemporaryRegistry()
+    with ResolutionCache.open(data_root) as cache:
+        first = await build_asset_shard(
+            manifest,
+            polygon_path,
+            data_root,
+            cache=cache,
+            registry=registry,
+            stop_requested=lambda: False,
+            progress=lambda _event: None,
+        )
+        second = await build_asset_shard(
+            manifest,
+            polygon_path,
+            data_root,
+            cache=cache,
+            registry=registry,
+            stop_requested=lambda: False,
+            progress=lambda _event: None,
+        )
+
+    assert (first.status, second.status) == ("built", "built")
+    assert registry.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_expired_temporary_cache_record_is_resolved_again(tmp_path: Path) -> None:
+    manifest, polygon_path, data_root = polygon_fixture(tmp_path)
+    resolver = Resolver()
+    key = ResolutionKey("panoramax", PANORAMAX_ID, 1)
+    with ResolutionCache.open(data_root) as cache:
+        cache.put(
+            ResolutionRecord(
+                key.provider,
+                key.canonical_reference,
+                key.resolver_contract_version,
+                "temporary_failure",
+                (),
+                datetime.now(UTC) - timedelta(seconds=1),
+            )
+        )
+        result = await build_asset_shard(
+            manifest,
+            polygon_path,
+            data_root,
+            cache=cache,
+            registry=Registry(resolver),
+            stop_requested=lambda: False,
+            progress=lambda _event: None,
+        )
+
+    assert result.status == "built"
+    assert len(resolver.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_expired_direct_url_manifest_and_cache_are_refreshed(tmp_path: Path) -> None:
+    manifest, polygon_path, data_root = polygon_fixture(tmp_path)
+
+    class ExpiringRegistry:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def resolve_reference(
+            self,
+            reference: SourceReference,
+            *,
+            bbox: tuple[float, float, float, float],
+            resolver_contract_version: int,
+        ) -> ResolutionRecord:
+            del bbox
+            self.calls += 1
+            expiry = (
+                datetime.now(UTC) - timedelta(minutes=1)
+                if self.calls == 1
+                else datetime.now(UTC) + timedelta(days=1)
+            )
+            return ResolutionRecord(
+                reference.provider,
+                reference.canonical_reference,
+                resolver_contract_version,
+                "resolved",
+                (
+                    {
+                        "image_url": "https://cdn.test/image.jpg",
+                        "image_url_expires_at": expiry.isoformat(),
+                    },
+                ),
+                None,
+            )
+
+    registry = ExpiringRegistry()
+    with ResolutionCache.open(data_root) as cache:
+        first = await build_asset_shard(
+            manifest,
+            polygon_path,
+            data_root,
+            cache=cache,
+            registry=registry,
+            stop_requested=lambda: False,
+            progress=lambda _event: None,
+        )
+        second = await build_asset_shard(
+            manifest,
+            polygon_path,
+            data_root,
+            cache=cache,
+            registry=registry,
+            stop_requested=lambda: False,
+            progress=lambda _event: None,
+        )
+
+    assert (first.status, second.status) == ("built", "built")
+    assert registry.calls == 2
 
 
 @pytest.mark.asyncio

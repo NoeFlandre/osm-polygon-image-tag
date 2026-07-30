@@ -5,7 +5,11 @@ from pathlib import Path
 from osm_polygon_image_tag.artifacts.asset_inventory import verified_asset_manifests
 from osm_polygon_image_tag.artifacts.manifest_inventory import verified_manifests
 from osm_polygon_image_tag.artifacts.publication_types import PublicationFile
-from osm_polygon_image_tag.assets.manifest import read_asset_manifest
+from osm_polygon_image_tag.assets.manifest import (
+    AssetManifestError,
+    read_asset_manifest,
+    read_asset_manifest_header,
+)
 from osm_polygon_image_tag.assets.schema import (
     ASSET_SCHEMA_VERSION,
     RESOLVER_CONTRACT_VERSION,
@@ -43,6 +47,9 @@ def publication_inventory(data_root: Path) -> tuple[PublicationFile, ...]:
     _reject_symlinks(root)
     manifests = verified_manifests(root)
     asset_manifests = verified_asset_manifests(root)
+    for manifest, output in asset_manifests:
+        if file_sha256(output) != manifest.output.sha256:
+            raise PublicationError(f"asset digest mismatch: {manifest.output.relative_path}")
     manifested_digests = {
         manifest.output.relative_path: manifest.output.sha256 for manifest, _ in manifests
     }
@@ -67,14 +74,20 @@ def publication_inventory(data_root: Path) -> tuple[PublicationFile, ...]:
         ):
             allowed.add(relative_manifest)
     for path in sorted((root / "asset-manifests").glob("*.assets.manifest.json")):
-        manifest = read_asset_manifest(path)
         relative_manifest = path.relative_to(root).as_posix()
         managed.add(relative_manifest)
-        output = (root / manifest.output.relative_path).resolve()
+        try:
+            manifest = read_asset_manifest(path)
+            output_relative = manifest.output.relative_path
+        except AssetManifestError:
+            header = read_asset_manifest_header(path, data_root=root)
+            output_relative = header.output_relative_path
+            manifest = None
+        output = (root / output_relative).resolve()
         if root not in output.parents:
             raise PublicationError(f"managed asset output escapes data root: {output}")
         managed.add(output.relative_to(root).as_posix())
-        if (
+        if manifest is not None and (
             manifest.asset_schema_version == ASSET_SCHEMA_VERSION
             and manifest.resolver_contract_version == RESOLVER_CONTRACT_VERSION
         ):

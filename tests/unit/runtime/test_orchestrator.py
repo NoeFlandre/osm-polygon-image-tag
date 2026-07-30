@@ -3,6 +3,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
+import pytest
+
 from osm_polygon_image_tag.artifacts.publication import PublicationResult
 from osm_polygon_image_tag.artifacts.reporting import MetadataResult
 from osm_polygon_image_tag.core.config import PipelinePaths
@@ -225,6 +227,12 @@ def test_all_skipped_polygon_run_flushes_new_asset_backfill_once(tmp_path: Path)
             events.append("asset-finish")
             return EnrichmentSummary(built=1, rows=2, statuses={"resolved": 2})
 
+        def enable_checkpoints(self, callback: Callable[[], None], *, every: int) -> None:
+            del callback, every
+
+        def checkpoint(self, callback: Callable[[], None]) -> None:
+            callback()
+
     skipped = _result("region.osm.pbf")
     skipped = BuildResult(
         "skipped",
@@ -247,3 +255,88 @@ def test_all_skipped_polygon_run_flushes_new_asset_backfill_once(tmp_path: Path)
     assert events == ["asset-start", "asset-finish", "metadata", "publish"]
     assert summary.enrichment.built == 1
     assert summary.enrichment.rows == 2
+
+
+def test_extraction_failure_stops_and_closes_enrichment_worker(tmp_path: Path) -> None:
+    source = tmp_path / "raw"
+    source.mkdir()
+    (source / "region.osm.pbf").write_bytes(b"source")
+    paths = PipelinePaths.build(source_root=source, data_root=tmp_path / "generated")
+    token = StopToken()
+    events: list[str] = []
+
+    class Worker:
+        def start(self, initial_jobs: object) -> None:
+            del initial_jobs
+            events.append("start")
+
+        def submit(self, job: object) -> bool:
+            del job
+            return True
+
+        def finish(self) -> EnrichmentSummary:
+            events.append("finish")
+            return EnrichmentSummary()
+
+        def enable_checkpoints(self, callback: Callable[[], None], *, every: int) -> None:
+            del callback, every
+
+        def checkpoint(self, callback: Callable[[], None]) -> None:
+            callback()
+
+    def fail(_pbf: PbfSource, _paths: PipelinePaths) -> BuildResult:
+        raise RuntimeError("extraction failed")
+
+    with pytest.raises(RuntimeError, match="extraction failed"):
+        run_all(
+            paths,
+            build=fail,
+            stop_token=token,
+            enrichment_worker=Worker(),
+        )
+
+    assert token.requested
+    assert events == ["start", "finish"]
+
+
+def test_enriched_run_publishes_periodic_asset_checkpoints(tmp_path: Path) -> None:
+    source = tmp_path / "raw"
+    source.mkdir()
+    paths = PipelinePaths.build(source_root=source, data_root=tmp_path / "generated")
+    events: list[str] = []
+
+    class Worker:
+        def start(self, initial_jobs: object) -> None:
+            del initial_jobs
+
+        def submit(self, job: object) -> bool:
+            del job
+            return True
+
+        def enable_checkpoints(self, callback: Callable[[], None], *, every: int) -> None:
+            assert every == 25
+            callback()
+            callback()
+
+        def checkpoint(self, callback: Callable[[], None]) -> None:
+            callback()
+
+        def finish(self) -> EnrichmentSummary:
+            return EnrichmentSummary(built=50)
+
+    run_all(
+        paths,
+        enrichment_worker=Worker(),
+        metadata_builder=lambda root: events.append("metadata") or _metadata(root),
+        publisher=lambda _root: events.append("publish")
+        or PublicationResult("published", "abc", 1),
+    )
+
+    assert events == [
+        "metadata",
+        "publish",
+        "metadata",
+        "publish",
+        "metadata",
+        "publish",
+    ]

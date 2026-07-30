@@ -23,6 +23,14 @@ class ProviderRateLimited(SafeHttpError):
         self.retry_after_seconds = retry_after_seconds
 
 
+class ProviderNotFound(SafeHttpError):
+    """Provider reports that the requested asset does not exist."""
+
+
+class ProviderAccessDenied(SafeHttpError):
+    """Provider requires authorization or the asset is private."""
+
+
 def validate_public_url(url: str, addresses: Sequence[str]) -> None:
     try:
         parsed = urlparse(url)

@@ -55,6 +55,14 @@ class AssetManifest:
     counts: AssetRunCounts
 
 
+@dataclass(frozen=True, slots=True)
+class AssetManifestHeader:
+    manifest_schema_version: int
+    asset_schema_version: int
+    resolver_contract_version: int
+    output_relative_path: str
+
+
 def _canonical_bytes(manifest: AssetManifest) -> bytes:
     payload = json.dumps(
         asdict(manifest),
@@ -187,3 +195,28 @@ def read_asset_manifest(path: Path, *, data_root: Path | None = None) -> AssetMa
         raise
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as error:
         raise AssetManifestError(f"invalid asset manifest: {path}") from error
+
+
+def read_asset_manifest_header(
+    path: Path,
+    *,
+    data_root: Path,
+) -> AssetManifestHeader:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or not isinstance(payload.get("output"), dict):
+            raise TypeError
+        output = payload["output"]["relative_path"]
+        versions = (
+            payload["manifest_schema_version"],
+            payload["asset_schema_version"],
+            payload["resolver_contract_version"],
+        )
+        if not isinstance(output, str) or not all(isinstance(value, int) for value in versions):
+            raise TypeError
+        _validate_relative_path(output, data_root)
+        return AssetManifestHeader(*versions, output)
+    except AssetManifestError:
+        raise
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError) as error:
+        raise AssetManifestError(f"invalid asset manifest header: {path}") from error

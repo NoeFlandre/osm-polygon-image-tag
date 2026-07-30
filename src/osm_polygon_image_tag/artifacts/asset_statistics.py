@@ -57,6 +57,7 @@ def asset_statistics(
         "provider_counts": provider_counts,
         "status_counts": status_counts,
         "direct_urls": values[0],
+        "stable_direct_urls": max(0, values[0] - values[2]),
         "page_urls": values[1],
         "expiring_urls": values[2],
         "licensed_assets": values[3],

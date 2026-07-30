@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -88,3 +89,12 @@ def test_asset_inventory_rejects_size_mismatch(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="identity mismatch"):
         verified_asset_manifests(tmp_path)
+
+
+def test_asset_inventory_skips_manifest_from_old_asset_contract(tmp_path: Path) -> None:
+    _manifest, _output, manifest_path = asset_fixture(tmp_path)
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["asset_schema_version"] = ASSET_SCHEMA_VERSION - 1
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert verified_asset_manifests(tmp_path) == []

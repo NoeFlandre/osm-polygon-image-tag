@@ -126,6 +126,10 @@ Flickr return page-only results without `MAPILLARY_ACCESS_TOKEN` and
 `FLICKR_API_KEY`. Bing Streetside is page-only because this project uses no
 documented raw-image API for it.
 
+Expiring direct URLs refresh when they enter a one-hour refresh window.
+Provider cooldowns and temporary failures remain retryable rather than making
+a shard permanently reusable.
+
 Each `*.assets.parquet` has an atomic `*.assets.manifest.json` containing the
 polygon identity, asset/resolver versions, output identity, counts, and a
 digest of only cache records used by that shard. Unrelated cache writes cannot

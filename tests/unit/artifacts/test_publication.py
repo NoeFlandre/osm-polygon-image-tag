@@ -23,6 +23,7 @@ from osm_polygon_image_tag.assets.schema import (
     ASSET_SCHEMA_VERSION,
     RESOLVER_CONTRACT_VERSION,
 )
+from osm_polygon_image_tag.assets.storage import write_asset_parquet
 from osm_polygon_image_tag.core.errors import PublicationError
 from osm_polygon_image_tag.core.manifest import (
     DATASET_SCHEMA_VERSION,
@@ -60,8 +61,7 @@ def _dataset(root: Path) -> None:
 
 def _asset_dataset(root: Path) -> None:
     output = root / "assets" / "region.assets.parquet"
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_bytes(b"asset")
+    write_asset_parquet([], output)
     manifest = AssetManifest(
         ASSET_MANIFEST_SCHEMA_VERSION,
         ASSET_SCHEMA_VERSION,
@@ -131,6 +131,18 @@ def test_inventory_keeps_cache_and_retry_state_private(tmp_path: Path) -> None:
     assert all(not item.remote_path.startswith("cache/") for item in inventory)
 
 
+def test_inventory_rejects_same_size_asset_corruption(tmp_path: Path) -> None:
+    _dataset(tmp_path)
+    _asset_dataset(tmp_path)
+    output = tmp_path / "assets" / "region.assets.parquet"
+    content = bytearray(output.read_bytes())
+    content[len(content) // 2] ^= 1
+    output.write_bytes(content)
+
+    with pytest.raises(PublicationError, match="asset digest"):
+        publication_inventory(tmp_path)
+
+
 def test_inventory_reuses_manifest_digest_for_parquet(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -182,6 +194,23 @@ def test_inventory_ignores_managed_shards_from_old_contract_during_migration(
 
     assert "data/stale.parquet" not in {item.remote_path for item in inventory}
     assert "manifests/stale.manifest.json" not in {item.remote_path for item in inventory}
+
+
+def test_inventory_ignores_managed_asset_shards_from_old_contract(
+    tmp_path: Path,
+) -> None:
+    _dataset(tmp_path)
+    _asset_dataset(tmp_path)
+    manifest_path = tmp_path / "asset-manifests" / "region.assets.manifest.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["asset_schema_version"] = ASSET_SCHEMA_VERSION - 1
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    inventory = publication_inventory(tmp_path)
+    remote_paths = {item.remote_path for item in inventory}
+
+    assert "assets/region.assets.parquet" not in remote_paths
+    assert "asset-manifests/region.assets.manifest.json" not in remote_paths
 
 
 def test_old_contract_manifest_cannot_escape_data_root(tmp_path: Path) -> None:

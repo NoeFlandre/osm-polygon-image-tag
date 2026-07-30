@@ -75,10 +75,10 @@ file exists at the expected size, and confirm the current processing and
 schema versions match. If all of those match, the shard is reused without
 rehashing the PBF or re-reading the Parquet file.
 
-`verify` is the explicit deep verification path. It recomputes the source
-SHA-256, recomputes the output SHA-256, and re-reads the Parquet structure
-to confirm the row count and schema. Use it after a suspected corruption
-event or before publishing for the first time after a long pause.
+`verify` is the explicit deep verification path. It recomputes polygon source
+and output SHA-256 and also verifies every asset output SHA-256, row count, and
+Parquet schema. Use it after suspected corruption or before publication after
+a long pause.
 
 ## No-PBF historical backfill
 
@@ -87,6 +87,10 @@ asset manifests skip without provider calls. Missing asset shards read only
 polygon Parquet and cache; the PBF is neither opened nor rebuilt. Metadata and
 publication run after new polygon or asset outputs. Receipts suppress a
 redundant Hub commit on an unchanged second run.
+
+After extraction finishes, ongoing asset work is checkpointed every 25 shards.
+Each checkpoint runs between shard writes, regenerates both catalogs/card, and
+publishes only changed verified artifacts. A final receipt-aware flush follows.
 
 ## Progress events and heartbeats
 

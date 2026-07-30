@@ -162,3 +162,92 @@ def test_worker_failure_does_not_deadlock_a_full_producer_queue(tmp_path: Path) 
     assert isinstance(failures[0], RuntimeError)
     with pytest.raises(RuntimeError, match="resolver failed"):
         worker.finish()
+
+
+def test_worker_runs_bounded_checkpoints_between_asset_shards(tmp_path: Path) -> None:
+    first_started = threading.Event()
+    release = threading.Event()
+    checkpoints: list[str] = []
+
+    async def build(manifest: Manifest, path: Path, data_root: Path, **_kwargs: object):
+        del manifest, data_root
+        if not first_started.is_set():
+            first_started.set()
+            assert release.wait(timeout=2)
+        return AssetBuildResult(
+            "built",
+            f"data/{path.name}",
+            tmp_path / "assets" / f"{path.stem}.assets.parquet",
+            tmp_path / "asset-manifests" / f"{path.stem}.json",
+            1,
+            {"resolved": 1},
+        )
+
+    worker = EnrichmentWorker(
+        tmp_path,
+        builder=build,
+        cache_factory=lambda _root: object(),
+        registry_factory=lambda: object(),
+        stop_requested=lambda: False,
+        progress=lambda _event: None,
+    )
+    worker.start(
+        AssetJob(_manifest(str(index)), tmp_path / f"{index}.parquet") for index in range(5)
+    )
+    assert first_started.wait(timeout=2)
+    worker.enable_checkpoints(lambda: checkpoints.append("publish"), every=2)
+    release.set()
+
+    worker.finish()
+
+    assert checkpoints == ["publish", "publish"]
+
+
+def test_explicit_checkpoint_waits_for_active_shard_and_pauses_next(
+    tmp_path: Path,
+) -> None:
+    first_started = threading.Event()
+    release = threading.Event()
+    calls: list[str] = []
+
+    async def build(manifest: Manifest, path: Path, data_root: Path, **_kwargs: object):
+        del manifest, data_root
+        calls.append(path.name)
+        if len(calls) == 1:
+            first_started.set()
+            assert release.wait(timeout=2)
+        return AssetBuildResult(
+            "built",
+            f"data/{path.name}",
+            tmp_path / "assets" / f"{path.stem}.assets.parquet",
+            tmp_path / "asset-manifests" / f"{path.stem}.json",
+            1,
+            {"resolved": 1},
+        )
+
+    worker = EnrichmentWorker(
+        tmp_path,
+        builder=build,
+        cache_factory=lambda _root: object(),
+        registry_factory=lambda: object(),
+        stop_requested=lambda: False,
+        progress=lambda _event: None,
+    )
+    worker.start(
+        AssetJob(_manifest(str(index)), tmp_path / f"{index}.parquet") for index in range(2)
+    )
+    assert first_started.wait(timeout=2)
+    checkpoint_done = threading.Event()
+    checkpoint = threading.Thread(
+        target=lambda: (
+            worker.checkpoint(lambda: calls.append("checkpoint")),
+            checkpoint_done.set(),
+        ),
+        daemon=True,
+    )
+    checkpoint.start()
+    release.set()
+
+    assert checkpoint_done.wait(timeout=2)
+    assert calls[:2] == ["0.parquet", "checkpoint"]
+    worker.finish()

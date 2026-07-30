@@ -5,6 +5,8 @@ import httpx
 import pytest
 
 from osm_polygon_image_tag.resolvers.http import (
+    ProviderAccessDenied,
+    ProviderNotFound,
     ProviderRateLimited,
     ResponseTooLarge,
     SafeHttpClient,
@@ -94,6 +96,32 @@ async def test_redirect_is_revalidated_before_following() -> None:
 
 
 @pytest.mark.asyncio
+async def test_https_redirect_cannot_downgrade_or_forward_authorization() -> None:
+    requests: list[httpx.Request] = []
+
+    async def handle(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            302,
+            headers={"location": "http://example.test/insecure"},
+        )
+
+    client = SafeHttpClient(
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handle)),
+        resolve=_resolver({"example.test": ("93.184.216.34",)}),
+    )
+
+    with pytest.raises(UnsafeUrlError, match="downgrade"):
+        await client.get_json(
+            "https://example.test/start",
+            headers={"Authorization": "Bearer secret"},
+        )
+
+    assert len(requests) == 1
+    await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_redirect_loop_is_bounded() -> None:
     async def handle(request: httpx.Request) -> httpx.Response:
         return httpx.Response(302, headers={"location": str(request.url)})
@@ -152,6 +180,28 @@ async def test_json_body_and_headers_are_bounded() -> None:
 
 
 @pytest.mark.asyncio
+async def test_json_nesting_is_bounded() -> None:
+    payload: dict[str, object] = {}
+    cursor = payload
+    for _ in range(70):
+        nested: dict[str, object] = {}
+        cursor["nested"] = nested
+        cursor = nested
+
+    async def handle(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+
+    client = SafeHttpClient(
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handle)),
+        resolve=_resolver({"example.test": ("93.184.216.34",)}),
+    )
+
+    with pytest.raises(ResponseTooLarge, match="nesting"):
+        await client.get_json("https://example.test/data")
+    await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_timeout_error_redacts_query_and_credentials() -> None:
     async def handle(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("secret=provider-token", request=request)
@@ -205,4 +255,26 @@ async def test_retry_after_is_exposed_as_structured_cooldown() -> None:
         await client.get_json("https://example.test/data")
 
     assert error.value.retry_after_seconds == 120
+    await client.aclose()
+
+
+@pytest.mark.parametrize(
+    ("status_code", "exception"),
+    [(404, ProviderNotFound), (401, ProviderAccessDenied), (403, ProviderAccessDenied)],
+)
+@pytest.mark.asyncio
+async def test_provider_http_outcomes_remain_structured(
+    status_code: int,
+    exception: type[Exception],
+) -> None:
+    async def handle(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status_code)
+
+    client = SafeHttpClient(
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handle)),
+        resolve=_resolver({"example.test": ("93.184.216.34",)}),
+    )
+
+    with pytest.raises(exception):
+        await client.get_json("https://example.test/data")
     await client.aclose()

@@ -88,9 +88,8 @@ Authenticate first with `hf auth login`.
 - `run`: process or resume every PBF locally while backfilling missing asset
   shards from finalized polygon Parquet. Compatible polygon and asset shards
   are fast-skipped.
-- `verify`: revalidate every finalized shard by recomputing the source and
-  output SHA-256 and re-reading the Parquet file. This is the explicit
-  deep verification path. Use it after a suspected corruption event.
+- `verify`: deeply revalidate polygon source/output identities and every
+  finalized asset shard SHA-256, row count, and Parquet schema.
 - `rebuild-metadata`: rebuild the catalog, statistics JSON, and dataset
   card from the existing shards. Useful after schema changes that you
   already absorbed, or to refresh the card without touching PBFs.
@@ -115,6 +114,10 @@ manifest skips in constant time; a missing asset shard reads only needed
 Parquet columns and consults `cache/resolutions.sqlite`. It never opens the
 original PBF. If no polygon or asset output changed, publication receipts
 prevent a redundant Hub commit.
+
+After extraction reaches a safe boundary, long asset backfills regenerate
+metadata and publish a coalesced checkpoint every 25 completed asset shards,
+followed by one final receipt-aware publication.
 
 Mapillary direct URLs require `MAPILLARY_ACCESS_TOKEN`; Flickr direct URLs
 require `FLICKR_API_KEY`. Without them the dataset records a factual page URL

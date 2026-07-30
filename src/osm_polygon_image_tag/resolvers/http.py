@@ -1,3 +1,4 @@
+import asyncio
 import ipaddress
 import json
 from collections.abc import Mapping
@@ -8,6 +9,8 @@ import httpx
 
 from osm_polygon_image_tag.resolvers.pinned_transport import PinnedAsyncTransport, system_resolve
 from osm_polygon_image_tag.resolvers.policy import (
+    ProviderAccessDenied,
+    ProviderNotFound,
     ProviderRateLimited,
     ResponseTooLarge,
     SafeHttpError,
@@ -18,6 +21,7 @@ from osm_polygon_image_tag.resolvers.types import HostResolver, ImageProbe
 
 _REDIRECTS = frozenset({301, 302, 303, 307, 308})
 _SENSITIVE_HEADERS = frozenset({"authorization", "cookie", "proxy-authorization"})
+_MAX_RETRY_AFTER_SECONDS = 3600
 
 
 def _redacted_url(url: str) -> str:
@@ -27,6 +31,28 @@ def _redacted_url(url: str) -> str:
 
 def _header_size(headers: httpx.Headers) -> int:
     return sum(len(key.encode()) + len(value.encode()) for key, value in headers.multi_items())
+
+
+def _origin(url: str) -> tuple[str, str | None, int | None]:
+    parsed = urlparse(url)
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    return parsed.scheme, parsed.hostname, port
+
+
+def _validate_json_shape(payload: object) -> None:
+    stack = [(payload, 0)]
+    nodes = 0
+    while stack:
+        value, depth = stack.pop()
+        nodes += 1
+        if depth > 64:
+            raise ResponseTooLarge("provider JSON nesting exceeds limit")
+        if nodes > 100_000:
+            raise ResponseTooLarge("provider JSON element count exceeds limit")
+        if isinstance(value, dict):
+            stack.extend((item, depth + 1) for item in value.values())
+        elif isinstance(value, list):
+            stack.extend((item, depth + 1) for item in value)
 
 
 class SafeHttpClient:
@@ -44,6 +70,7 @@ class SafeHttpClient:
         self._max_metadata_bytes = max_metadata_bytes
         self._max_header_bytes = max_header_bytes
         self._max_redirects = max_redirects
+        self._total_timeout = timeout_seconds
         self._client = client or httpx.AsyncClient(
             transport=PinnedAsyncTransport(resolve=resolve),
             follow_redirects=False,
@@ -78,9 +105,21 @@ class SafeHttpClient:
         *,
         headers: Mapping[str, str] | None = None,
     ) -> Mapping[str, object]:
+        try:
+            async with asyncio.timeout(self._total_timeout):
+                return await self._get_json(url, headers=headers)
+        except TimeoutError as error:
+            raise SafeHttpError(f"provider request timed out: {_redacted_url(url)}") from error
+
+    async def _get_json(
+        self,
+        url: str,
+        *,
+        headers: Mapping[str, str] | None,
+    ) -> Mapping[str, object]:
         current = url
         request_headers = dict(headers or {})
-        origin = urlparse(current).netloc
+        origin = _origin(current)
         for _redirect_count in range(self._max_redirects + 1):
             await self._validate(current)
             try:
@@ -92,22 +131,29 @@ class SafeHttpClient:
                         if location is None:
                             raise SafeHttpError("redirect response has no location")
                         next_url = urljoin(current, location)
-                        if urlparse(next_url).netloc != origin:
+                        next_origin = _origin(next_url)
+                        if origin[0] == "https" and next_origin[0] != "https":
+                            raise UnsafeUrlError("HTTPS redirect downgrade is forbidden")
+                        if next_origin != origin:
                             request_headers = {
                                 key: value
                                 for key, value in request_headers.items()
                                 if key.lower() not in _SENSITIVE_HEADERS
                             }
                         current = next_url
-                        origin = urlparse(current).netloc
+                        origin = next_origin
                         continue
                     if response.status_code == 429:
                         retry_value = response.headers.get("retry-after", "")
                         raise ProviderRateLimited(
-                            int(retry_value)
+                            min(int(retry_value), _MAX_RETRY_AFTER_SECONDS)
                             if retry_value.isascii() and retry_value.isdigit()
                             else None
                         )
+                    if response.status_code == 404:
+                        raise ProviderNotFound("provider asset not found")
+                    if response.status_code in {401, 403}:
+                        raise ProviderAccessDenied("provider access denied")
                     response.raise_for_status()
                     payload = json.loads(await self._body(response))
             except (httpx.HTTPError, httpcore.NetworkError, httpcore.TimeoutException) as error:
@@ -116,10 +162,18 @@ class SafeHttpClient:
                 raise SafeHttpError("provider returned invalid JSON") from error
             if not isinstance(payload, dict):
                 raise SafeHttpError("provider JSON must be an object")
+            _validate_json_shape(payload)
             return payload
         raise SafeHttpError("too many redirects")
 
     async def probe_image(self, url: str) -> ImageProbe:
+        try:
+            async with asyncio.timeout(self._total_timeout):
+                return await self._probe_image(url)
+        except TimeoutError as error:
+            raise SafeHttpError(f"provider request timed out: {_redacted_url(url)}") from error
+
+    async def _probe_image(self, url: str) -> ImageProbe:
         current = url
         for _redirect_count in range(self._max_redirects + 1):
             await self._validate(current)
@@ -152,6 +206,8 @@ class SafeHttpClient:
 
 
 __all__ = [
+    "ProviderAccessDenied",
+    "ProviderNotFound",
     "ProviderRateLimited",
     "ResponseTooLarge",
     "SafeHttpClient",

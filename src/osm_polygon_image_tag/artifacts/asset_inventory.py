@@ -2,7 +2,13 @@
 
 from pathlib import Path
 
-from osm_polygon_image_tag.assets.manifest import AssetManifest, read_asset_manifest
+from osm_polygon_image_tag.assets.manifest import (
+    ASSET_MANIFEST_SCHEMA_VERSION,
+    AssetManifest,
+    AssetManifestError,
+    read_asset_manifest,
+    read_asset_manifest_header,
+)
 from osm_polygon_image_tag.assets.schema import (
     ASSET_SCHEMA_VERSION,
     RESOLVER_CONTRACT_VERSION,
@@ -26,7 +32,17 @@ def verified_asset_manifests(
     pending_retries = 0
     verified_bytes = 0
     for index, manifest_path in enumerate(manifest_paths, start=1):
-        manifest = read_asset_manifest(manifest_path)
+        try:
+            manifest = read_asset_manifest(manifest_path)
+        except AssetManifestError:
+            header = read_asset_manifest_header(manifest_path, data_root=root)
+            if (
+                header.manifest_schema_version != ASSET_MANIFEST_SCHEMA_VERSION
+                or header.asset_schema_version != ASSET_SCHEMA_VERSION
+                or header.resolver_contract_version != RESOLVER_CONTRACT_VERSION
+            ):
+                continue
+            raise
         if (
             manifest.asset_schema_version != ASSET_SCHEMA_VERSION
             or manifest.resolver_contract_version != RESOLVER_CONTRACT_VERSION

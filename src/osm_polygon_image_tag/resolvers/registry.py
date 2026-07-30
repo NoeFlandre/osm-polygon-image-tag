@@ -14,7 +14,12 @@ from osm_polygon_image_tag.resolvers.http import SafeHttpClient
 from osm_polygon_image_tag.resolvers.kartaview import KartaViewResolver
 from osm_polygon_image_tag.resolvers.mapillary import MapillaryResolver
 from osm_polygon_image_tag.resolvers.panoramax import PanoramaxResolver
-from osm_polygon_image_tag.resolvers.policy import ProviderRateLimited
+from osm_polygon_image_tag.resolvers.policy import (
+    ProviderAccessDenied,
+    ProviderNotFound,
+    ProviderRateLimited,
+    SafeHttpError,
+)
 from osm_polygon_image_tag.resolvers.streetside import StreetsideResolver
 from osm_polygon_image_tag.resolvers.types import ResolutionResult, Resolver, ResolverContext
 
@@ -107,6 +112,16 @@ class ResolverRegistry:
         bbox: tuple[float, float, float, float],
         resolver_contract_version: int,
     ) -> ResolutionRecord:
+        if reference.resolver_kind == "invalid":
+            return ResolutionRecord(
+                provider=reference.provider,
+                canonical_reference=reference.canonical_reference,
+                resolver_contract_version=resolver_contract_version,
+                status="invalid_reference",
+                assets=(),
+                retry_after=None,
+                reason="invalid_provider_reference",
+            )
         async with self._semaphores[reference.provider]:
             await self._pace(reference.provider)
             try:
@@ -114,8 +129,20 @@ class ResolverRegistry:
                     reference.canonical_reference,
                     context=ResolverContext(bbox=bbox, environment=self.environment),
                 )
+            except ProviderNotFound:
+                result = ResolutionResult(
+                    status="not_found",
+                    reason="provider_asset_not_found",
+                )
+            except ProviderAccessDenied:
+                result = ResolutionResult(
+                    status="requires_auth",
+                    reason="provider_access_denied",
+                )
             except ProviderRateLimited as error:
                 seconds = error.retry_after_seconds
+                if seconds is not None:
+                    await self._cooldown(reference.provider, seconds)
                 self._progress(
                     {
                         "event": "asset_provider_cooldown",
@@ -129,6 +156,11 @@ class ResolverRegistry:
                         self._utcnow() + timedelta(seconds=seconds) if seconds is not None else None
                     ),
                     reason="provider_rate_limited",
+                )
+            except SafeHttpError:
+                result = ResolutionResult(
+                    status="temporary_failure",
+                    reason="provider_request_failed",
                 )
         assets: list[dict[str, object]] = []
         for asset in result.assets:
@@ -155,6 +187,14 @@ class ResolverRegistry:
                 await self._sleep(delay)
             interval = 1.0 / _LIMITS[provider].requests_per_second
             self._next_request[provider] = self._monotonic() + interval
+
+    async def _cooldown(self, provider: str, seconds: int) -> None:
+        async with self._rate_locks[provider]:
+            deadline = self._monotonic() + seconds
+            self._next_request[provider] = max(
+                self._next_request[provider],
+                deadline,
+            )
 
     def limit_for(self, provider: str) -> ProviderLimit:
         return _LIMITS[provider]

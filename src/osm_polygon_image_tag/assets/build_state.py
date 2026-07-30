@@ -1,6 +1,9 @@
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
+
+import pyarrow.parquet as pq
 
 from osm_polygon_image_tag.assets.manifest import (
     AssetManifest,
@@ -39,6 +42,16 @@ def polygon_identity(manifest: Manifest) -> AssetSourceIdentity:
     )
 
 
+def _expiring_url(path: Path) -> bool:
+    refresh_before = datetime.now(UTC) + timedelta(hours=1)
+    parquet = pq.ParquetFile(path)
+    for batch in parquet.iter_batches(columns=["image_url_expires_at"]):
+        for expiry in batch.column(0).to_pylist():
+            if isinstance(expiry, datetime) and expiry <= refresh_before:
+                return True
+    return False
+
+
 def reusable_manifest(
     path: Path,
     output: Path,
@@ -53,9 +66,11 @@ def reusable_manifest(
             manifest.source != source
             or manifest.asset_schema_version != ASSET_SCHEMA_VERSION
             or manifest.resolver_contract_version != resolver_contract_version
+            or manifest.counts.pending_retries > 0
             or not output.is_file()
             or output.is_symlink()
             or output.stat().st_size != manifest.output.size_bytes
+            or _expiring_url(output)
         ):
             return None
         return manifest

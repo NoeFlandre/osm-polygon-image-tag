@@ -1,11 +1,12 @@
 import signal
 import threading
-from collections.abc import Callable, Iterable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable, Iterable, Iterator, Sequence
+from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from osm_polygon_image_tag.artifacts.asset_verify import verify_assets
 from osm_polygon_image_tag.artifacts.manifest_inventory import verified_manifests
 from osm_polygon_image_tag.artifacts.publication import PublicationResult
 from osm_polygon_image_tag.artifacts.reporting import MetadataResult, generate_metadata
@@ -27,6 +28,8 @@ Progress = Callable[[dict[str, object]], None]
 class EnrichmentController(Protocol):
     def start(self, initial_jobs: Iterable[AssetJob]) -> None: ...
     def submit(self, job: AssetJob) -> bool: ...
+    def enable_checkpoints(self, callback: Callable[[], None], *, every: int) -> None: ...
+    def checkpoint(self, callback: Callable[[], None]) -> None: ...
     def finish(self) -> EnrichmentSummary: ...
 
 
@@ -60,9 +63,110 @@ class VerifySummary:
     checked: int
     valid: int
     invalid: int
+    asset_checked: int = 0
+    asset_valid: int = 0
+    asset_invalid: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def _build_sources(
+    sources: Sequence[PbfSource],
+    paths: PipelinePaths,
+    *,
+    build: Build,
+    token: StopToken,
+    emit: Progress,
+    enrichment_worker: EnrichmentController | None,
+    metadata_builder: MetadataBuilder,
+    publisher: Publisher | None,
+) -> list[BuildResult]:
+    results: list[BuildResult] = []
+    worker_started = False
+    try:
+        if enrichment_worker is not None:
+            worker_started = True
+            enrichment_worker.start(
+                AssetJob(manifest, output)
+                for manifest, output in verified_manifests(paths.data_root, progress=emit)
+            )
+        for index, source in enumerate(sources, start=1):
+            if token.requested:
+                break
+            emit(
+                {
+                    "event": "pbf_started",
+                    "pbf_index": index,
+                    "pbf_count": len(sources),
+                    "source_pbf": source.relative_path.as_posix(),
+                    "source_bytes": source.size_bytes,
+                }
+            )
+            result = build(source, paths)
+            results.append(result)
+            if enrichment_worker is not None and result.manifest_path.is_file():
+                enrichment_worker.submit(
+                    AssetJob(read_manifest(result.manifest_path), result.output_path)
+                )
+            emit(
+                {
+                    "event": "pbf_completed",
+                    "pbf_index": index,
+                    "pbf_count": len(sources),
+                    "source_pbf": result.source_pbf,
+                    "status": result.status,
+                    "accepted_rows": result.accepted_rows,
+                    "rejections": result.rejections,
+                }
+            )
+            if result.status == "built" and enrichment_worker is not None and publisher is not None:
+                enrichment_worker.checkpoint(
+                    lambda: _refresh_artifacts(
+                        paths,
+                        emit,
+                        metadata_builder=metadata_builder,
+                        publisher=publisher,
+                    )
+                )
+            if result.status == "skipped" or enrichment_worker is not None:
+                continue
+            _refresh_artifacts(
+                paths,
+                emit,
+                metadata_builder=metadata_builder,
+                publisher=publisher,
+            )
+    except BaseException:
+        token.request()
+        if worker_started and enrichment_worker is not None:
+            with suppress(BaseException):
+                enrichment_worker.finish()
+        raise
+    return results
+
+
+def _refresh_artifacts(
+    paths: PipelinePaths,
+    emit: Progress,
+    *,
+    metadata_builder: MetadataBuilder | None,
+    publisher: Publisher | None,
+) -> None:
+    builder = metadata_builder or generate_metadata
+    emit({"event": "metadata_started"})
+    metadata = builder(paths.data_root)
+    emit(
+        {
+            "event": "metadata_completed",
+            "statistics_path": str(metadata.statistics_path),
+            "card_path": str(metadata.card_path),
+        }
+    )
+    if publisher is not None:
+        emit({"event": "publication_started"})
+        publication = publisher(paths.data_root)
+        emit({"event": "publication_completed", **publication.to_dict()})
 
 
 def run_all(
@@ -85,56 +189,26 @@ def run_all(
             "pbf_bytes": sum(source.size_bytes for source in sources),
         }
     )
-    results: list[BuildResult] = []
-    if enrichment_worker is not None:
-        enrichment_worker.start(
-            AssetJob(manifest, output)
-            for manifest, output in verified_manifests(paths.data_root, progress=emit)
+    results = _build_sources(
+        sources,
+        paths,
+        build=build,
+        token=token,
+        emit=emit,
+        enrichment_worker=enrichment_worker,
+        metadata_builder=metadata_builder,
+        publisher=publisher,
+    )
+    if enrichment_worker is not None and publisher is not None:
+        enrichment_worker.enable_checkpoints(
+            lambda: _refresh_artifacts(
+                paths,
+                emit,
+                metadata_builder=metadata_builder,
+                publisher=publisher,
+            ),
+            every=25,
         )
-    for index, source in enumerate(sources, start=1):
-        if token.requested:
-            break
-        emit(
-            {
-                "event": "pbf_started",
-                "pbf_index": index,
-                "pbf_count": len(sources),
-                "source_pbf": source.relative_path.as_posix(),
-                "source_bytes": source.size_bytes,
-            }
-        )
-        result = build(source, paths)
-        results.append(result)
-        if enrichment_worker is not None and result.manifest_path.is_file():
-            enrichment_worker.submit(
-                AssetJob(read_manifest(result.manifest_path), result.output_path)
-            )
-        emit(
-            {
-                "event": "pbf_completed",
-                "pbf_index": index,
-                "pbf_count": len(sources),
-                "source_pbf": result.source_pbf,
-                "status": result.status,
-                "accepted_rows": result.accepted_rows,
-                "rejections": result.rejections,
-            }
-        )
-        if result.status == "skipped" or enrichment_worker is not None:
-            continue
-        emit({"event": "metadata_started"})
-        metadata = metadata_builder(paths.data_root)
-        emit(
-            {
-                "event": "metadata_completed",
-                "statistics_path": str(metadata.statistics_path),
-                "card_path": str(metadata.card_path),
-            }
-        )
-        if publisher is not None:
-            emit({"event": "publication_started"})
-            publication = publisher(paths.data_root)
-            emit({"event": "publication_completed", **publication.to_dict()})
     enrichment = (
         enrichment_worker.finish() if enrichment_worker is not None else EnrichmentSummary()
     )
@@ -143,19 +217,12 @@ def run_all(
         and (any(result.status == "built" for result in results) or enrichment.built > 0)
     )
     if needs_final_artifacts:
-        emit({"event": "metadata_started"})
-        metadata = metadata_builder(paths.data_root)
-        emit(
-            {
-                "event": "metadata_completed",
-                "statistics_path": str(metadata.statistics_path),
-                "card_path": str(metadata.card_path),
-            }
+        _refresh_artifacts(
+            paths,
+            emit,
+            metadata_builder=metadata_builder,
+            publisher=publisher,
         )
-        if publisher is not None:
-            emit({"event": "publication_started"})
-            publication = publisher(paths.data_root)
-            emit({"event": "publication_completed", **publication.to_dict()})
     summary = RunSummary(
         processed=len(results),
         built=sum(result.status == "built" for result in results),
@@ -171,7 +238,15 @@ def run_all(
 def verify_all(paths: PipelinePaths) -> VerifySummary:
     results = [verify_one(source, paths) for source in discover_pbfs(paths.source_root)]
     valid = sum(results)
-    return VerifySummary(checked=len(results), valid=valid, invalid=len(results) - valid)
+    assets = verify_assets(paths.data_root)
+    return VerifySummary(
+        checked=len(results),
+        valid=valid,
+        invalid=len(results) - valid,
+        asset_checked=assets.checked,
+        asset_valid=assets.valid,
+        asset_invalid=assets.invalid,
+    )
 
 
 @contextmanager

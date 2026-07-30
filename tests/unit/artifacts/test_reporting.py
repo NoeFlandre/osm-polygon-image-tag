@@ -73,6 +73,7 @@ def test_empty_metadata_is_deterministic_and_factual(tmp_path: Path) -> None:
         "rows": 0,
         "shards": 0,
         "status_counts": {},
+        "stable_direct_urls": 0,
         "truncated_categories": 0,
     }
     frontmatter = yaml.safe_load(first_card.split(b"---", maxsplit=2)[1])
@@ -237,5 +238,6 @@ def test_metadata_derives_factual_asset_statistics(tmp_path: Path) -> None:
         "resolved_page_only": 1,
     }
     assert statistics["assets"]["direct_urls"] == 1
+    assert statistics["assets"]["stable_direct_urls"] == 1
     assert statistics["assets"]["page_urls"] == 2
     assert statistics["assets"]["licensed_assets"] == 1
