@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from osm_polygon_image_tag.errors import ConfigurationError
+from osm_polygon_image_tag.core.errors import ConfigurationError
 
 
 def _overlaps(left: Path, right: Path) -> bool:

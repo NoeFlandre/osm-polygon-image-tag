@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from osm_polygon_image_tag.manifest import (
+from osm_polygon_image_tag.core.manifest import (
     DATASET_SCHEMA_VERSION,
     PROCESSING_CONTRACT_VERSION,
     Manifest,

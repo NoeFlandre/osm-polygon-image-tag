@@ -2,7 +2,7 @@ import json
 
 import pyarrow as pa
 
-from osm_polygon_image_tag.schema import dataset_schema
+from osm_polygon_image_tag.core.schema import dataset_schema
 
 
 def test_dataset_schema_has_exact_columns_and_nullability() -> None:

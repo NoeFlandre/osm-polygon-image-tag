@@ -8,7 +8,7 @@ from typing import Any, BinaryIO
 
 import osmium
 
-from osm_polygon_image_tag.errors import ImageTagPipelineError
+from osm_polygon_image_tag.core.errors import ImageTagPipelineError
 
 TARGET_TAG_KEYS = (
     "image",

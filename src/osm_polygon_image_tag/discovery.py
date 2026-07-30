@@ -3,7 +3,7 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from osm_polygon_image_tag.errors import ConfigurationError
+from osm_polygon_image_tag.core.errors import ConfigurationError
 
 
 @dataclass(frozen=True, slots=True, order=True)

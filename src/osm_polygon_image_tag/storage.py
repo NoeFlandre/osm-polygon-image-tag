@@ -9,8 +9,8 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from osm_polygon_image_tag.errors import ImageTagPipelineError
-from osm_polygon_image_tag.schema import GEOPARQUET_VERSION, dataset_schema
+from osm_polygon_image_tag.core.errors import ImageTagPipelineError
+from osm_polygon_image_tag.core.schema import GEOPARQUET_VERSION, dataset_schema
 
 
 class StorageError(ImageTagPipelineError):

@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from osm_polygon_image_tag.config import PipelinePaths
+from osm_polygon_image_tag.core.config import PipelinePaths
 from osm_polygon_image_tag.discovery import PbfSource, discover_pbfs
 from osm_polygon_image_tag.pipeline import BuildResult, build_one, verify_one
 from osm_polygon_image_tag.publication import PublicationResult

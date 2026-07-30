@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from osm_polygon_image_tag.config import PipelinePaths
-from osm_polygon_image_tag.errors import ConfigurationError
+from osm_polygon_image_tag.core.config import PipelinePaths
+from osm_polygon_image_tag.core.errors import ConfigurationError
 
 
 def test_accepts_separate_existing_source_and_output(tmp_path: Path) -> None:

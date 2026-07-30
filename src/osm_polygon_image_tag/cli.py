@@ -4,8 +4,8 @@ import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from osm_polygon_image_tag.config import PipelinePaths
-from osm_polygon_image_tag.errors import ImageTagPipelineError
+from osm_polygon_image_tag.core.config import PipelinePaths
+from osm_polygon_image_tag.core.errors import ImageTagPipelineError
 from osm_polygon_image_tag.orchestrator import (
     RunSummary,
     StopToken,
@@ -15,7 +15,7 @@ from osm_polygon_image_tag.orchestrator import (
     verify_all,
 )
 from osm_polygon_image_tag.preflight import PreflightReport, run_preflight
-from osm_polygon_image_tag.progress import ProgressReporter
+from osm_polygon_image_tag.core.progress import ProgressReporter
 from osm_polygon_image_tag.publication import (
     EXPECTED_REPO,
     HuggingFaceHub,

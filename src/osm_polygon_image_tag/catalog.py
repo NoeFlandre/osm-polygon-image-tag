@@ -4,13 +4,13 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 
-from osm_polygon_image_tag.manifest import (
+from osm_polygon_image_tag.core.manifest import (
     DATASET_SCHEMA_VERSION,
     PROCESSING_CONTRACT_VERSION,
     Manifest,
     read_manifest,
 )
-from osm_polygon_image_tag.progress import Progress
+from osm_polygon_image_tag.core.progress import Progress
 
 PROVIDERS = (
     "image",

@@ -1,6 +1,6 @@
 import time
 
-from osm_polygon_image_tag.progress import ProgressReporter
+from osm_polygon_image_tag.core.progress import ProgressReporter
 
 
 def test_reporter_emits_heartbeat_with_last_stage() -> None:

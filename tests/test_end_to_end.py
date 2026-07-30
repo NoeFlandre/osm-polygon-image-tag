@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from osm_polygon_image_tag.config import PipelinePaths
+from osm_polygon_image_tag.core.config import PipelinePaths
 from osm_polygon_image_tag.orchestrator import run_all
 from osm_polygon_image_tag.publication import (
     EXPECTED_REPO,

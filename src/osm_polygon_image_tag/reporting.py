@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from osm_polygon_image_tag.catalog import PROVIDERS, sync_catalog, verified_manifests
-from osm_polygon_image_tag.manifest import Manifest
-from osm_polygon_image_tag.progress import Progress
+from osm_polygon_image_tag.core.manifest import Manifest
+from osm_polygon_image_tag.core.progress import Progress
 
 
 @dataclass(frozen=True, slots=True)

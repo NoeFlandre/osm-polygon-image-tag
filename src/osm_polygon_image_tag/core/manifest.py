@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from osm_polygon_image_tag.errors import ImageTagPipelineError
+from osm_polygon_image_tag.core.errors import ImageTagPipelineError
 
 MANIFEST_SCHEMA_VERSION = 1
 PROCESSING_CONTRACT_VERSION = 2

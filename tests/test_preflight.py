@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from osm_polygon_image_tag.config import PipelinePaths
-from osm_polygon_image_tag.errors import PreflightError
+from osm_polygon_image_tag.core.config import PipelinePaths
+from osm_polygon_image_tag.core.errors import PreflightError
 from osm_polygon_image_tag.preflight import (
     Capacity,
     PreflightReport,

@@ -8,9 +8,9 @@ import pytest
 
 import osm_polygon_image_tag.reporting as reporting
 from osm_polygon_image_tag.catalog import verified_manifests as catalog_verified_manifests
-from osm_polygon_image_tag.config import PipelinePaths
+from osm_polygon_image_tag.core.config import PipelinePaths
 from osm_polygon_image_tag.discovery import discover_pbfs
-from osm_polygon_image_tag.manifest import (
+from osm_polygon_image_tag.core.manifest import (
     DATASET_SCHEMA_VERSION,
     PROCESSING_CONTRACT_VERSION,
     Manifest,
@@ -21,7 +21,7 @@ from osm_polygon_image_tag.manifest import (
     write_manifest,
 )
 from osm_polygon_image_tag.pipeline import build_one
-from osm_polygon_image_tag.progress import Progress
+from osm_polygon_image_tag.core.progress import Progress
 from osm_polygon_image_tag.reporting import generate_metadata
 from osm_polygon_image_tag.storage import write_geoparquet
 

@@ -7,7 +7,7 @@ from shapely import to_wkb
 from shapely.geometry import Polygon
 
 import osm_polygon_image_tag.pipeline as pipeline
-from osm_polygon_image_tag.config import PipelinePaths
+from osm_polygon_image_tag.core.config import PipelinePaths
 from osm_polygon_image_tag.discovery import PbfSource
 from osm_polygon_image_tag.extraction import ExportRecord, SourceTagRecord
 from osm_polygon_image_tag.pipeline import build_one, verify_one

@@ -5,8 +5,8 @@ from typing import Any
 
 import pytest
 
-from osm_polygon_image_tag.errors import PublicationError
-from osm_polygon_image_tag.manifest import (
+from osm_polygon_image_tag.core.errors import PublicationError
+from osm_polygon_image_tag.core.manifest import (
     DATASET_SCHEMA_VERSION,
     PROCESSING_CONTRACT_VERSION,
     Manifest,
