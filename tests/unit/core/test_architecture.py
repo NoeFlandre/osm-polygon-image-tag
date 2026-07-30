@@ -4,10 +4,20 @@ from pathlib import Path
 PACKAGE_ROOT = Path("src/osm_polygon_image_tag")
 ALLOWED_IMPORTS = {
     "core": {"core"},
+    "assets": {"core", "assets"},
     "ingest": {"core", "ingest"},
-    "artifacts": {"core", "artifacts"},
+    "resolvers": {"core", "assets", "resolvers"},
+    "artifacts": {"core", "assets", "artifacts"},
     "integrations": {"core", "artifacts", "integrations"},
-    "runtime": {"core", "ingest", "artifacts", "integrations", "runtime"},
+    "runtime": {
+        "core",
+        "assets",
+        "resolvers",
+        "ingest",
+        "artifacts",
+        "integrations",
+        "runtime",
+    },
 }
 
 
