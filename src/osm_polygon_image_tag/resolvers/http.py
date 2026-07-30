@@ -84,11 +84,14 @@ class SafeHttpClient:
             literal = ipaddress.ip_address(parsed.hostname) if parsed.hostname else None
         except ValueError:
             literal = None
-        addresses = (
-            await self._resolve(parsed.hostname)
-            if parsed.hostname is not None and literal is None
-            else ()
-        )
+        try:
+            addresses = (
+                await self._resolve(parsed.hostname)
+                if parsed.hostname is not None and literal is None
+                else ()
+            )
+        except OSError as error:
+            raise SafeHttpError(f"DNS resolution failed: {parsed.hostname}") from error
         validate_public_url(url, addresses)
 
     async def _body(self, response: httpx.Response) -> bytes:

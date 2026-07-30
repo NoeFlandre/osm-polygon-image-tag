@@ -1,4 +1,5 @@
 import json
+import socket
 from collections.abc import Awaitable, Callable, Sequence
 
 import httpx
@@ -217,6 +218,24 @@ async def test_timeout_error_redacts_query_and_credentials() -> None:
     assert "user-secret" not in message
     assert "provider-token" not in message
     assert "example.test" in message
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_image_probe_turns_dns_failure_into_safe_http_error() -> None:
+    async def failing_dns(_host: str) -> Sequence[str]:
+        raise socket.gaierror(8, "nodename nor servname provided")
+
+    async def unexpected_request(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("request must not start after DNS failure")
+
+    client = SafeHttpClient(
+        client=httpx.AsyncClient(transport=httpx.MockTransport(unexpected_request)),
+        resolve=failing_dns,
+    )
+
+    with pytest.raises(SafeHttpError, match="DNS resolution failed"):
+        await client.probe_image("https://unresolvable.example/image.jpg")
     await client.aclose()
 
 
