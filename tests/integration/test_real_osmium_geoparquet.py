@@ -7,15 +7,15 @@ from typing import Any
 import pyarrow.parquet as pq
 import pytest
 
+from osm_polygon_image_tag.artifacts.storage import validate_geoparquet, write_geoparquet
 from osm_polygon_image_tag.ingest.extraction import (
     SourceTagRecord,
     restore_original_tags,
     scan_target_source_tags,
     stream_export,
 )
-from osm_polygon_image_tag.runtime.resources import osmium_export_config
-from osm_polygon_image_tag.artifacts.storage import validate_geoparquet, write_geoparquet
 from osm_polygon_image_tag.ingest.transform import AcceptedRow, transform_record
+from osm_polygon_image_tag.runtime.resources import osmium_export_config
 
 FIXTURE = Path("tests/fixtures/image_tag_coverage.osm")
 EXPECTED = {

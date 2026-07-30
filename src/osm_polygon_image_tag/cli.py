@@ -4,8 +4,16 @@ import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
+from osm_polygon_image_tag.artifacts.publication import (
+    EXPECTED_REPO,
+    PublicationResult,
+    publish_dataset,
+)
+from osm_polygon_image_tag.artifacts.reporting import MetadataResult, generate_metadata
 from osm_polygon_image_tag.core.config import PipelinePaths
 from osm_polygon_image_tag.core.errors import ImageTagPipelineError
+from osm_polygon_image_tag.core.progress import ProgressReporter
+from osm_polygon_image_tag.integrations.huggingface import HuggingFaceHub
 from osm_polygon_image_tag.runtime.orchestrator import (
     RunSummary,
     StopToken,
@@ -15,14 +23,6 @@ from osm_polygon_image_tag.runtime.orchestrator import (
     verify_all,
 )
 from osm_polygon_image_tag.runtime.preflight import PreflightReport, run_preflight
-from osm_polygon_image_tag.core.progress import ProgressReporter
-from osm_polygon_image_tag.artifacts.publication import (
-    EXPECTED_REPO,
-    PublicationResult,
-    publish_dataset,
-)
-from osm_polygon_image_tag.integrations.huggingface import HuggingFaceHub
-from osm_polygon_image_tag.artifacts.reporting import MetadataResult, generate_metadata
 
 
 def _emit_progress(event: dict[str, object]) -> None:

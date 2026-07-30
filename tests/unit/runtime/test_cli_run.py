@@ -4,9 +4,9 @@ from pathlib import Path
 import pytest
 from _pytest.capture import CaptureFixture
 
+from osm_polygon_image_tag.artifacts.publication import EXPECTED_REPO, PublicationResult
 from osm_polygon_image_tag.cli import _emit_progress, run
 from osm_polygon_image_tag.runtime.orchestrator import RunSummary, VerifySummary
-from osm_polygon_image_tag.artifacts.publication import EXPECTED_REPO, PublicationResult
 
 
 def test_run_command_emits_canonical_local_summary(

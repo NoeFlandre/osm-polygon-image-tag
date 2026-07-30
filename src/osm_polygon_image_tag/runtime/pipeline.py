@@ -7,15 +7,8 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 
+from osm_polygon_image_tag.artifacts.storage import validate_geoparquet, write_geoparquet
 from osm_polygon_image_tag.core.config import PipelinePaths
-from osm_polygon_image_tag.ingest.discovery import PbfSource
-from osm_polygon_image_tag.ingest.extraction import (
-    ExportRecord,
-    osmium_version,
-    restore_original_tags,
-    scan_target_source_tags,
-    stream_export,
-)
 from osm_polygon_image_tag.core.manifest import (
     DATASET_SCHEMA_VERSION,
     MANIFEST_SCHEMA_VERSION,
@@ -29,10 +22,17 @@ from osm_polygon_image_tag.core.manifest import (
     source_identity,
     write_manifest,
 )
-from osm_polygon_image_tag.runtime.resources import osmium_export_config
-from osm_polygon_image_tag.artifacts.storage import validate_geoparquet, write_geoparquet
+from osm_polygon_image_tag.ingest.discovery import PbfSource
+from osm_polygon_image_tag.ingest.extraction import (
+    ExportRecord,
+    osmium_version,
+    restore_original_tags,
+    scan_target_source_tags,
+    stream_export,
+)
 from osm_polygon_image_tag.ingest.tag_store import TagStore
 from osm_polygon_image_tag.ingest.transform import AcceptedRow, RejectedRow, transform_record
+from osm_polygon_image_tag.runtime.resources import osmium_export_config
 
 Scanner = Callable[..., None]
 Exporter = Callable[..., Iterable[ExportRecord]]

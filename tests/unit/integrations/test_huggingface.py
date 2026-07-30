@@ -4,9 +4,9 @@ from typing import Any
 
 import pytest
 
+from osm_polygon_image_tag.artifacts.publication import EXPECTED_REPO
 from osm_polygon_image_tag.core.errors import PublicationError
 from osm_polygon_image_tag.core.manifest import file_sha256
-from osm_polygon_image_tag.artifacts.publication import EXPECTED_REPO
 from osm_polygon_image_tag.integrations.huggingface import (
     HubCommit,
     HuggingFaceHub,

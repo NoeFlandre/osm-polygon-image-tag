@@ -8,8 +8,9 @@ import pytest
 
 import osm_polygon_image_tag.artifacts.reporting as reporting
 from osm_polygon_image_tag.artifacts.catalog import verified_manifests as catalog_verified_manifests
+from osm_polygon_image_tag.artifacts.reporting import generate_metadata
+from osm_polygon_image_tag.artifacts.storage import write_geoparquet
 from osm_polygon_image_tag.core.config import PipelinePaths
-from osm_polygon_image_tag.ingest.discovery import discover_pbfs
 from osm_polygon_image_tag.core.manifest import (
     DATASET_SCHEMA_VERSION,
     PROCESSING_CONTRACT_VERSION,
@@ -20,10 +21,9 @@ from osm_polygon_image_tag.core.manifest import (
     file_sha256,
     write_manifest,
 )
-from osm_polygon_image_tag.runtime.pipeline import build_one
 from osm_polygon_image_tag.core.progress import Progress
-from osm_polygon_image_tag.artifacts.reporting import generate_metadata
-from osm_polygon_image_tag.artifacts.storage import write_geoparquet
+from osm_polygon_image_tag.ingest.discovery import discover_pbfs
+from osm_polygon_image_tag.runtime.pipeline import build_one
 
 FIXTURE = Path("tests/fixtures/image_tag_coverage.osm")
 

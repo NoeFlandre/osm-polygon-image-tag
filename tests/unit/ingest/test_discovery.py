@@ -3,8 +3,8 @@ from pathlib import Path, PurePosixPath
 
 import pytest
 
-from osm_polygon_image_tag.ingest.discovery import PbfSource, discover_pbfs
 from osm_polygon_image_tag.core.errors import ConfigurationError
+from osm_polygon_image_tag.ingest.discovery import PbfSource, discover_pbfs
 
 
 def test_discovers_only_pbf_files_in_relative_path_order(tmp_path: Path) -> None:

@@ -58,7 +58,9 @@ def test_preflight_rejects_missing_osmium(tmp_path: Path) -> None:
 def test_real_osmium_probe_reports_first_version_line(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("osm_polygon_image_tag.runtime.preflight.shutil.which", lambda _name: "/bin/osmium")
+    monkeypatch.setattr(
+        "osm_polygon_image_tag.runtime.preflight.shutil.which", lambda _name: "/bin/osmium"
+    )
     monkeypatch.setattr(
         "osm_polygon_image_tag.runtime.preflight.subprocess.run",
         lambda *args, **kwargs: subprocess.CompletedProcess(
@@ -94,7 +96,9 @@ def test_real_osmium_probe_rejects_unusable_results(
     stdout: str,
     message: str,
 ) -> None:
-    monkeypatch.setattr("osm_polygon_image_tag.runtime.preflight.shutil.which", lambda _name: "/bin/osmium")
+    monkeypatch.setattr(
+        "osm_polygon_image_tag.runtime.preflight.shutil.which", lambda _name: "/bin/osmium"
+    )
     monkeypatch.setattr(
         "osm_polygon_image_tag.runtime.preflight.subprocess.run",
         lambda *args, **kwargs: subprocess.CompletedProcess(

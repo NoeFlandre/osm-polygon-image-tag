@@ -91,7 +91,9 @@ def test_inventory_reuses_manifest_digest_for_parquet(
             raise AssertionError("publication rehashed a finalized Parquet shard")
         return original(path)
 
-    monkeypatch.setattr("osm_polygon_image_tag.artifacts.publication.file_sha256", hash_small_artifacts)
+    monkeypatch.setattr(
+        "osm_polygon_image_tag.artifacts.publication.file_sha256", hash_small_artifacts
+    )
 
     inventory = publication_inventory(tmp_path)
 
