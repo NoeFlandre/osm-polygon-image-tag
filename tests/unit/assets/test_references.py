@@ -27,12 +27,15 @@ from osm_polygon_image_tag.assets.references import SourceReference, references_
             "6831725321",
         ),
         ("bubbleid", "215977408", "streetside", "215977408"),
-        ("image", "https://example.test/photo.jpg", "generic_http", "https://example.test/photo.jpg"),
+        (
+            "image",
+            "https://example.test/photo.jpg",
+            "generic_http",
+            "https://example.test/photo.jpg",
+        ),
     ],
 )
-def test_reference_kinds_are_canonicalized(
-    key: str, value: str, kind: str, canonical: str
-) -> None:
+def test_reference_kinds_are_canonicalized(key: str, value: str, kind: str, canonical: str) -> None:
     row: Mapping[str, object] = {"tags": {key: value}, "panoramax_values": {}}
 
     references = references_from_row(row)
@@ -47,9 +50,7 @@ def test_reference_kinds_are_canonicalized(
 def test_whitespace_normalization_does_not_change_source_value() -> None:
     raw = "  File:Jam1.jpg  "
 
-    reference = references_from_row(
-        {"tags": {"wikimedia_commons": raw}, "panoramax_values": {}}
-    )[0]
+    reference = references_from_row({"tags": {"wikimedia_commons": raw}, "panoramax_values": {}})[0]
 
     assert reference.source_tag_value == raw
     assert reference.canonical_reference == "File:Jam1.jpg"

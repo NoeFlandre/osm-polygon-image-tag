@@ -127,3 +127,20 @@ def test_resolution_snapshot_ignores_unrelated_cache_rows(tmp_path: Path) -> Non
         assert cache.resolution_snapshot([used.key]) == before
         assert before.entry_count == 1
         assert len(before.sha256) == 64
+
+
+def test_cache_preserves_reason_and_category_truncation(tmp_path: Path) -> None:
+    record = ResolutionRecord(
+        provider="wikimedia_commons",
+        canonical_reference="Large",
+        resolver_contract_version=1,
+        status="category_truncated",
+        assets=(),
+        retry_after=None,
+        reason="category_cap",
+        category_truncated=True,
+    )
+    with ResolutionCache.open(tmp_path) as cache:
+        cache.put(record)
+
+        assert cache.get(record.key) == record

@@ -79,6 +79,8 @@ class ResolutionCache:
             status=payload["status"],
             assets=tuple(dict(asset) for asset in payload["assets"]),
             retry_after=datetime.fromisoformat(retry_value) if retry_value is not None else None,
+            reason=payload.get("reason"),
+            category_truncated=payload.get("category_truncated", False),
         )
         validate_resolution_record(record)
         return record
@@ -118,9 +120,7 @@ class ResolutionCache:
                 self._connection.rollback()
                 raise
 
-    def resolution_snapshot(
-        self, keys: Sequence[ResolutionKey]
-    ) -> ResolutionSnapshotIdentity:
+    def resolution_snapshot(self, keys: Sequence[ResolutionKey]) -> ResolutionSnapshotIdentity:
         entries = []
         for key in sorted(
             set(keys),

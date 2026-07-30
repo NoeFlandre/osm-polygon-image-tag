@@ -29,6 +29,8 @@ class ResolutionRecord:
     status: str
     assets: tuple[dict[str, object], ...]
     retry_after: datetime | None
+    reason: str | None = None
+    category_truncated: bool = False
 
     @property
     def key(self) -> ResolutionKey:

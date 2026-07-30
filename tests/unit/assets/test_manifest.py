@@ -116,9 +116,7 @@ def test_asset_manifest_rejects_incompatible_contracts(
     "relative_path",
     ["../escape.parquet", "/absolute/escape.parquet", "assets/../../escape.parquet"],
 )
-def test_asset_manifest_rejects_paths_outside_data_root(
-    tmp_path: Path, relative_path: str
-) -> None:
+def test_asset_manifest_rejects_paths_outside_data_root(tmp_path: Path, relative_path: str) -> None:
     path = tmp_path / "manifest.json"
     manifest = replace(
         _manifest(),
