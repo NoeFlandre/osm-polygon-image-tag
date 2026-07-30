@@ -9,8 +9,8 @@ from osm_polygon_image_tag.artifacts.publication import (
     PublicationResult,
     publish_dataset,
 )
+from osm_polygon_image_tag.artifacts.publication_types import HubCommit
 from osm_polygon_image_tag.core.config import PipelinePaths
-from osm_polygon_image_tag.integrations.huggingface import HubCommit
 from osm_polygon_image_tag.runtime.orchestrator import run_all
 
 FIXTURE = Path("tests/fixtures/image_tag_coverage.osm")

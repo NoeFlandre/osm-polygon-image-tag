@@ -13,17 +13,20 @@ jobs:
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
+    env:
+      UV_PYTHON: "3.12"
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           enable-cache: true
-
-      - name: Install Python 3.12
-        run: uv python install 3.12
+          python-version: "3.12"
+          version: "0.11.16"
 
       - name: Install osmium-tool for integration tests
         run: sudo apt-get update && sudo apt-get install -y osmium-tool
@@ -50,4 +53,6 @@ jobs:
         run: uv build
 
       - name: Verify no whitespace errors
-        run: git diff --check
+        run: |
+          git diff-tree --check --no-commit-id -r HEAD
+          git diff --check origin/main...HEAD

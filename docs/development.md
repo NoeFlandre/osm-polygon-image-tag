@@ -35,14 +35,14 @@ uv run ruff format --check .
 uv run ty check
 uv run pytest -q
 uv build
-git diff --check
+git diff --check origin/main...HEAD
 ```
 
-`uv run pytest -q` runs only the fast unit tests by default. To run the
-integration tests that exercise the real `osmium` binary, run:
+`uv run pytest -q` runs the complete suite, including tests that require the
+real `osmium` binary. For the fast unit-only loop, run:
 
 ```bash
-uv run pytest -m integration -q --no-cov
+uv run pytest tests/unit -q --no-cov
 ```
 
 ## Smoke-testing the installed wheel
@@ -86,9 +86,8 @@ contract.
 ## Type checking with `ty`
 
 The project uses Astral's `ty` type checker. Configuration lives under
-`[tool.ty]` in `pyproject.toml`. Narrow, documented third-party suppressions
-are allowed where the third-party type information is genuinely missing;
-broad `Any` casts or blanket exclusions are not.
+`[tool.ty]` in `pyproject.toml`; the entire `src` and `tests` trees are checked
+without project-level diagnostic suppressions.
 
 ## Linting and formatting
 

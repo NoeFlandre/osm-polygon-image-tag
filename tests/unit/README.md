@@ -6,8 +6,8 @@ the tests for any given responsibility at a glance.
 
 ## Markers
 
-- Tests in this folder do not require the `osmium` executable and run under
-  the default `uv run pytest -q` invocation.
+- Tests in this folder do not require the `osmium` executable. Run only this
+  fast subset with `uv run pytest tests/unit -q --no-cov`.
 - They may still exercise the full local pipeline through injected
   `Scanner`/`Exporter`/`Hub` callables.
 

@@ -1,10 +1,13 @@
+import signal
+from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 from osm_polygon_image_tag.artifacts.publication import PublicationResult
 from osm_polygon_image_tag.artifacts.reporting import MetadataResult
 from osm_polygon_image_tag.core.config import PipelinePaths
 from osm_polygon_image_tag.ingest.discovery import PbfSource
-from osm_polygon_image_tag.runtime.orchestrator import StopToken, run_all
+from osm_polygon_image_tag.runtime.orchestrator import StopToken, graceful_stop_signals, run_all
 from osm_polygon_image_tag.runtime.pipeline import BuildResult
 
 
@@ -69,6 +72,17 @@ def test_stop_token_prevents_starting_the_next_pbf(tmp_path: Path) -> None:
     assert seen == ["a.osm.pbf"]
     assert summary.stopped is True
     assert summary.processed == 1
+
+
+def test_signal_handler_requests_stop_without_raising() -> None:
+    token = StopToken()
+
+    with graceful_stop_signals(token):
+        handler = signal.getsignal(signal.SIGINT)
+        assert callable(handler)
+        cast(Callable[[int, object], object], handler)(signal.SIGINT, None)
+
+    assert token.requested
 
 
 def test_run_all_publishes_after_each_completed_pbf(tmp_path: Path) -> None:

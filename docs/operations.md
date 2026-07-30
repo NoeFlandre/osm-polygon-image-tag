@@ -110,21 +110,25 @@ The exact, final report is always printed to stdout as one JSON object.
 
 ## Control signals
 
-`SIGINT` (Ctrl-C) and `SIGTERM` request a graceful stop. The orchestrator
-finishes the current PBF, then stops before starting the next one. Already
-finalized shards remain valid; an interrupted build leaves no promoted
-artifact because promotion only happens through atomic rename.
+`SIGINT` (Ctrl-C) and `SIGTERM` set the orchestrator's stop token. It does not
+start another PBF after the current build returns. A terminal signal can also
+reach the active `osmium` subprocess; if that aborts extraction, the current
+shard fails safely instead of being promoted. Already finalized shards remain
+valid because promotion uses atomic rename.
 
 ## Safe Ctrl-C behaviour
 
-- During extraction: the in-flight build fails its current shard and
-  leaves no promoted output.
-- During metadata or publication: the operation completes for the
-  currently built PBF; the loop stops before the next one.
+- During extraction: the current build either returns normally or fails
+  without promoting a partial shard; no next PBF is started after the token
+  is observed.
+- During metadata or publication: signal delivery and the remote SDK determine
+  whether the in-flight operation returns or raises; finalized prior shards
+  and receipts remain valid.
 - After a hard kill: stale temporary files are confined to `tmp/` (for
   the per-PBF tag-store) and to the partially-written `.tmp` sibling of
-  any Parquet or manifest write. Publication re-runs clean those up
-  automatically.
+  any Parquet or manifest write. Publication preserves and rejects all of
+  these files because, without a process lock, they may belong to an active
+  run. Resume the pipeline so its owning operation can clean up safely.
 
 ## When to use which command
 

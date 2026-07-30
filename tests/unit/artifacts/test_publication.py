@@ -5,9 +5,10 @@ import pytest
 
 from osm_polygon_image_tag.artifacts.publication import (
     EXPECTED_REPO,
-    publication_inventory,
     publish_dataset,
 )
+from osm_polygon_image_tag.artifacts.publication_inventory import publication_inventory
+from osm_polygon_image_tag.artifacts.publication_types import HubCommit
 from osm_polygon_image_tag.artifacts.reporting import generate_metadata
 from osm_polygon_image_tag.artifacts.storage import write_geoparquet
 from osm_polygon_image_tag.core.errors import PublicationError
@@ -22,7 +23,6 @@ from osm_polygon_image_tag.core.manifest import (
     read_manifest,
     write_manifest,
 )
-from osm_polygon_image_tag.integrations.huggingface import HubCommit
 
 
 def _dataset(root: Path) -> None:
@@ -92,7 +92,8 @@ def test_inventory_reuses_manifest_digest_for_parquet(
         return original(path)
 
     monkeypatch.setattr(
-        "osm_polygon_image_tag.artifacts.publication.file_sha256", hash_small_artifacts
+        "osm_polygon_image_tag.artifacts.publication_inventory.file_sha256",
+        hash_small_artifacts,
     )
 
     inventory = publication_inventory(tmp_path)
@@ -167,6 +168,46 @@ def test_inventory_rejects_unexpected_entries(tmp_path: Path, unexpected: str) -
 
     with pytest.raises(PublicationError, match="unexpected"):
         publication_inventory(tmp_path)
+
+
+def test_inventory_preserves_and_rejects_atomic_write_temporary_files(tmp_path: Path) -> None:
+    _dataset(tmp_path)
+    partial = tmp_path / "data" / ".baden-wuerttemberg-latest.parquet.tmp"
+    partial.write_bytes(b"interrupted write")
+
+    with pytest.raises(PublicationError, match="unexpected"):
+        publication_inventory(tmp_path)
+
+    assert partial.read_bytes() == b"interrupted write"
+
+
+def test_inventory_preserves_and_rejects_unknown_temporary_files(tmp_path: Path) -> None:
+    _dataset(tmp_path)
+    temporary_root = tmp_path / "tmp"
+    temporary_root.mkdir(exist_ok=True)
+    tag_store = temporary_root / "tag-store-possibly-active.sqlite"
+    tag_store.write_bytes(b"unknown ownership")
+
+    with pytest.raises(PublicationError, match="unexpected"):
+        publication_inventory(tmp_path)
+
+    assert tag_store.read_bytes() == b"unknown ownership"
+
+
+def test_inventory_rejects_symlinked_tmp_without_deleting_external_files(
+    tmp_path: Path,
+) -> None:
+    _dataset(tmp_path)
+    external = tmp_path.parent / f"{tmp_path.name}-external"
+    external.mkdir()
+    protected = external / "must-survive.tmp"
+    protected.write_bytes(b"user data")
+    (tmp_path / "tmp").symlink_to(external, target_is_directory=True)
+
+    with pytest.raises(PublicationError, match="symlink"):
+        publication_inventory(tmp_path)
+
+    assert protected.read_bytes() == b"user data"
 
 
 def test_inventory_rejects_symlinks(tmp_path: Path) -> None:

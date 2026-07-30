@@ -1,21 +1,13 @@
 """Hugging Face dataset integration.
 
-This module owns every interaction with the Hugging Face Hub SDK so the rest of
-the pipeline never imports a provider library directly. It exposes:
-
-- ``PublicationFile``: a payload describing one file to upload.
-- ``HubCommit``: an atomic upload/deletion transaction.
-- ``Hub``: a structural protocol the publication planner depends on.
-- ``HuggingFaceHub``: the concrete adapter that performs the commit and the
-  verification download.
+This module owns every interaction with the Hugging Face Hub SDK. It implements
+the provider-neutral port defined in ``artifacts.publication_types``.
 """
 
 from __future__ import annotations
 
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
 
 from huggingface_hub import (
     CommitOperationAdd,
@@ -24,30 +16,8 @@ from huggingface_hub import (
     hf_hub_download,
 )
 
+from osm_polygon_image_tag.artifacts.publication_types import HubCommit
 from osm_polygon_image_tag.core.errors import PublicationError
-
-
-@dataclass(frozen=True, slots=True)
-class PublicationFile:
-    local_path: Path
-    remote_path: str
-    sha256: str
-    size_bytes: int
-
-
-@dataclass(frozen=True, slots=True)
-class HubCommit:
-    repo_id: str
-    repo_type: str
-    message: str
-    files: tuple[PublicationFile, ...]
-    deletions: tuple[str, ...] = ()
-
-
-class Hub(Protocol):
-    def commit(self, commit: HubCommit) -> str: ...
-
-    def download(self, repo_id: str, remote_path: str, revision: str) -> bytes: ...
 
 
 class HuggingFaceHub:

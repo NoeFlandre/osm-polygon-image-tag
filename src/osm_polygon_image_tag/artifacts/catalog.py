@@ -4,12 +4,8 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 
-from osm_polygon_image_tag.core.manifest import (
-    DATASET_SCHEMA_VERSION,
-    PROCESSING_CONTRACT_VERSION,
-    Manifest,
-    read_manifest,
-)
+from osm_polygon_image_tag.artifacts.manifest_inventory import verified_manifests
+from osm_polygon_image_tag.core.manifest import Manifest
 from osm_polygon_image_tag.core.progress import Progress
 
 PROVIDERS = (
@@ -48,69 +44,6 @@ def _connect(path: Path) -> sqlite3.Connection:
         "CREATE INDEX IF NOT EXISTS identity_idx ON observations (osm_type, osm_id, osm_version)"
     )
     return connection
-
-
-def verified_manifests(
-    data_root: Path, *, progress: Progress | None = None
-) -> list[tuple[Manifest, Path]]:
-    emit = progress or (lambda _event: None)
-    manifest_paths = sorted((data_root / "manifests").glob("*.manifest.json"))
-    emit(
-        {
-            "event": "metadata_manifest_scan_started",
-            "manifest_count": len(manifest_paths),
-        }
-    )
-    verified: list[tuple[Manifest, Path]] = []
-    skipped = 0
-    verified_bytes = 0
-    for index, manifest_path in enumerate(manifest_paths, start=1):
-        manifest = read_manifest(manifest_path)
-        if (
-            manifest.processing_contract_version != PROCESSING_CONTRACT_VERSION
-            or manifest.dataset_schema_version != DATASET_SCHEMA_VERSION
-        ):
-            skipped += 1
-            if index % 10 == 0 or index == len(manifest_paths):
-                emit(
-                    {
-                        "event": "metadata_manifest_scan_progress",
-                        "manifest_count": len(manifest_paths),
-                        "manifest_index": index,
-                        "verified_shards": len(verified),
-                        "skipped_incompatible": skipped,
-                        "verified_bytes": verified_bytes,
-                    }
-                )
-            continue
-        output = (data_root / manifest.output.relative_path).resolve()
-        if data_root.resolve() not in output.parents:
-            raise ValueError(f"output escapes data root: {output}")
-        if output.stat().st_size != manifest.output.size_bytes:
-            raise ValueError(f"output identity mismatch: {output}")
-        verified.append((manifest, output))
-        verified_bytes += manifest.output.size_bytes
-        if index % 10 == 0 or index == len(manifest_paths):
-            emit(
-                {
-                    "event": "metadata_manifest_scan_progress",
-                    "manifest_count": len(manifest_paths),
-                    "manifest_index": index,
-                    "verified_shards": len(verified),
-                    "skipped_incompatible": skipped,
-                    "verified_bytes": verified_bytes,
-                }
-            )
-    emit(
-        {
-            "event": "metadata_manifest_scan_completed",
-            "manifest_count": len(manifest_paths),
-            "verified_shards": len(verified),
-            "skipped_incompatible": skipped,
-            "verified_bytes": verified_bytes,
-        }
-    )
-    return verified
 
 
 def sync_catalog(

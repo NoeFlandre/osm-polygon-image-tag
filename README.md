@@ -131,11 +131,11 @@ final summary is printed to stdout as one canonical JSON object.
 
 ### Safe Ctrl-C behaviour
 
-`SIGINT` (Ctrl-C) and `SIGTERM` request a graceful stop. The orchestrator
-finishes the current PBF, then stops before starting the next one. Already
-finalized shards remain valid; an interrupted build leaves no promoted
-artifact because promotion only happens through atomic rename. The next
-run picks up exactly where the previous one stopped.
+`SIGINT` (Ctrl-C) and `SIGTERM` set a stop token so the orchestrator starts no
+next PBF after the current build returns. If the terminal signal also aborts
+the active `osmium` process, that shard fails without promoting a partial
+artifact. Already finalized shards remain valid, and the next run resumes from
+the last finalized boundary.
 
 ## License
 

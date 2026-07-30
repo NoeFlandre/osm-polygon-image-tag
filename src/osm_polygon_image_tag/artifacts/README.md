@@ -6,16 +6,19 @@ that lives inside the managed data root.
 ## What belongs here
 
 - Atomic GeoParquet shard writing and validation (`storage`).
-- The rebuildable catalog index (`catalog`).
-- The deterministic statistics JSON and generated dataset card (`reporting`).
-- The publication planner, inventory, and receipt writer (`publication`).
+- Finalized-manifest discovery (`manifest_inventory`).
+- The rebuildable catalog index (`catalog`) and aggregate queries (`statistics`).
+- Deterministic metadata coordination (`reporting`) and card rendering
+  (`dataset_card`).
+- Publication types, inventory, planning, and receipt writing
+  (`publication_types`, `publication_inventory`, `publication`).
 
 ## What must not belong here
 
 - Anything that imports the CLI entry point.
 - The `osmium` subprocess: that lives in `ingest`.
-- Direct imports of `huggingface_hub`: only the `Hub` protocol from
-  `integrations.huggingface` is allowed here.
+- Direct imports of `huggingface_hub`; the provider-neutral `Hub` protocol
+  belongs here and the concrete SDK adapter belongs in `integrations`.
 
 ## Public entry points and contracts
 
@@ -24,15 +27,14 @@ that lives inside the managed data root.
   events.
 - `generate_metadata`: deterministic statistics and card writer.
 - `publication_inventory`, `publish_dataset`: the local publication planner
-  that takes any `Hub` adapter.
+  that takes any `Hub` adapter. Inventory planning is non-destructive:
+  temporary or unknown files are preserved and rejected.
 - `EXPECTED_REPO`: the constant that callers must echo back via
   `--confirm-repo`.
 
 ## Dependencies
 
 - `core` for manifest, schema, errors.
-- `integrations.huggingface` for the `Hub` protocol and the
-  `PublicationFile` / `HubCommit` payload dataclasses.
 - `pyarrow`, `pyproj`, `shapely`, `sqlite3`.
 
 ## Focused tests

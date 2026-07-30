@@ -1,16 +1,13 @@
 import json
-import shutil
-import subprocess
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 import osm_polygon_image_tag.artifacts.reporting as reporting
-from osm_polygon_image_tag.artifacts.catalog import verified_manifests as catalog_verified_manifests
+from osm_polygon_image_tag.artifacts.manifest_inventory import verified_manifests
 from osm_polygon_image_tag.artifacts.reporting import generate_metadata
 from osm_polygon_image_tag.artifacts.storage import write_geoparquet
-from osm_polygon_image_tag.core.config import PipelinePaths
 from osm_polygon_image_tag.core.manifest import (
     DATASET_SCHEMA_VERSION,
     PROCESSING_CONTRACT_VERSION,
@@ -22,10 +19,6 @@ from osm_polygon_image_tag.core.manifest import (
     write_manifest,
 )
 from osm_polygon_image_tag.core.progress import Progress
-from osm_polygon_image_tag.ingest.discovery import discover_pbfs
-from osm_polygon_image_tag.runtime.pipeline import build_one
-
-FIXTURE = Path("tests/fixtures/image_tag_coverage.osm")
 
 
 def test_empty_metadata_is_deterministic_and_factual(tmp_path: Path) -> None:
@@ -50,6 +43,8 @@ def test_empty_metadata_is_deterministic_and_factual(tmp_path: Path) -> None:
     }
     assert b"Open Database License" in first_card
     assert b"does not establish image copyright" in first_card
+    assert b"finalized manifests and their size-checked GeoParquet shards" in first_card
+    assert b"cryptographically verified" not in first_card
 
 
 def test_metadata_reports_detailed_progress_and_scans_manifests_once(
@@ -63,7 +58,7 @@ def test_metadata_reports_detailed_progress_and_scans_manifests_once(
     ) -> list[tuple[Manifest, Path]]:
         nonlocal calls
         calls += 1
-        return catalog_verified_manifests(data_root, progress=progress)
+        return verified_manifests(data_root, progress=progress)
 
     monkeypatch.setattr(reporting, "verified_manifests", counted)
 
@@ -108,53 +103,6 @@ def test_metadata_reuses_manifest_digest_without_rehashing_parquet(
         return original_open(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "open", reject_python_read)
-    monkeypatch.setattr(
-        "osm_polygon_image_tag.artifacts.catalog.pq.ParquetFile",
-        lambda _path: (_ for _ in ()).throw(
-            AssertionError("finalized Parquet was structurally revalidated")
-        ),
-    )
-
-    manifests = catalog_verified_manifests(tmp_path)
+    manifests = verified_manifests(tmp_path)
 
     assert manifests == [(manifest, data.resolve())]
-
-
-@pytest.mark.integration
-def test_real_shard_produces_exact_global_statistics_and_stable_card(tmp_path: Path) -> None:
-    executable = shutil.which("osmium")
-    assert executable is not None
-    source_root = tmp_path / "raw"
-    source_root.mkdir()
-    pbf = source_root / "coverage.osm.pbf"
-    subprocess.run(  # noqa: S603 - controlled fixture argv.
-        [executable, "cat", str(FIXTURE), "-o", str(pbf)],
-        check=True,
-        capture_output=True,
-        timeout=30,
-    )
-    paths = PipelinePaths.build(source_root=source_root, data_root=tmp_path / "generated")
-    build_one(discover_pbfs(source_root)[0], paths, batch_size=3)
-
-    result = generate_metadata(paths.data_root)
-    first_card = result.card_path.read_bytes()
-    first_statistics = result.statistics_path.read_bytes()
-    statistics = json.loads(first_statistics)
-    generate_metadata(paths.data_root)
-
-    assert statistics["shards"] == 1
-    assert statistics["rows"] == 9
-    assert statistics["osm_types"] == {"relation": 2, "way": 7}
-    assert statistics["geometry_types"] == {"MultiPolygon": 2, "Polygon": 7}
-    assert statistics["provider_counts"] == {
-        "bubbleid": 1,
-        "flickr": 2,
-        "image": 1,
-        "kartaview": 1,
-        "mapillary": 1,
-        "panoramax": 2,
-        "wikimedia_commons": 2,
-    }
-    assert statistics["duplicate_observations"] == 0
-    assert result.card_path.read_bytes() == first_card
-    assert result.statistics_path.read_bytes() == first_statistics

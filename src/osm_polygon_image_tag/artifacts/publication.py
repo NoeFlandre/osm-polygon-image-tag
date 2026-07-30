@@ -16,15 +16,9 @@ import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from osm_polygon_image_tag.artifacts.catalog import verified_manifests
+from osm_polygon_image_tag.artifacts.publication_inventory import publication_inventory
+from osm_polygon_image_tag.artifacts.publication_types import Hub, HubCommit, PublicationFile
 from osm_polygon_image_tag.core.errors import PublicationError
-from osm_polygon_image_tag.core.manifest import (
-    DATASET_SCHEMA_VERSION,
-    PROCESSING_CONTRACT_VERSION,
-    file_sha256,
-    read_manifest,
-)
-from osm_polygon_image_tag.integrations.huggingface import Hub, HubCommit, PublicationFile
 
 EXPECTED_REPO = "NoeFlandre/osm-polygon-image-tag"
 
@@ -37,71 +31,6 @@ class PublicationResult:
 
     def to_dict(self) -> dict[str, str | int]:
         return asdict(self)
-
-
-def _regular_file(root: Path, relative: str) -> Path:
-    path = root / relative
-    if path.is_symlink():
-        raise PublicationError(f"publication artifact must not be a symlink: {relative}")
-    if not path.is_file():
-        raise PublicationError(f"missing publication artifact: {relative}")
-    resolved = path.resolve()
-    if root.resolve() not in resolved.parents:
-        raise PublicationError(f"publication artifact escapes data root: {relative}")
-    return path
-
-
-def publication_inventory(data_root: Path) -> tuple[PublicationFile, ...]:
-    root = data_root.resolve()
-    manifests = verified_manifests(root)
-    manifested_digests = {
-        manifest.output.relative_path: manifest.output.sha256 for manifest, _ in manifests
-    }
-    allowed = {"README.md", "statistics/dataset-statistics.json"}
-    allowed.update(manifest.output.relative_path for manifest, _ in manifests)
-    allowed.update(
-        path.relative_to(root).as_posix()
-        for path in sorted((root / "manifests").glob("*.manifest.json"))
-        if read_manifest(path).processing_contract_version == PROCESSING_CONTRACT_VERSION
-        and read_manifest(path).dataset_schema_version == DATASET_SCHEMA_VERSION
-    )
-    managed = set()
-    for path in sorted((root / "manifests").glob("*.manifest.json")):
-        manifest = read_manifest(path)
-        managed.add(path.relative_to(root).as_posix())
-        output = (root / manifest.output.relative_path).resolve()
-        if root not in output.parents:
-            raise PublicationError(f"managed output escapes data root: {output}")
-        managed.add(output.relative_to(root).as_posix())
-    internal = {
-        "catalog/catalog.sqlite",
-        "receipts/publication.json",
-        *(managed - allowed),
-    }
-    actual: set[str] = set()
-    for path in root.rglob("*"):
-        relative = path.relative_to(root).as_posix()
-        if path.is_symlink():
-            raise PublicationError(f"symlink in data root: {relative}")
-        if path.is_file():
-            if relative == ".DS_Store":
-                continue
-            actual.add(relative)
-    unexpected = actual - allowed - internal
-    if unexpected:
-        raise PublicationError(f"unexpected data-root entries: {sorted(unexpected)}")
-    files = []
-    for relative in sorted(allowed):
-        path = _regular_file(root, relative)
-        files.append(
-            PublicationFile(
-                local_path=path,
-                remote_path=relative,
-                sha256=manifested_digests.get(relative) or file_sha256(path),
-                size_bytes=path.stat().st_size,
-            )
-        )
-    return tuple(files)
 
 
 def _inventory_digest(files: tuple[PublicationFile, ...]) -> str:

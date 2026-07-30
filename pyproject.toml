@@ -40,6 +40,7 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/osm_polygon_image_tag"]
 include = [
+    "src/osm_polygon_image_tag/README.md",
     "src/osm_polygon_image_tag/_data/*.json",
     "src/osm_polygon_image_tag/_data/*.md",
     "src/osm_polygon_image_tag/*/README.md",
@@ -76,21 +77,6 @@ python-version = "3.12"
 
 [tool.ty.src]
 include = ["src", "tests"]
-
-[[tool.ty.overrides]]
-include = ["tests/**/*.py"]
-
-[tool.ty.overrides.analysis]
-# Third-party type information is incomplete for the provider SDKs and the
-# geospatial stack. Allow ty to type-check the rest of the codebase without
-# failing on these narrow imports; the production code itself remains fully
-# type-checked.
-allowed-unresolved-imports = [
-    "huggingface_hub.*",
-    "osmium.*",
-    "pyarrow.*",
-    "shapely.*",
-]
 
 [tool.coverage.run]
 branch = true

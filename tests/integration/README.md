@@ -12,13 +12,12 @@ uv run pytest -m integration -q --no-cov
 
 The tests shell out to the `osmium` executable resolved from `PATH`, so the
 operator is responsible for installing `osmium-tool` (typically via
-Homebrew) before invoking them. The default `uv run pytest -q` skips these
-tests; run them explicitly when validating a release.
+Homebrew) before invoking them. The default `uv run pytest -q` includes these
+tests so release validation matches CI.
 
 ## Running in CI
 
-GitHub Actions installs the official `osm` apt package, which provides
-`osmium-tool`. The CI workflow installs it before running the integration
+GitHub Actions installs the `osmium-tool` apt package before running the integration
 suite so the contract stays honest: if the binary is missing on a
 contributor's machine, the integration tests fail loudly there too.
 

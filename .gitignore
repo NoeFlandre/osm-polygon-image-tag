@@ -2,7 +2,6 @@
 .coverage
 .pytest_cache/
 .ruff_cache/
-.ty_cache/
 .venv/
 __pycache__/
 *.py[cod]

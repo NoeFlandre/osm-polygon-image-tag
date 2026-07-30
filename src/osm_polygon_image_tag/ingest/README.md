@@ -6,7 +6,9 @@ treats the raw PBF tree as immutable input and never writes back to it.
 ## What belongs here
 
 - Deterministic, depth-first PBF discovery (`discover_pbfs`).
-- Streaming `osmium export` invocation and COPY-record parsing.
+- Streaming `osmium export` invocation (`osmium`) and COPY-record parsing
+  (`copy_parser`).
+- Exact target-key selection and source-tag restoration (`tag_policy`).
 - The temporary SQLite tag-store used to restore original tag values during
   extraction.
 - Row-level transformation that applies the geometry, area, and tag rules.
@@ -31,7 +33,7 @@ treats the raw PBF tree as immutable input and never writes back to it.
 ## Dependencies
 
 - `core` for `ImageTagPipelineError`, schema, manifest.
-- `pyosmium`, `pyarrow`, `pyproj`, `shapely`.
+- `pyarrow`, `pyproj`, `shapely`; the `osmium` command is a runtime tool.
 - The package-data resource `_data/osmium-export.json`.
 
 ## Focused tests

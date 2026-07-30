@@ -1,10 +1,10 @@
 # OSM Polygon Image-Tag Dataset Pipeline Design
 
-**Date:** 2026-07-29  
+**Date:** 2026-07-29
 **Status:** Historical. See [`docs/data-contract.md`](../../data-contract.md) for
 the current contract and
 [`2026-07-29-additional-image-tags-design.md`](2026-07-29-additional-image-tags-design.md)
-for the additive schema-v2 fields (`bubbleid`, `panoramax_values`).  
+for the additive schema-v2 fields (`bubbleid`, `panoramax_values`).
 **Project:** `NoeFlandre/osm-polygon-image-tag`
 
 ## 1. Purpose

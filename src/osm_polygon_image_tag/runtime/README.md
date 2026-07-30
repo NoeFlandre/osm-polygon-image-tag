@@ -17,7 +17,8 @@ integrations are wired together.
 ## What must not belong here
 
 - Direct imports of `huggingface_hub`. The Hugging Face adapter lives in
-  `integrations.huggingface`; this package only references its protocol.
+  `integrations.huggingface`; provider-neutral publication types live in
+  `artifacts`.
 - Hard-coded remote calls. Real publication is invoked by the CLI and is
   reviewed before each deployment.
 
@@ -33,8 +34,7 @@ integrations are wired together.
 ## Dependencies
 
 - Every other subpackage.
-- `pyarrow`, `pyproj`, `shapely`, `huggingface_hub` transitively via the
-  protocol boundary.
+- `pyarrow`, `pyproj`, and `shapely` through the composed lower layers.
 
 ## Focused tests
 
