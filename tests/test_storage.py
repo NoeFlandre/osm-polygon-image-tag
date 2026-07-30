@@ -9,7 +9,7 @@ from shapely import to_wkb
 from shapely.geometry import Polygon
 
 from osm_polygon_image_tag.ingest.extraction import ExportRecord
-from osm_polygon_image_tag.storage import StorageError, validate_geoparquet, write_geoparquet
+from osm_polygon_image_tag.artifacts.storage import StorageError, validate_geoparquet, write_geoparquet
 from osm_polygon_image_tag.ingest.transform import AcceptedRow, transform_record
 
 

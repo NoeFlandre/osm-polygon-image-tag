@@ -13,7 +13,7 @@ from huggingface_hub import (
     hf_hub_download,
 )
 
-from osm_polygon_image_tag.catalog import verified_manifests
+from osm_polygon_image_tag.artifacts.catalog import verified_manifests
 from osm_polygon_image_tag.core.errors import PublicationError
 from osm_polygon_image_tag.core.manifest import (
     DATASET_SCHEMA_VERSION,

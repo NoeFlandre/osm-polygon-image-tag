@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-import osm_polygon_image_tag.reporting as reporting
-from osm_polygon_image_tag.catalog import verified_manifests as catalog_verified_manifests
+import osm_polygon_image_tag.artifacts.reporting as reporting
+from osm_polygon_image_tag.artifacts.catalog import verified_manifests as catalog_verified_manifests
 from osm_polygon_image_tag.core.config import PipelinePaths
 from osm_polygon_image_tag.ingest.discovery import discover_pbfs
 from osm_polygon_image_tag.core.manifest import (
@@ -22,8 +22,8 @@ from osm_polygon_image_tag.core.manifest import (
 )
 from osm_polygon_image_tag.pipeline import build_one
 from osm_polygon_image_tag.core.progress import Progress
-from osm_polygon_image_tag.reporting import generate_metadata
-from osm_polygon_image_tag.storage import write_geoparquet
+from osm_polygon_image_tag.artifacts.reporting import generate_metadata
+from osm_polygon_image_tag.artifacts.storage import write_geoparquet
 
 FIXTURE = Path("tests/fixtures/image_tag_coverage.osm")
 
@@ -109,7 +109,7 @@ def test_metadata_reuses_manifest_digest_without_rehashing_parquet(
 
     monkeypatch.setattr(Path, "open", reject_python_read)
     monkeypatch.setattr(
-        "osm_polygon_image_tag.catalog.pq.ParquetFile",
+        "osm_polygon_image_tag.artifacts.catalog.pq.ParquetFile",
         lambda _path: (_ for _ in ()).throw(
             AssertionError("finalized Parquet was structurally revalidated")
         ),

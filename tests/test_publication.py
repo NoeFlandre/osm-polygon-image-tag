@@ -25,8 +25,8 @@ from osm_polygon_image_tag.publication import (
     publication_inventory,
     publish_dataset,
 )
-from osm_polygon_image_tag.reporting import generate_metadata
-from osm_polygon_image_tag.storage import write_geoparquet
+from osm_polygon_image_tag.artifacts.reporting import generate_metadata
+from osm_polygon_image_tag.artifacts.storage import write_geoparquet
 
 
 def _dataset(root: Path) -> None:

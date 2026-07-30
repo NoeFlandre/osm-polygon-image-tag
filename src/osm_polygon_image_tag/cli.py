@@ -22,7 +22,7 @@ from osm_polygon_image_tag.publication import (
     PublicationResult,
     publish_dataset,
 )
-from osm_polygon_image_tag.reporting import MetadataResult, generate_metadata
+from osm_polygon_image_tag.artifacts.reporting import MetadataResult, generate_metadata
 
 
 def _emit_progress(event: dict[str, object]) -> None:

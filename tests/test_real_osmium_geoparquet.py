@@ -14,7 +14,7 @@ from osm_polygon_image_tag.ingest.extraction import (
     stream_export,
 )
 from osm_polygon_image_tag.resources import osmium_export_config
-from osm_polygon_image_tag.storage import validate_geoparquet, write_geoparquet
+from osm_polygon_image_tag.artifacts.storage import validate_geoparquet, write_geoparquet
 from osm_polygon_image_tag.ingest.transform import AcceptedRow, transform_record
 
 FIXTURE = Path("tests/fixtures/image_tag_coverage.osm")
