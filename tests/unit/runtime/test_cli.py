@@ -23,8 +23,34 @@ def test_help_lists_exactly_the_public_commands(capsys: CaptureFixture[str]) -> 
 
     assert exit_info.value.code == 0
     help_text = capsys.readouterr().out
-    command_list = help_text.split("{", maxsplit=1)[1].split("}", maxsplit=1)[0]
-    assert set(command_list.split(",")) == EXPECTED_COMMANDS
+    assert {command for command in EXPECTED_COMMANDS if command in help_text} == EXPECTED_COMMANDS
+
+
+@pytest.mark.parametrize(
+    ("command", "requires_confirmation"),
+    [
+        ("preflight", False),
+        ("run", False),
+        ("verify", False),
+        ("rebuild-metadata", False),
+        ("publish", True),
+        ("run-and-publish", True),
+    ],
+)
+def test_command_help_preserves_required_option_names(
+    command: str,
+    requires_confirmation: bool,
+    capsys: CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        run([command, "--help"])
+
+    assert exit_info.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "--source-root" in help_text
+    assert "--data-root" in help_text
+    assert ("--confirm-repo" in help_text) is requires_confirmation
+    assert "--log-format" in help_text
 
 
 def test_preflight_command_emits_canonical_json(

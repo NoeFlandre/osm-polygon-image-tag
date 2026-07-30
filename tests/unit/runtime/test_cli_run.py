@@ -116,3 +116,29 @@ def test_progress_events_are_canonical_json_on_stderr(
     assert captured.err == (
         'progress {"event":"pbf_started","pbf_index":1,"source_pbf":"a.osm.pbf"}\n'
     )
+
+
+def test_json_log_format_remains_machine_readable(
+    tmp_path: Path, capsys: CaptureFixture[str]
+) -> None:
+    source = tmp_path / "raw"
+    source.mkdir()
+    expected = RunSummary(processed=0, built=0, skipped=0, accepted_rows=0, stopped=False)
+
+    exit_code = run(
+        [
+            "run",
+            "--source-root",
+            str(source),
+            "--data-root",
+            str(tmp_path / "output"),
+            "--log-format",
+            "json",
+        ],
+        execute_run=lambda _paths: expected,
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert captured.out == json.dumps(expected.to_dict(), sort_keys=True) + "\n"
+    assert "\x1b[" not in captured.out + captured.err
