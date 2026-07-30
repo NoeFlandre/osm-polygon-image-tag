@@ -95,7 +95,7 @@ def test_export_record_is_frozen() -> None:
     record = parse_copy_record(b"0103\tway\t1\t1\t1\t2026-01-01T00:00:00Z\t{}\n")
 
     with pytest.raises(AttributeError):
-        record.osm_id = 2  # type: ignore[misc]
+        setattr(record, "osm_id", 2)  # noqa: B010
 
 
 @pytest.mark.parametrize(

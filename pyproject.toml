@@ -39,14 +39,18 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/osm_polygon_image_tag"]
-include = ["src/osm_polygon_image_tag/_data/*.json"]
+include = [
+    "src/osm_polygon_image_tag/_data/*.json",
+    "src/osm_polygon_image_tag/_data/*.md",
+    "src/osm_polygon_image_tag/*/README.md",
+]
 
 [dependency-groups]
 dev = [
-    "mypy>=1.17,<2",
     "pytest>=8.4,<9",
     "pytest-cov>=6.2,<7",
     "ruff>=0.12,<0.13",
+    "ty>=0.0.65",
 ]
 
 [tool.pytest.ini_options]
@@ -67,14 +71,26 @@ quote-style = "double"
 indent-style = "space"
 line-ending = "lf"
 
-[tool.mypy]
-python_version = "3.12"
-strict = true
-packages = ["osm_polygon_image_tag"]
+[tool.ty.environment]
+python-version = "3.12"
 
-[[tool.mypy.overrides]]
-module = ["osmium.*", "pyarrow.*", "shapely.*"]
-ignore_missing_imports = true
+[tool.ty.src]
+include = ["src", "tests"]
+
+[[tool.ty.overrides]]
+include = ["tests/**/*.py"]
+
+[tool.ty.overrides.analysis]
+# Third-party type information is incomplete for the provider SDKs and the
+# geospatial stack. Allow ty to type-check the rest of the codebase without
+# failing on these narrow imports; the production code itself remains fully
+# type-checked.
+allowed-unresolved-imports = [
+    "huggingface_hub.*",
+    "osmium.*",
+    "pyarrow.*",
+    "shapely.*",
+]
 
 [tool.coverage.run]
 branch = true

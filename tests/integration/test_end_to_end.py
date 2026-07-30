@@ -30,7 +30,9 @@ class MemoryHub:
         )
         return f"commit-{len(self.commits)}"
 
-    def download(self, _repo_id: str, remote_path: str, _revision: str) -> bytes:
+    def download(self, repo_id: str, remote_path: str, revision: str) -> bytes:
+        assert repo_id == EXPECTED_REPO
+        assert revision
         return self.remote[remote_path]
 
 

@@ -160,11 +160,15 @@ def publish_dataset(
             return PublicationResult("skipped", str(receipt["commit_id"]), len(files))
         if receipt.get("repo_id") != EXPECTED_REPO:
             raise PublicationError("publication receipt repository mismatch")
-    previous = {
-        str(item["path"]): str(item["sha256"])
-        for item in receipt_files
-        if isinstance(item, dict) and "path" in item and "sha256" in item
-    }
+    previous_entries: list[tuple[str, str]] = []
+    for entry in receipt_files:
+        if not isinstance(entry, dict):
+            continue
+        path = entry.get("path")
+        digest = entry.get("sha256")
+        if isinstance(path, str) and isinstance(digest, str):
+            previous_entries.append((path, digest))
+    previous = dict(previous_entries)
     current = {item.remote_path: item.sha256 for item in files}
     changed = tuple(item for item in files if previous.get(item.remote_path) != item.sha256)
     deleted = tuple(sorted(set(previous) - set(current)))
