@@ -7,7 +7,7 @@ from pyproj import Geod
 from shapely import from_wkb, orient_polygons, to_wkb
 from shapely.errors import GEOSException
 
-from osm_polygon_image_tag.extraction import (
+from osm_polygon_image_tag.ingest.extraction import (
     TARGET_TAG_KEYS,
     ExportRecord,
     has_target_tag,

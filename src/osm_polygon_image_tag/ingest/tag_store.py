@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 from types import TracebackType
 
-from osm_polygon_image_tag.extraction import SourceTagRecord
+from osm_polygon_image_tag.ingest.extraction import SourceTagRecord
 
 
 class TagStore:

@@ -3,7 +3,7 @@ from pathlib import Path, PurePosixPath
 
 import pytest
 
-from osm_polygon_image_tag.discovery import PbfSource, discover_pbfs
+from osm_polygon_image_tag.ingest.discovery import PbfSource, discover_pbfs
 from osm_polygon_image_tag.core.errors import ConfigurationError
 
 

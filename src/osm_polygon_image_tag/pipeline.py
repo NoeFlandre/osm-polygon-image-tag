@@ -8,8 +8,8 @@ from pathlib import Path
 import pyarrow.parquet as pq
 
 from osm_polygon_image_tag.core.config import PipelinePaths
-from osm_polygon_image_tag.discovery import PbfSource
-from osm_polygon_image_tag.extraction import (
+from osm_polygon_image_tag.ingest.discovery import PbfSource
+from osm_polygon_image_tag.ingest.extraction import (
     ExportRecord,
     osmium_version,
     restore_original_tags,
@@ -31,8 +31,8 @@ from osm_polygon_image_tag.core.manifest import (
 )
 from osm_polygon_image_tag.resources import osmium_export_config
 from osm_polygon_image_tag.storage import validate_geoparquet, write_geoparquet
-from osm_polygon_image_tag.tag_store import TagStore
-from osm_polygon_image_tag.transform import AcceptedRow, RejectedRow, transform_record
+from osm_polygon_image_tag.ingest.tag_store import TagStore
+from osm_polygon_image_tag.ingest.transform import AcceptedRow, RejectedRow, transform_record
 
 Scanner = Callable[..., None]
 Exporter = Callable[..., Iterable[ExportRecord]]

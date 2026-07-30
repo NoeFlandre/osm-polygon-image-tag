@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from osm_polygon_image_tag.extraction import SourceTagRecord
-from osm_polygon_image_tag.tag_store import TagStore
+from osm_polygon_image_tag.ingest.extraction import SourceTagRecord
+from osm_polygon_image_tag.ingest.tag_store import TagStore
 
 
 def test_store_round_trips_exact_tags_and_count(tmp_path: Path) -> None:

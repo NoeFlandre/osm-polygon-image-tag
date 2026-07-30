@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from osm_polygon_image_tag.core.config import PipelinePaths
-from osm_polygon_image_tag.discovery import PbfSource
+from osm_polygon_image_tag.ingest.discovery import PbfSource
 from osm_polygon_image_tag.orchestrator import StopToken, run_all
 from osm_polygon_image_tag.pipeline import BuildResult
 from osm_polygon_image_tag.publication import PublicationResult

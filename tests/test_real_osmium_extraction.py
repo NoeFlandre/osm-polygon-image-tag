@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from osm_polygon_image_tag.extraction import (
+from osm_polygon_image_tag.ingest.extraction import (
     SourceTagRecord,
     restore_original_tags,
     scan_target_source_tags,

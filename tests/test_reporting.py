@@ -9,7 +9,7 @@ import pytest
 import osm_polygon_image_tag.reporting as reporting
 from osm_polygon_image_tag.catalog import verified_manifests as catalog_verified_manifests
 from osm_polygon_image_tag.core.config import PipelinePaths
-from osm_polygon_image_tag.discovery import discover_pbfs
+from osm_polygon_image_tag.ingest.discovery import discover_pbfs
 from osm_polygon_image_tag.core.manifest import (
     DATASET_SCHEMA_VERSION,
     PROCESSING_CONTRACT_VERSION,

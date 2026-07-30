@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from osm_polygon_image_tag.extraction import (
+from osm_polygon_image_tag.ingest.extraction import (
     ExportRecord,
     export_command,
     has_target_tag,
