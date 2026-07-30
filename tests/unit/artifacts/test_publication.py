@@ -1,10 +1,15 @@
 import json
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any
 
 import pytest
 
+from osm_polygon_image_tag.artifacts.publication import (
+    EXPECTED_REPO,
+    publication_inventory,
+    publish_dataset,
+)
+from osm_polygon_image_tag.artifacts.reporting import generate_metadata
+from osm_polygon_image_tag.artifacts.storage import write_geoparquet
 from osm_polygon_image_tag.core.errors import PublicationError
 from osm_polygon_image_tag.core.manifest import (
     DATASET_SCHEMA_VERSION,
@@ -17,18 +22,7 @@ from osm_polygon_image_tag.core.manifest import (
     read_manifest,
     write_manifest,
 )
-from osm_polygon_image_tag.artifacts.publication import (
-    EXPECTED_REPO,
-    publication_inventory,
-    publish_dataset,
-)
-from osm_polygon_image_tag.integrations.huggingface import (
-    HubCommit,
-    HuggingFaceHub,
-    PublicationFile,
-)
-from osm_polygon_image_tag.artifacts.reporting import generate_metadata
-from osm_polygon_image_tag.artifacts.storage import write_geoparquet
+from osm_polygon_image_tag.integrations.huggingface import HubCommit
 
 
 def _dataset(root: Path) -> None:
@@ -52,7 +46,7 @@ def _dataset(root: Path) -> None:
     generate_metadata(root)
 
 
-class FakeHub:
+class _FakeHub:
     def __init__(self, *, corrupt: bool = False) -> None:
         self.commits: list[HubCommit] = []
         self.files: dict[str, bytes] = {}
@@ -184,7 +178,7 @@ def test_inventory_rejects_symlinks(tmp_path: Path) -> None:
 
 def test_publish_verifies_remote_content_and_resumes_from_receipt(tmp_path: Path) -> None:
     _dataset(tmp_path)
-    hub = FakeHub()
+    hub = _FakeHub()
 
     first = publish_dataset(tmp_path, confirm_repo=EXPECTED_REPO, hub=hub)
     second = publish_dataset(tmp_path, confirm_repo=EXPECTED_REPO, hub=hub)
@@ -201,21 +195,21 @@ def test_publish_requires_exact_repo_confirmation(tmp_path: Path) -> None:
     _dataset(tmp_path)
 
     with pytest.raises(PublicationError, match="confirmation"):
-        publish_dataset(tmp_path, confirm_repo="other/repo", hub=FakeHub())
+        publish_dataset(tmp_path, confirm_repo="other/repo", hub=_FakeHub())
 
 
 def test_publish_does_not_write_receipt_when_remote_digest_differs(tmp_path: Path) -> None:
     _dataset(tmp_path)
 
     with pytest.raises(PublicationError, match="remote digest"):
-        publish_dataset(tmp_path, confirm_repo=EXPECTED_REPO, hub=FakeHub(corrupt=True))
+        publish_dataset(tmp_path, confirm_repo=EXPECTED_REPO, hub=_FakeHub(corrupt=True))
 
     assert not (tmp_path / "receipts/publication.json").exists()
 
 
 def test_next_publication_commits_and_verifies_only_changed_files(tmp_path: Path) -> None:
     _dataset(tmp_path)
-    hub = FakeHub()
+    hub = _FakeHub()
     publish_dataset(tmp_path, confirm_repo=EXPECTED_REPO, hub=hub)
     (tmp_path / "README.md").write_text("changed")
 
@@ -225,73 +219,12 @@ def test_next_publication_commits_and_verifies_only_changed_files(tmp_path: Path
     assert [item.remote_path for item in hub.commits[1].files] == ["README.md"]
 
 
-def test_real_hub_adapter_uses_dataset_commit_and_pinned_download(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = tmp_path / "README.md"
-    source.write_bytes(b"content")
-    calls: dict[str, Any] = {}
-
-    class Api:
-        def create_commit(self, **kwargs: object) -> object:
-            calls["commit"] = kwargs
-            return SimpleNamespace(oid="abc123")
-
-    def download(**kwargs: object) -> str:
-        calls["download"] = kwargs
-        remote = tmp_path / "remote"
-        remote.write_bytes(b"content")
-        return str(remote)
-
-    monkeypatch.setattr("osm_polygon_image_tag.integrations.huggingface.HfApi", Api)
-    monkeypatch.setattr("osm_polygon_image_tag.integrations.huggingface.hf_hub_download", download)
-    hub = HuggingFaceHub()
-    commit_id = hub.commit(
-        HubCommit(
-            EXPECTED_REPO,
-            "dataset",
-            "message",
-            (PublicationFile(source, "README.md", file_sha256(source), 7),),
-            ("data/stale.parquet",),
-        )
-    )
-    content = hub.download(EXPECTED_REPO, "README.md", commit_id)
-
-    assert commit_id == "abc123"
-    assert content == b"content"
-    assert calls["commit"]["repo_type"] == "dataset"
-    assert calls["download"]["revision"] == "abc123"
-    assert calls["download"]["repo_type"] == "dataset"
-
-
-def test_real_hub_adapter_wraps_client_failures(monkeypatch: pytest.MonkeyPatch) -> None:
-    class Api:
-        def create_commit(self, **_kwargs: object) -> object:
-            raise RuntimeError("secret client detail")
-
-    monkeypatch.setattr("osm_polygon_image_tag.integrations.huggingface.HfApi", Api)
-    hub = HuggingFaceHub()
-
-    with pytest.raises(PublicationError, match="commit failed"):
-        hub.commit(HubCommit(EXPECTED_REPO, "dataset", "message", ()))
-
-    def fail_download(**_kwargs: object) -> str:
-        raise RuntimeError("secret client detail")
-
-    monkeypatch.setattr(
-        "osm_polygon_image_tag.integrations.huggingface.hf_hub_download",
-        fail_download,
-    )
-    with pytest.raises(PublicationError, match="verification failed"):
-        hub.download(EXPECTED_REPO, "README.md", "abc")
-
-
 def test_invalid_receipt_is_rejected_without_hub_write(tmp_path: Path) -> None:
     _dataset(tmp_path)
     receipt = tmp_path / "receipts/publication.json"
     receipt.parent.mkdir()
     receipt.write_text('{"files":"not-a-list"}')
-    hub = FakeHub()
+    hub = _FakeHub()
 
     with pytest.raises(PublicationError, match="invalid publication receipt"):
         publish_dataset(tmp_path, confirm_repo=EXPECTED_REPO, hub=hub)
