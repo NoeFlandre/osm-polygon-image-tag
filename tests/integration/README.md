@@ -26,6 +26,8 @@ contributor's machine, the integration tests fail loudly there too.
 - Tests that require `osmium cat`, `osmium export`, or other binaries.
 - End-to-end exercises of the `run`/`run-and-publish`/`verify` CLI surface.
 - Resume behaviour against the real extractor.
+- No-PBF asset backfill, cache reuse, two-config metadata, and idempotent
+  publication using only local fakes.
 
 ## What must not be added here
 

@@ -1,6 +1,8 @@
 import threading
 from pathlib import Path
 
+import pytest
+
 from osm_polygon_image_tag.assets.build_state import AssetBuildResult
 from osm_polygon_image_tag.core.manifest import (
     Manifest,
@@ -125,3 +127,38 @@ def test_worker_marks_unstarted_jobs_pending_after_stop(tmp_path: Path) -> None:
     summary = worker.finish()
 
     assert summary.pending == 1
+
+
+def test_worker_failure_does_not_deadlock_a_full_producer_queue(tmp_path: Path) -> None:
+    async def fail(*_args: object, **_kwargs: object) -> AssetBuildResult:
+        raise RuntimeError("resolver failed")
+
+    worker = EnrichmentWorker(
+        tmp_path,
+        builder=fail,
+        cache_factory=lambda _root: object(),
+        registry_factory=lambda: object(),
+        stop_requested=lambda: False,
+        progress=lambda _event: None,
+    )
+    returned = threading.Event()
+    failures: list[BaseException] = []
+
+    def start_many() -> None:
+        try:
+            worker.start(
+                AssetJob(_manifest(str(index)), tmp_path / f"{index}.parquet")
+                for index in range(32)
+            )
+        except BaseException as error:
+            failures.append(error)
+        finally:
+            returned.set()
+
+    producer = threading.Thread(target=start_many, daemon=True)
+    producer.start()
+
+    assert returned.wait(timeout=2), "producer blocked after enrichment worker failed"
+    assert isinstance(failures[0], RuntimeError)
+    with pytest.raises(RuntimeError, match="resolver failed"):
+        worker.finish()

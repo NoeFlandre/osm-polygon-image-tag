@@ -4,8 +4,10 @@ An independent, reproducible pipeline for a GeoParquet dataset of OpenStreetMap
 area features carrying raw image-reference tags. The pipeline reads Geofabrik
 `.osm.pbf` files recursively, deterministically, and without ever writing to
 the source tree. It produces one GeoParquet shard per source PBF, a matching
-manifest, deterministic global statistics, and a generated Hugging Face
-dataset card, then publishes the verified artifacts to a Hugging Face dataset.
+manifest, and an independently resumable one-to-many image-asset shard. Asset
+resolution reuses polygon Parquet and a transactional cache, so historical
+PBFs are never reprocessed merely to add directly usable URLs. Verified
+polygon and asset artifacts publish as two Hugging Face configurations.
 
 - Source: <https://github.com/NoeFlandre/osm-polygon-image-tag>
 - Dataset: <https://huggingface.co/datasets/NoeFlandre/osm-polygon-image-tag>
@@ -33,8 +35,8 @@ preserved in the `panoramax_values` map with their original keys, and
 ## Layout
 
 - `src/osm_polygon_image_tag/`: production package, organized by
-  responsibility into `core`, `ingest`, `artifacts`, `runtime`, and
-  `integrations` subpackages. See
+  responsibility into `core`, `ingest`, `assets`, `resolvers`, `artifacts`,
+  `runtime`, and `integrations` subpackages. See
   [`docs/architecture.md`](docs/architecture.md).
 - `tests/`: `unit/` tests mirror the production layout. `integration/`
   tests exercise the real `osmium` binary. `fixtures/` holds stable OSM XML
@@ -83,9 +85,9 @@ Authenticate first with `hf auth login`.
 
 - `preflight`: read-only environment check. Reports `osmium` version,
   capacity, and the discovered PBF inventory. Mutates nothing.
-- `run`: process or resume every PBF locally. Each completed PBF produces
-  one atomic GeoParquet shard and one atomic manifest. Skipped PBFs reuse
-  the verified shard without rehashing the source or output.
+- `run`: process or resume every PBF locally while backfilling missing asset
+  shards from finalized polygon Parquet. Compatible polygon and asset shards
+  are fast-skipped.
 - `verify`: revalidate every finalized shard by recomputing the source and
   output SHA-256 and re-reading the Parquet file. This is the explicit
   deep verification path. Use it after a suspected corruption event.
@@ -95,8 +97,8 @@ Authenticate first with `hf auth login`.
 - `publish`: publish only the existing verified artifacts to the
   configured Hugging Face dataset. It verifies every changed remote file
   before atomically recording a local receipt.
-- `run-and-publish`: process one PBF, regenerate metadata, publish, and
-  continue with the next PBF.
+- `run-and-publish`: perform extraction/backfill, regenerate factual metadata
+  when outputs changed, and publish verified polygon and asset shards.
 
 ### Fast resume versus explicit deep verification
 
@@ -106,13 +108,23 @@ shards that still match. They do not rehash the source PBF or re-read the
 Parquet file. `verify` is the explicit deep verification path and is the
 recommended command to prove the data root is still healthy.
 
-### Skipped PBFs do not regenerate or publish metadata
+### Smart historical backfill
 
-`run-and-publish` only runs `generate_metadata` and the publisher after a
-shard is newly built. A pure resume that only skips previously verified
-PBFs will not refresh the catalog, will not regenerate the dataset card,
-and will not commit to Hugging Face. Use `rebuild-metadata` or `publish`
-explicitly when you want to refresh those.
+Every finalized polygon shard is queued for enrichment. A compatible asset
+manifest skips in constant time; a missing asset shard reads only needed
+Parquet columns and consults `cache/resolutions.sqlite`. It never opens the
+original PBF. If no polygon or asset output changed, publication receipts
+prevent a redundant Hub commit.
+
+Mapillary direct URLs require `MAPILLARY_ACCESS_TOKEN`; Flickr direct URLs
+require `FLICKR_API_KEY`. Without them the dataset records a factual page URL
+and `resolved_page_only`. Credentials are environment-only and never written
+to Parquet, manifests, logs, or publication artifacts.
+
+On Hugging Face, use `polygons` (default) for geometry and `image_assets` for
+resolved references. Join on `osm_type`, `osm_id`, `osm_version`, and
+`source_pbf`. Wikimedia Commons category rows are marked
+`category_membership`; membership does not prove depiction.
 
 ### Heartbeats and progress events
 
@@ -122,12 +134,16 @@ Every long-running command emits JSON events to stderr, one per line:
 progress {"event":"run_started","pbf_count":3,"pbf_bytes":12345}
 progress {"event":"pbf_started","pbf_index":1,"pbf_count":3,"source_pbf":"europe/france.osm.pbf"}
 progress {"event":"pbf_completed","pbf_index":1,"pbf_count":3,"status":"built","accepted_rows":42,"rejections":{}}
+progress {"event":"asset_shard_started","asset_index":1,"asset_count":3,"polygon_shard":"data/example.parquet"}
+progress {"event":"asset_reference_progress","reference_index":1,"reference_count":8}
 progress {"event":"metadata_started"}
 progress {"event":"heartbeat","last_event":"metadata_manifest_scan_started","elapsed_seconds":42}
 ```
 
-Heartbeats keep long-running runs observable without flooding the log. The
-final summary is printed to stdout as one canonical JSON object.
+Asset events cover backfill/shard lifecycle, reference progress, provider
+cooldowns, and final counts. Heartbeats keep long runs observable. The final
+summary is canonical JSON on stdout. Non-TTY output and `--log-format json`
+are stable JSON; TTY `auto` mode uses restrained Rich/tqdm rendering.
 
 ### Safe Ctrl-C behaviour
 

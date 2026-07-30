@@ -120,21 +120,32 @@ class SafeHttpClient:
         raise SafeHttpError("too many redirects")
 
     async def probe_image(self, url: str) -> ImageProbe:
-        await self._validate(url)
-        try:
-            async with self._client.stream("GET", url, headers={"Range": "bytes=0-0"}) as response:
-                if _header_size(response.headers) > self._max_header_bytes:
-                    raise ResponseTooLarge("provider response headers exceed limit")
-                return ImageProbe(
-                    final_url=str(response.url),
-                    status_code=response.status_code,
-                    mime_type=response.headers.get("content-type"),
-                    content_length=int(response.headers["content-length"])
-                    if response.headers.get("content-length", "").isdigit()
-                    else None,
-                )
-        except (httpx.HTTPError, httpcore.NetworkError, httpcore.TimeoutException) as error:
-            raise SafeHttpError(f"provider request failed: {_redacted_url(url)}") from error
+        current = url
+        for _redirect_count in range(self._max_redirects + 1):
+            await self._validate(current)
+            try:
+                async with self._client.stream(
+                    "GET", current, headers={"Range": "bytes=0-0"}
+                ) as response:
+                    if _header_size(response.headers) > self._max_header_bytes:
+                        raise ResponseTooLarge("provider response headers exceed limit")
+                    if response.status_code in _REDIRECTS:
+                        location = response.headers.get("location")
+                        if location is None:
+                            raise SafeHttpError("redirect response has no location")
+                        current = urljoin(current, location)
+                        continue
+                    return ImageProbe(
+                        final_url=str(response.url),
+                        status_code=response.status_code,
+                        mime_type=response.headers.get("content-type"),
+                        content_length=int(response.headers["content-length"])
+                        if response.headers.get("content-length", "").isdigit()
+                        else None,
+                    )
+            except (httpx.HTTPError, httpcore.NetworkError, httpcore.TimeoutException) as error:
+                raise SafeHttpError(f"provider request failed: {_redacted_url(current)}") from error
+        raise SafeHttpError("too many redirects")
 
     async def aclose(self) -> None:
         await self._client.aclose()

@@ -17,19 +17,12 @@ improvements, and documentation fixes.
 ## Working on changes
 
 1. Fork the repository and create a feature branch off `main`.
-2. Run `uv sync --locked` to install the development environment.
+2. Run `just sync` and `just install-hooks`.
 3. Add a failing test that captures the desired behaviour.
 4. Implement the minimum change to make the test pass.
 5. Run the local quality gates:
    ```bash
-   uv lock --check
-   uv sync --locked
-   uv run ruff check .
-   uv run ruff format --check .
-   uv run ty check
-   uv run pytest -q
-   uv build
-   git diff --check
+   just ci
    ```
 6. Open a pull request against `main`. Use a descriptive title and explain
    the change, the test that proves it, and any caveats. If your change

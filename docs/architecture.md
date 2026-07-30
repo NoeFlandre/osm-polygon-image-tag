@@ -11,23 +11,27 @@ organized into responsibility-based subpackages.
 
 ```
 src/osm_polygon_image_tag/
-  cli.py             # argparse entry point, exit codes, signal wiring
+  cli.py             # Typer entry point, dependency wiring, exit codes
   __init__.py        # __version__
   py.typed           # typed-package marker
   _data/             # package data (osmium-export.json)
   core/              # configuration, errors, schema, manifest, progress
   ingest/            # PBF discovery, osmium subprocess, tag store, transform
+  assets/            # asset schema, cache, manifests, deterministic shards
+  resolvers/         # hardened HTTP boundary and provider adapters
   artifacts/         # storage, inventory, catalog, reporting, publication
-  runtime/           # pipeline, orchestrator, preflight, resources
+  runtime/           # pipeline, enrichment, console, orchestration
   integrations/      # provider adapters (Hugging Face Hub)
 ```
 
 The dependency arrow flows downward:
 
 ```
-cli  ->  runtime, artifacts, integrations
-runtime  ->  core, ingest, artifacts, integrations
-artifacts  ->  core
+cli  ->  runtime, assets, resolvers, artifacts, integrations
+runtime  ->  core, ingest, assets, artifacts
+resolvers  ->  assets
+assets  ->  core
+artifacts  ->  core, assets
 ingest  ->  core
 integrations  ->  core, artifacts
 core  ->  stdlib, PyArrow, PyProj
@@ -42,6 +46,14 @@ provider SDK failures into project errors.
 - The PBF source tree is treated as immutable input; only `ingest` reads it.
 - The managed data root is the only place any artifact is written; only
   `artifacts` and `runtime` write to it.
+- Asset schema/resolver contracts are versioned independently from polygon
+  extraction. Historical enrichment consumes finalized Parquet and never
+  invalidates schema-v2 polygon shards.
+- A bounded enrichment worker overlaps asset backfill with sequential PBF
+  extraction. Provider calls use a transactional cache, global concurrency
+  bound, provider semaphores, and request pacing.
+- The HTTP boundary validates every DNS answer, pins the validated address,
+  revalidates redirects, strips cross-origin credentials, and bounds metadata.
 - Hugging Face SDK code lives in a single adapter; artifact planning depends
   only on the structural `Hub` protocol.
 - Core owns shared contracts and the Arrow/CRS schema. It does not depend on

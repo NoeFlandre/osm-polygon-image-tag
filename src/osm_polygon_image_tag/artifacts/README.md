@@ -7,7 +7,7 @@ that lives inside the managed data root.
 
 - Atomic GeoParquet shard writing and validation (`storage`).
 - Finalized-manifest discovery (`manifest_inventory`).
-- The rebuildable catalog index (`catalog`) and aggregate queries (`statistics`).
+- Rebuildable polygon and asset catalogs and factual aggregate queries.
 - Deterministic metadata coordination (`reporting`) and card rendering
   (`dataset_card`).
 - Publication types, inventory, planning, and receipt writing
@@ -23,8 +23,7 @@ that lives inside the managed data root.
 ## Public entry points and contracts
 
 - `write_geoparquet`, `validate_geoparquet`: round-trip-safe shard I/O.
-- `verified_manifests`, `sync_catalog`: rebuildable catalog with progress
-  events.
+- `verified_manifests`, `verified_asset_manifests`, and their catalog syncs.
 - `generate_metadata`: deterministic statistics and card writer.
 - `publication_inventory`, `publish_dataset`: the local publication planner
   that takes any `Hub` adapter. Inventory planning is non-destructive:

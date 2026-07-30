@@ -3,9 +3,11 @@ from pathlib import Path
 
 import pytest
 from _pytest.capture import CaptureFixture
+from pytest import MonkeyPatch
 
 from osm_polygon_image_tag.artifacts.publication import EXPECTED_REPO, PublicationResult
-from osm_polygon_image_tag.cli import _emit_progress, run
+from osm_polygon_image_tag.cli import _emit_progress, _run_with_signals, run
+from osm_polygon_image_tag.core.config import PipelinePaths
 from osm_polygon_image_tag.runtime.orchestrator import RunSummary, VerifySummary
 
 
@@ -142,3 +144,25 @@ def test_json_log_format_remains_machine_readable(
     captured = capsys.readouterr()
     assert captured.out == json.dumps(expected.to_dict(), sort_keys=True) + "\n"
     assert "\x1b[" not in captured.out + captured.err
+
+
+def test_production_run_wires_the_enrichment_worker(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    source = tmp_path / "raw"
+    source.mkdir()
+    paths = PipelinePaths.build(source_root=source, data_root=tmp_path / "output")
+    worker = object()
+
+    monkeypatch.setattr(
+        "osm_polygon_image_tag.cli._build_enrichment_worker",
+        lambda _paths, _token, _progress: worker,
+    )
+
+    def execute(paths: PipelinePaths, **kwargs: object) -> RunSummary:
+        assert kwargs["enrichment_worker"] is worker
+        return RunSummary(0, 0, 0, 0, False)
+
+    monkeypatch.setattr("osm_polygon_image_tag.cli.run_all", execute)
+
+    assert _run_with_signals(paths).enrichment.built == 0

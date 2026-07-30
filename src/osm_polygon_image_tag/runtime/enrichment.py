@@ -77,7 +77,14 @@ class EnrichmentWorker:
                 return False
             self._seen.add(identity)
             self._submitted += 1
-        self._jobs.put(job)
+        while True:
+            if self._error is not None:
+                raise self._error
+            try:
+                self._jobs.put(job, timeout=0.1)
+                break
+            except queue.Full:
+                continue
         return True
 
     def finish(self) -> EnrichmentSummary:

@@ -110,6 +110,21 @@ async def test_redirect_loop_is_bounded() -> None:
 
 
 @pytest.mark.asyncio
+async def test_image_probe_revalidates_redirect_targets() -> None:
+    async def handle(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"location": "http://127.0.0.1/private.jpg"})
+
+    client = SafeHttpClient(
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handle)),
+        resolve=_resolver({"example.test": ("93.184.216.34",)}),
+    )
+
+    with pytest.raises(UnsafeUrlError):
+        await client.probe_image("https://example.test/image.jpg")
+    await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_json_body_and_headers_are_bounded() -> None:
     async def body_handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=json.dumps({"data": "x" * 100}))

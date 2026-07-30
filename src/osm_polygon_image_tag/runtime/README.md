@@ -10,6 +10,8 @@ integrations are wired together.
   deep verification.
 - The full-run orchestrator (`orchestrator`) that drives `run`,
   `run-and-publish`, and `verify`, including `SIGINT`/`SIGTERM` handling.
+- The bounded background enrichment worker (`enrichment`) and TTY/JSON
+  rendering boundary (`console`).
 - The read-only preflight (`preflight`) used by `osm-polygon-image-tag
   preflight`.
 - Package-data resource resolution (`resources`).

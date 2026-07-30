@@ -36,6 +36,9 @@ fixed namespaces:
 data-root/
   data/                # one GeoParquet shard per source PBF
   manifests/           # one manifest per shard
+  assets/              # one image-asset shard per polygon shard
+  asset-manifests/     # independent asset/resolver checkpoints
+  cache/               # private resolution SQLite cache
   statistics/          # dataset-statistics.json (deterministic)
   catalog/             # catalog.sqlite (rebuildable index)
   receipts/            # publication.json after a successful publish
@@ -51,9 +54,8 @@ publication planning. The pipeline never deletes files it does not own.
 - `preflight`: validates that the source root is readable, `osmium` is
   available, the data root has enough capacity, and reports the discovered
   PBF inventory. Mutates nothing.
-- `run`: processes or resumes every PBF locally. Each completed PBF
-  produces a deterministic GeoParquet shard and a manifest. Skipped PBFs
-  reuse verified shards without rehashing the source or output.
+- `run`: processes or resumes PBFs while a bounded worker backfills missing
+  asset shards from finalized polygon Parquet/cache.
 - `verify`: revalidates every finalized shard by recomputing its SHA-256
   and structurally re-reading the Parquet file. This is the deep
   verification path; the fast resume used by `run` and `run-and-publish`
@@ -62,9 +64,8 @@ publication planning. The pipeline never deletes files it does not own.
   from the existing shards without rebuilding or publishing anything.
 - `publish`: publishes only the existing verified artifacts to the
   configured Hugging Face dataset.
-- `run-and-publish`: processes one PBF, regenerates metadata, and
-  publishes. The loop continues until every PBF is processed or until the
-  operator stops it.
+- `run-and-publish`: runs extraction and enrichment, then regenerates and
+  publishes both configurations when verified outputs changed.
 
 ## Fast resume versus explicit deep verification
 
@@ -79,13 +80,13 @@ SHA-256, recomputes the output SHA-256, and re-reads the Parquet structure
 to confirm the row count and schema. Use it after a suspected corruption
 event or before publishing for the first time after a long pause.
 
-## Skipped PBFs do not regenerate or publish metadata
+## No-PBF historical backfill
 
-`run-and-publish` only runs `generate_metadata` and the publisher after a
-shard is newly built. A resume that only skips previously verified PBFs
-does not regenerate the dataset card, does not refresh the catalog, and
-does not commit to Hugging Face. The next `rebuild-metadata` or `publish`
-command will run only when the operator chooses to.
+Fast resume queues all compatible polygon manifests. Existing compatible
+asset manifests skip without provider calls. Missing asset shards read only
+polygon Parquet and cache; the PBF is neither opened nor rebuilt. Metadata and
+publication run after new polygon or asset outputs. Receipts suppress a
+redundant Hub commit on an unchanged second run.
 
 ## Progress events and heartbeats
 
@@ -102,11 +103,16 @@ Every long-running command emits JSON events to stderr as
 - `metadata_statistics_started`, `metadata_statistics_completed`,
   `metadata_write_started`, `metadata_write_completed`.
 - `publication_started`, `publication_completed`.
+- `asset_backfill_started`, `asset_shard_started`,
+  `asset_reference_progress`, `asset_shard_completed`,
+  `asset_provider_cooldown`, and `asset_backfill_completed`.
 - `heartbeat` events emitted every 30 seconds with the last event name
   and elapsed seconds. They keep long-running runs observable without
   flooding the log.
 
-The exact, final report is always printed to stdout as one JSON object.
+The exact final report is always printed to stdout as one JSON object. Use
+`--log-format json` for automation. TTY `auto` mode uses Rich and tqdm;
+redirected output stays canonical JSON.
 
 ## Control signals
 
@@ -129,6 +135,10 @@ valid because promotion uses atomic rename.
   any Parquet or manifest write. Publication preserves and rejects all of
   these files because, without a process lock, they may belong to an active
   run. Resume the pipeline so its owning operation can clean up safely.
+
+The enrichment worker finishes an active request, stops starting queued shard
+builds after the stop token, closes HTTP/SQLite resources, and leaves missing
+shards pending for the next run. Press Ctrl-C once and wait.
 
 ## When to use which command
 

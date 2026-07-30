@@ -16,6 +16,7 @@ preserved as the historical record of how the project was built.
 - `2026-07-30-direct-image-assets.md`: the approved implementation plan for
   cached provider resolution, one-to-many asset shards, automatic historical
   backfill, two Hugging Face configurations, and the modern project toolchain.
+  Implemented on `main`; current contracts live in the top-level documentation.
 
 ## Reading the plans
 

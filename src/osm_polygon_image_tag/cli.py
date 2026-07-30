@@ -3,16 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from collections.abc import Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
-from typing import Annotated
 
 import click
-import typer
 
 from osm_polygon_image_tag.artifacts.publication import (
     EXPECTED_REPO,
@@ -20,11 +18,15 @@ from osm_polygon_image_tag.artifacts.publication import (
     publish_dataset,
 )
 from osm_polygon_image_tag.artifacts.reporting import MetadataResult, generate_metadata
+from osm_polygon_image_tag.assets.cache import ResolutionCache
+from osm_polygon_image_tag.cli_commands import app
 from osm_polygon_image_tag.core.config import PipelinePaths
 from osm_polygon_image_tag.core.errors import ImageTagPipelineError
 from osm_polygon_image_tag.core.progress import ProgressReporter
 from osm_polygon_image_tag.integrations.huggingface import HuggingFaceHub
+from osm_polygon_image_tag.resolvers.registry import ResolverRegistry
 from osm_polygon_image_tag.runtime.console import ConsoleRenderer
+from osm_polygon_image_tag.runtime.enrichment import EnrichmentWorker
 from osm_polygon_image_tag.runtime.orchestrator import (
     RunSummary,
     StopToken,
@@ -36,14 +38,7 @@ from osm_polygon_image_tag.runtime.orchestrator import (
 from osm_polygon_image_tag.runtime.preflight import PreflightReport, run_preflight
 
 Report = PreflightReport | RunSummary | VerifySummary | MetadataResult | PublicationResult
-app = typer.Typer(add_completion=False, rich_markup_mode=None)
 _renderer: ContextVar[ConsoleRenderer | None] = ContextVar("renderer", default=None)
-
-
-class LogFormat(str, Enum):
-    AUTO = "auto"
-    JSON = "json"
-    HUMAN = "human"
 
 
 def _emit_progress(event: dict[str, object]) -> None:
@@ -51,6 +46,23 @@ def _emit_progress(event: dict[str, object]) -> None:
     if renderer is None:
         renderer = ConsoleRenderer(log_format="json")
     renderer.progress(event)
+
+
+def _build_enrichment_worker(
+    paths: PipelinePaths,
+    token: StopToken,
+    progress: Callable[[dict[str, object]], None],
+) -> EnrichmentWorker:
+    return EnrichmentWorker(
+        paths.data_root,
+        cache_factory=ResolutionCache.open,
+        registry_factory=lambda: ResolverRegistry.build(
+            environment=os.environ,
+            progress=progress,
+        ),
+        stop_requested=lambda: token.requested,
+        progress=progress,
+    )
 
 
 def _run_with_signals(paths: PipelinePaths) -> RunSummary:
@@ -61,6 +73,7 @@ def _run_with_signals(paths: PipelinePaths) -> RunSummary:
             stop_token=token,
             metadata_builder=lambda root: generate_metadata(root, progress=reporter.emit),
             progress=reporter.emit,
+            enrichment_worker=_build_enrichment_worker(paths, token, reporter.emit),
         )
 
 
@@ -89,6 +102,7 @@ def _run_and_publish(paths: PipelinePaths, confirmation: str) -> RunSummary:
             metadata_builder=lambda root: generate_metadata(root, progress=reporter.emit),
             publisher=publisher,
             progress=reporter.emit,
+            enrichment_worker=_build_enrichment_worker(paths, token, reporter.emit),
         )
 
 
@@ -108,9 +122,9 @@ class _Runtime:
         source_root: Path,
         data_root: Path,
         confirmation: str | None,
-        log_format: LogFormat,
+        log_format: str,
     ) -> None:
-        self.renderer = ConsoleRenderer(log_format=log_format.value)
+        self.renderer = ConsoleRenderer(log_format=log_format)
         token = _renderer.set(self.renderer)
         try:
             paths = PipelinePaths.build(source_root=source_root, data_root=data_root)
@@ -132,86 +146,6 @@ class _Runtime:
             print(json.dumps(report.to_dict(), sort_keys=True))
         finally:
             _renderer.reset(token)
-
-
-def _runtime(context: typer.Context) -> _Runtime:
-    runtime = context.obj
-    if not isinstance(runtime, _Runtime):
-        raise RuntimeError("CLI runtime was not configured")
-    return runtime
-
-
-def _dispatch(
-    context: typer.Context,
-    command: str,
-    source_root: Path,
-    data_root: Path,
-    log_format: LogFormat,
-    confirmation: str | None = None,
-) -> None:
-    _runtime(context).dispatch(command, source_root, data_root, confirmation, log_format)
-
-
-@app.command()
-def preflight(
-    context: typer.Context,
-    source_root: Annotated[Path, typer.Option("--source-root")],
-    data_root: Annotated[Path, typer.Option("--data-root")],
-    log_format: Annotated[LogFormat, typer.Option("--log-format")] = LogFormat.AUTO,
-) -> None:
-    _dispatch(context, "preflight", source_root, data_root, log_format)
-
-
-@app.command("run")
-def run_command(
-    context: typer.Context,
-    source_root: Annotated[Path, typer.Option("--source-root")],
-    data_root: Annotated[Path, typer.Option("--data-root")],
-    log_format: Annotated[LogFormat, typer.Option("--log-format")] = LogFormat.AUTO,
-) -> None:
-    _dispatch(context, "run", source_root, data_root, log_format)
-
-
-@app.command()
-def verify(
-    context: typer.Context,
-    source_root: Annotated[Path, typer.Option("--source-root")],
-    data_root: Annotated[Path, typer.Option("--data-root")],
-    log_format: Annotated[LogFormat, typer.Option("--log-format")] = LogFormat.AUTO,
-) -> None:
-    _dispatch(context, "verify", source_root, data_root, log_format)
-
-
-@app.command("rebuild-metadata")
-def rebuild_metadata(
-    context: typer.Context,
-    source_root: Annotated[Path, typer.Option("--source-root")],
-    data_root: Annotated[Path, typer.Option("--data-root")],
-    log_format: Annotated[LogFormat, typer.Option("--log-format")] = LogFormat.AUTO,
-) -> None:
-    _dispatch(context, "rebuild-metadata", source_root, data_root, log_format)
-
-
-@app.command()
-def publish(
-    context: typer.Context,
-    source_root: Annotated[Path, typer.Option("--source-root")],
-    data_root: Annotated[Path, typer.Option("--data-root")],
-    confirm_repo: Annotated[str, typer.Option("--confirm-repo")],
-    log_format: Annotated[LogFormat, typer.Option("--log-format")] = LogFormat.AUTO,
-) -> None:
-    _dispatch(context, "publish", source_root, data_root, log_format, confirm_repo)
-
-
-@app.command("run-and-publish")
-def run_and_publish(
-    context: typer.Context,
-    source_root: Annotated[Path, typer.Option("--source-root")],
-    data_root: Annotated[Path, typer.Option("--data-root")],
-    confirm_repo: Annotated[str, typer.Option("--confirm-repo")],
-    log_format: Annotated[LogFormat, typer.Option("--log-format")] = LogFormat.AUTO,
-) -> None:
-    _dispatch(context, "run-and-publish", source_root, data_root, log_format, confirm_repo)
 
 
 def run(

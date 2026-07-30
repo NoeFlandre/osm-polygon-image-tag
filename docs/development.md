@@ -11,13 +11,15 @@ check, build the wheel, and contribute changes.
 - `pytest` with `pytest-cov` for tests and coverage.
 - `hatchling` for the build backend.
 - `osmium` for the integration tests that exercise the real extractor.
+- `pre-commit` for local hooks and `just` for canonical recipes.
 
 ## Initial setup
 
 ```bash
 git clone https://github.com/NoeFlandre/osm-polygon-image-tag.git
 cd osm-polygon-image-tag
-uv sync --locked
+uv sync --locked --dev
+uv run pre-commit install --hook-type pre-commit --hook-type pre-push
 ```
 
 `uv sync --locked` installs the exact lockfile-pinned environment,
@@ -28,14 +30,9 @@ including the development dependencies.
 Run these before opening a pull request. They mirror the CI contract.
 
 ```bash
-uv lock --check
-uv sync --locked
-uv run ruff check .
-uv run ruff format --check .
-uv run ty check
-uv run pytest -q
-uv build
-git diff --check origin/main...HEAD
+just check
+just test
+just build
 ```
 
 `uv run pytest -q` runs the complete suite, including tests that require the
@@ -44,6 +41,9 @@ real `osmium` binary. For the fast unit-only loop, run:
 ```bash
 uv run pytest tests/unit -q --no-cov
 ```
+
+`just ci` runs the locked checks, repository-local pre-commit hooks, tests,
+build, and whitespace gate used by GitHub Actions.
 
 ## Smoke-testing the installed wheel
 

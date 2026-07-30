@@ -1,7 +1,8 @@
 import asyncio
-from collections.abc import Mapping
+import time
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from osm_polygon_image_tag.assets.references import SourceReference
@@ -13,8 +14,9 @@ from osm_polygon_image_tag.resolvers.http import SafeHttpClient
 from osm_polygon_image_tag.resolvers.kartaview import KartaViewResolver
 from osm_polygon_image_tag.resolvers.mapillary import MapillaryResolver
 from osm_polygon_image_tag.resolvers.panoramax import PanoramaxResolver
+from osm_polygon_image_tag.resolvers.policy import ProviderRateLimited
 from osm_polygon_image_tag.resolvers.streetside import StreetsideResolver
-from osm_polygon_image_tag.resolvers.types import Resolver, ResolverContext
+from osm_polygon_image_tag.resolvers.types import ResolutionResult, Resolver, ResolverContext
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +40,10 @@ class ClosingClient(Protocol):
     async def aclose(self) -> None: ...
 
 
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
 class ResolverRegistry:
     def __init__(
         self,
@@ -45,6 +51,10 @@ class ResolverRegistry:
         *,
         environment: Mapping[str, str],
         http: ClosingClient,
+        monotonic: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        progress: Callable[[dict[str, object]], None] | None = None,
+        utcnow: Callable[[], datetime] = _utcnow,
     ) -> None:
         self._resolvers = dict(resolvers)
         self.environment = dict(environment)
@@ -53,6 +63,12 @@ class ResolverRegistry:
             provider: asyncio.Semaphore(limit.max_concurrency)
             for provider, limit in _LIMITS.items()
         }
+        self._rate_locks = {provider: asyncio.Lock() for provider in _LIMITS}
+        self._next_request = {provider: 0.0 for provider in _LIMITS}
+        self._monotonic = monotonic
+        self._sleep = sleep
+        self._progress = progress or (lambda _event: None)
+        self._utcnow = utcnow
 
     @classmethod
     def build(
@@ -60,6 +76,7 @@ class ResolverRegistry:
         *,
         environment: Mapping[str, str],
         http: SafeHttpClient | None = None,
+        progress: Callable[[dict[str, object]], None] | None = None,
     ) -> "ResolverRegistry":
         client = http or SafeHttpClient()
         commons = CommonsResolver(client)
@@ -73,7 +90,12 @@ class ResolverRegistry:
             "streetside": StreetsideResolver(),
             "generic_http": GenericImageResolver(client),
         }
-        return cls(resolvers, environment=environment, http=client)
+        return cls(
+            resolvers,
+            environment=environment,
+            http=client,
+            progress=progress,
+        )
 
     def resolver_for(self, kind: str) -> Resolver:
         return self._resolvers[kind]
@@ -86,10 +108,28 @@ class ResolverRegistry:
         resolver_contract_version: int,
     ) -> ResolutionRecord:
         async with self._semaphores[reference.provider]:
-            result = await self.resolver_for(reference.resolver_kind).resolve(
-                reference.canonical_reference,
-                context=ResolverContext(bbox=bbox, environment=self.environment),
-            )
+            await self._pace(reference.provider)
+            try:
+                result = await self.resolver_for(reference.resolver_kind).resolve(
+                    reference.canonical_reference,
+                    context=ResolverContext(bbox=bbox, environment=self.environment),
+                )
+            except ProviderRateLimited as error:
+                seconds = error.retry_after_seconds
+                self._progress(
+                    {
+                        "event": "asset_provider_cooldown",
+                        "provider": reference.provider,
+                        "retry_after_seconds": seconds,
+                    }
+                )
+                result = ResolutionResult(
+                    status="temporary_failure",
+                    retry_after=(
+                        self._utcnow() + timedelta(seconds=seconds) if seconds is not None else None
+                    ),
+                    reason="provider_rate_limited",
+                )
         assets: list[dict[str, object]] = []
         for asset in result.assets:
             payload = asdict(asset)
@@ -107,6 +147,14 @@ class ResolverRegistry:
             reason=result.reason,
             category_truncated=result.category_truncated,
         )
+
+    async def _pace(self, provider: str) -> None:
+        async with self._rate_locks[provider]:
+            delay = self._next_request[provider] - self._monotonic()
+            if delay > 0:
+                await self._sleep(delay)
+            interval = 1.0 / _LIMITS[provider].requests_per_second
+            self._next_request[provider] = self._monotonic() + interval
 
     def limit_for(self, provider: str) -> ProviderLimit:
         return _LIMITS[provider]

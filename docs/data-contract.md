@@ -96,10 +96,45 @@ Every shard has a sibling `*.manifest.json` with the following shape:
 current constants in `core.manifest` for the manifest to be reused during
 fast resume.
 
+## Image asset configuration
+
+Asset schema version 1 is a separate, one-to-many Parquet configuration.
+Rows preserve the exact source reference and factual resolution result; no
+image body is downloaded. Join to polygons on `osm_type`, `osm_id`,
+`osm_version`, and `source_pbf`.
+
+| Columns | Type / meaning |
+| --- | --- |
+| `source_pbf`, `source_polygon_shard` | non-null string provenance |
+| `osm_type`, `osm_id`, `osm_version` | object identity |
+| `provider`, `source_tag_key`, `source_tag_value` | exact source reference |
+| `canonical_reference`, `provider_asset_id`, `asset_index` | provider identity and stable one-to-many index |
+| `relation_kind` | direct reference or Commons category membership |
+| `page_url`, `image_url`, `thumbnail_url` | factual resolved URLs |
+| `image_url_expires_at` | nullable UTC expiry |
+| `mime_type`, `width`, `height` | nullable returned/probed metadata |
+| `license_id`, `license_url`, `author` | nullable metadata; absence makes no licensing claim |
+| `status`, `reason`, `category_truncated`, `retry_after` | outcome and retry state |
+| `resolver_contract_version`, `response_sha256` | resolver/cache provenance |
+
+Statuses are `resolved`, `resolved_page_only`, `not_direct_image`,
+`category_empty`, `category_truncated`, `not_found`, `private`,
+`requires_auth`, `invalid_reference`, `unsupported`, and
+`temporary_failure`. Commons category expansion is capped at 500 members and
+uses `category_membership`, which does not assert depiction. Mapillary and
+Flickr return page-only results without `MAPILLARY_ACCESS_TOKEN` and
+`FLICKR_API_KEY`. Bing Streetside is page-only because this project uses no
+documented raw-image API for it.
+
+Each `*.assets.parquet` has an atomic `*.assets.manifest.json` containing the
+polygon identity, asset/resolver versions, output identity, counts, and a
+digest of only cache records used by that shard. Unrelated cache writes cannot
+invalidate a completed asset shard.
+
 ## Global statistics
 
 `generate_metadata` produces `statistics/dataset-statistics.json` and
-`README.md` in the data root. The statistics include shard and row counts,
+`README.md` in the data root. Statistics include polygon and asset shard/row counts,
 `osm_types` and `geometry_types` counts, per-provider counts, exact
 provider combinations, minimum/maximum feature timestamps, sum/min/max/mean
 `area_m2`, exact rejection counts by reason, exact duplicate-observation
@@ -115,8 +150,9 @@ licensing.
 - `statistics/dataset-statistics.json`
 - Every GeoParquet shard whose manifest matches the current contract, plus
   the matching manifest.
-- `catalog/catalog.sqlite` and `receipts/publication.json` are internal and
-  are never uploaded.
+- Every asset shard whose manifest matches the current asset/resolver
+  contracts, plus its matching manifest.
+- `catalog/`, `cache/`, and `receipts/` are internal and never uploaded.
 
 Symlinks, top-level escapes, and unexpected files fail closed with a
 `PublicationError`.
