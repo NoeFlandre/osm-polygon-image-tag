@@ -340,3 +340,56 @@ def test_enriched_run_publishes_periodic_asset_checkpoints(tmp_path: Path) -> No
         "metadata",
         "publish",
     ]
+
+
+def test_asset_publication_checkpoints_are_enabled_before_pbf_scan(tmp_path: Path) -> None:
+    source = tmp_path / "raw"
+    source.mkdir()
+    (source / "region.osm.pbf").write_bytes(b"source")
+    paths = PipelinePaths.build(source_root=source, data_root=tmp_path / "generated")
+    events: list[str] = []
+
+    class Worker:
+        def enable_checkpoints(self, callback: Callable[[], None], *, every: int) -> None:
+            del callback
+            assert every == 1
+            events.append("checkpoints-enabled")
+
+        def start(self, initial_jobs: object) -> None:
+            del initial_jobs
+            events.append("asset-start")
+
+        def submit(self, job: object) -> bool:
+            del job
+            return True
+
+        def checkpoint(self, callback: Callable[[], None]) -> None:
+            callback()
+
+        def finish(self) -> EnrichmentSummary:
+            return EnrichmentSummary()
+
+    def build(pbf: PbfSource, _paths: PipelinePaths) -> BuildResult:
+        events.append(f"scan:{pbf.relative_path}")
+        return BuildResult(
+            "skipped",
+            pbf.relative_path.as_posix(),
+            Path("/output/region.parquet"),
+            Path("/output/region.json"),
+            0,
+            {},
+        )
+
+    run_all(
+        paths,
+        build=build,
+        enrichment_worker=Worker(),
+        metadata_builder=_metadata,
+        publisher=lambda _root: PublicationResult("unchanged", "", 0),
+    )
+
+    assert events[:3] == [
+        "checkpoints-enabled",
+        "asset-start",
+        "scan:region.osm.pbf",
+    ]

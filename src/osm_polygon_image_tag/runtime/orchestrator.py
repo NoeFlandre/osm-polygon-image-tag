@@ -189,16 +189,6 @@ def run_all(
             "pbf_bytes": sum(source.size_bytes for source in sources),
         }
     )
-    results = _build_sources(
-        sources,
-        paths,
-        build=build,
-        token=token,
-        emit=emit,
-        enrichment_worker=enrichment_worker,
-        metadata_builder=metadata_builder,
-        publisher=publisher,
-    )
     if enrichment_worker is not None and publisher is not None:
         enrichment_worker.enable_checkpoints(
             lambda: _refresh_artifacts(
@@ -209,6 +199,16 @@ def run_all(
             ),
             every=1,
         )
+    results = _build_sources(
+        sources,
+        paths,
+        build=build,
+        token=token,
+        emit=emit,
+        enrichment_worker=enrichment_worker,
+        metadata_builder=metadata_builder,
+        publisher=publisher,
+    )
     enrichment = (
         enrichment_worker.finish() if enrichment_worker is not None else EnrichmentSummary()
     )
