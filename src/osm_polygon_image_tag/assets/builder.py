@@ -29,6 +29,7 @@ from osm_polygon_image_tag.assets.schema import (
     ASSET_SCHEMA_VERSION,
     RESOLVER_CONTRACT_VERSION,
 )
+from osm_polygon_image_tag.assets.sort import DiskAssetSorter
 from osm_polygon_image_tag.assets.storage import AtomicAssetWriter
 from osm_polygon_image_tag.core.manifest import Manifest, OutputIdentity, file_sha256
 from osm_polygon_image_tag.core.progress import Progress
@@ -63,7 +64,7 @@ async def _resolve(
     cache: ResolutionCache,
     registry: Registry,
     resolver_contract_version: int,
-) -> ResolutionRecord:
+) -> tuple[ResolutionRecord, bool]:
     key = _key(reference, resolver_contract_version)
     cached = cache.get(key)
     now = datetime.now(UTC)
@@ -80,14 +81,14 @@ async def _resolve(
             and (cached.retry_after is None or cached.retry_after <= now)
         )
     ):
-        return cached
+        return cached, True
     record = await registry.resolve_reference(
         reference,
         bbox=polygon_bbox(row),
         resolver_contract_version=resolver_contract_version,
     )
     cache.put(record)
-    return record
+    return record, False
 
 
 async def build_asset_shard(
@@ -128,13 +129,13 @@ async def build_asset_shard(
     statuses: Counter[str] = Counter()
     providers: Counter[str] = Counter()
     snapshot_keys: set[ResolutionKey] = set()
-    direct_urls = reference_index = 0
+    direct_urls = reference_index = cache_hits = resolver_requests = 0
 
     async def flush(
         pending: list[tuple[Mapping[str, object], SourceReference]],
-        writer: AtomicAssetWriter,
+        sorter: DiskAssetSorter,
     ) -> None:
-        nonlocal direct_urls, reference_index
+        nonlocal cache_hits, direct_urls, reference_index, resolver_requests
         if stop_requested():
             raise _BuildStopped
         unique: dict[ResolutionKey, tuple[Mapping[str, object], SourceReference]] = {}
@@ -145,22 +146,23 @@ async def build_asset_shard(
             key: ResolutionKey,
             row: Mapping[str, object],
             reference: SourceReference,
-        ) -> tuple[ResolutionKey, ResolutionRecord]:
+        ) -> tuple[ResolutionKey, ResolutionRecord, bool]:
             async with semaphore:
-                record = await _resolve(
+                record, cache_hit = await _resolve(
                     reference,
                     row,
                     cache=cache,
                     registry=registry,
                     resolver_contract_version=resolver_contract_version,
                 )
-            return key, record
+            return key, record, cache_hit
 
-        records = dict(
-            await asyncio.gather(
-                *(resolve_one(key, row, reference) for key, (row, reference) in unique.items())
-            )
+        resolved = await asyncio.gather(
+            *(resolve_one(key, row, reference) for key, (row, reference) in unique.items())
         )
+        records = {key: record for key, record, _cache_hit in resolved}
+        cache_hits += sum(cache_hit for _key, _record, cache_hit in resolved)
+        resolver_requests += sum(not cache_hit for _key, _record, cache_hit in resolved)
         snapshot_keys.update(records)
         chunk_rows = [
             result_row
@@ -172,18 +174,7 @@ async def build_asset_shard(
                 records[_key(reference, resolver_contract_version)],
             )
         ]
-        chunk_rows.sort(
-            key=lambda row: (
-                row["osm_type"],
-                row["osm_id"],
-                row["provider"],
-                row["source_tag_key"],
-                row["canonical_reference"],
-                row["provider_asset_id"] or "",
-                row["asset_index"],
-            )
-        )
-        writer.write(chunk_rows)
+        sorter.add(chunk_rows)
         statuses.update(str(row["status"]) for row in chunk_rows)
         providers.update(str(row["provider"]) for row in chunk_rows)
         direct_urls += sum(row["image_url"] is not None for row in chunk_rows)
@@ -199,17 +190,21 @@ async def build_asset_shard(
             )
 
     try:
-        with AtomicAssetWriter(asset_path) as writer:
+        with DiskAssetSorter(asset_path.parent) as sorter:
             pending: list[tuple[Mapping[str, object], SourceReference]] = []
             for row in polygon_rows(polygon_path):
                 for reference in references_from_row(row):
                     pending.append((row, reference))
                     if len(pending) == 128:
-                        await flush(pending, writer)
+                        await flush(pending, sorter)
                         pending.clear()
             if pending:
-                await flush(pending, writer)
-        write_result = writer.result
+                await flush(pending, sorter)
+            if stop_requested():
+                raise _BuildStopped
+            with AtomicAssetWriter(asset_path) as writer:
+                writer.write(sorter.rows())
+            write_result = writer.result
     except _BuildStopped:
         return AssetBuildResult("pending", polygon_shard, asset_path, manifest_path, 0, {})
     if write_result is None:
@@ -228,6 +223,8 @@ async def build_asset_shard(
         pending_retries=statuses["temporary_failure"],
         truncated_categories=statuses["category_truncated"],
         direct_urls=direct_urls,
+        cache_hits=cache_hits,
+        resolver_requests=resolver_requests,
     )
     write_asset_manifest(
         AssetManifest(

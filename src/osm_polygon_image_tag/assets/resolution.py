@@ -31,6 +31,7 @@ class ResolutionRecord:
     retry_after: datetime | None
     reason: str | None = None
     category_truncated: bool = False
+    attempt_count: int = 1
 
     @property
     def key(self) -> ResolutionKey:
@@ -76,3 +77,5 @@ def validate_resolution_record(record: ResolutionRecord) -> None:
         raise ResolutionCacheError("secret-bearing canonical references are not cacheable")
     if record.retry_after is not None and record.retry_after.tzinfo is None:
         raise ResolutionCacheError("retry_after must be timezone-aware")
+    if record.attempt_count < 0:
+        raise ResolutionCacheError("attempt_count must not be negative")

@@ -42,6 +42,8 @@ way or relation carries at least one raw image-reference tag.
 - Direct image URLs: {assets["direct_urls"]}
 - Stable direct image URLs: {assets["stable_direct_urls"]}
 - Page URLs: {assets["page_urls"]}
+- Resolution cache hits: {assets["cache_hits"]}
+- Provider resolver requests: {assets["network_resolutions"]}
 
 Provider observations:
 {providers}

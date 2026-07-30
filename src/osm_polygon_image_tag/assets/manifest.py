@@ -13,7 +13,7 @@ from osm_polygon_image_tag.assets.schema import (
 from osm_polygon_image_tag.core.errors import ImageTagPipelineError
 from osm_polygon_image_tag.core.manifest import OutputIdentity
 
-ASSET_MANIFEST_SCHEMA_VERSION = 1
+ASSET_MANIFEST_SCHEMA_VERSION = 2
 
 
 class AssetManifestError(ImageTagPipelineError):
@@ -42,6 +42,8 @@ class AssetRunCounts:
     pending_retries: int
     truncated_categories: int
     direct_urls: int
+    cache_hits: int = 0
+    resolver_requests: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +166,8 @@ def _build_manifest(payload: Any) -> AssetManifest:
                 "pending_retries",
                 "truncated_categories",
                 "direct_urls",
+                "cache_hits",
+                "resolver_requests",
             },
             name="counts",
         )

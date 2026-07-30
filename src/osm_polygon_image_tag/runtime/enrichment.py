@@ -108,6 +108,8 @@ class EnrichmentWorker:
     def checkpoint(self, callback: Checkpoint) -> None:
         if self._thread is None:
             raise RuntimeError("enrichment worker was not started")
+        if self._error is not None:
+            raise self._error
         if not self._thread.is_alive():
             callback()
             return

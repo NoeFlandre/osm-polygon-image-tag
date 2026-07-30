@@ -162,6 +162,49 @@ async def test_builder_reads_only_needed_polygon_columns_and_deduplicates_resolu
 
 
 @pytest.mark.asyncio
+async def test_builder_globally_sorts_rows_across_bounded_chunks(tmp_path: Path) -> None:
+    manifest, polygon_path, data_root = polygon_fixture(tmp_path)
+    polygon_rows = []
+    for osm_id in range(130, 0, -1):
+        row = _polygon_row({"panoramax": PANORAMAX_ID})
+        row["osm_id"] = osm_id
+        polygon_rows.append(row)
+    write_geoparquet(polygon_rows, polygon_path)
+    manifest = Manifest(
+        manifest.manifest_schema_version,
+        manifest.processing_contract_version,
+        manifest.dataset_schema_version,
+        manifest.source,
+        OutputIdentity(
+            manifest.output.relative_path,
+            polygon_path.stat().st_size,
+            file_sha256(polygon_path),
+            len(polygon_rows),
+        ),
+        manifest.osmium_version,
+        RunCounts(len(polygon_rows), {}),
+    )
+    resolver = Resolver()
+
+    with ResolutionCache.open(data_root) as cache:
+        result = await build_asset_shard(
+            manifest,
+            polygon_path,
+            data_root,
+            cache=cache,
+            registry=Registry(resolver),
+            stop_requested=lambda: False,
+            progress=lambda _event: None,
+        )
+
+    assert pq.read_table(result.asset_path, columns=["osm_id"]).column(0).to_pylist() == list(
+        range(1, 131)
+    )
+    assert len(resolver.calls) == 1
+    assert not list(result.asset_path.parent.glob(".asset-sort.*"))
+
+
+@pytest.mark.asyncio
 async def test_compatible_asset_manifest_skips_without_resolver_calls(tmp_path: Path) -> None:
     manifest, polygon_path, data_root = polygon_fixture(tmp_path)
     resolver = Resolver()
@@ -222,6 +265,9 @@ async def test_cache_hit_rebuilds_missing_asset_without_network(tmp_path: Path) 
 
     assert rebuilt.status == "built"
     assert resolver.calls == []
+    counts = read_asset_manifest(rebuilt.manifest_path, data_root=data_root).counts
+    assert counts.cache_hits == 1
+    assert counts.resolver_requests == 0
 
 
 @pytest.mark.asyncio

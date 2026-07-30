@@ -130,6 +130,10 @@ Expiring direct URLs refresh when they enter a one-hour refresh window.
 Provider cooldowns and temporary failures remain retryable rather than making
 a shard permanently reusable.
 
+Asset manifests record cache hits and provider resolver requests. Global
+statistics and the generated card aggregate those factual counts without
+consulting live provider state.
+
 Each `*.assets.parquet` has an atomic `*.assets.manifest.json` containing the
 polygon identity, asset/resolver versions, output identity, counts, and a
 digest of only cache records used by that shard. Unrelated cache writes cannot

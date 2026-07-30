@@ -284,3 +284,33 @@ def test_explicit_checkpoint_waits_for_active_shard_and_pauses_next(
     assert checkpoint_done.wait(timeout=2)
     assert calls[:2] == ["0.parquet", "checkpoint"]
     worker.finish()
+
+
+def test_checkpoint_rejects_dead_worker_failure_before_callback(tmp_path: Path) -> None:
+    failed = threading.Event()
+    callbacks: list[str] = []
+
+    async def fail_build(
+        manifest: Manifest, path: Path, data_root: Path, **_kwargs: object
+    ) -> AssetBuildResult:
+        del manifest, path, data_root
+        failed.set()
+        raise RuntimeError("resolver failed")
+
+    worker = EnrichmentWorker(
+        tmp_path,
+        builder=fail_build,
+        cache_factory=lambda _root: object(),
+        registry_factory=lambda: object(),
+        stop_requested=lambda: False,
+        progress=lambda _event: None,
+    )
+    worker.start([AssetJob(_manifest("failed"), tmp_path / "failed.parquet")])
+    assert failed.wait(timeout=2)
+    assert worker._thread is not None
+    worker._thread.join(timeout=2)
+
+    with pytest.raises(RuntimeError, match="resolver failed"):
+        worker.checkpoint(lambda: callbacks.append("published"))
+
+    assert callbacks == []

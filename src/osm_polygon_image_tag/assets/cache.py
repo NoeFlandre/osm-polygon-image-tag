@@ -81,6 +81,7 @@ class ResolutionCache:
             retry_after=datetime.fromisoformat(retry_value) if retry_value is not None else None,
             reason=payload.get("reason"),
             category_truncated=payload.get("category_truncated", False),
+            attempt_count=payload.get("attempt_count", 1),
         )
         validate_resolution_record(record)
         return record

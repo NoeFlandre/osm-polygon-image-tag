@@ -64,6 +64,8 @@ def asset_statistics(
         "truncated_categories": values[4],
         "pending_retries": values[5],
         "duplicate_assets": int(duplicate),
+        "cache_hits": sum(manifest.counts.cache_hits for manifest, _ in manifests),
+        "network_resolutions": sum(manifest.counts.resolver_requests for manifest, _ in manifests),
         "asset_schema_versions": {
             str(key): value for key, value in sorted(schema_versions.items())
         },

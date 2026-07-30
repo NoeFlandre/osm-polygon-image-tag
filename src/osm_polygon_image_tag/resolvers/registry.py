@@ -19,6 +19,7 @@ from osm_polygon_image_tag.resolvers.policy import (
     ProviderNotFound,
     ProviderRateLimited,
     SafeHttpError,
+    UnsafeUrlError,
 )
 from osm_polygon_image_tag.resolvers.streetside import StreetsideResolver
 from osm_polygon_image_tag.resolvers.types import ResolutionResult, Resolver, ResolverContext
@@ -39,6 +40,8 @@ _LIMITS = {
     "streetside": ProviderLimit(8, 10.0),
     "image": ProviderLimit(4, 2.0),
 }
+_TRANSIENT_ATTEMPTS = 3
+_TRANSIENT_RETRY_SECONDS = 300
 
 
 class ClosingClient(Protocol):
@@ -121,47 +124,69 @@ class ResolverRegistry:
                 assets=(),
                 retry_after=None,
                 reason="invalid_provider_reference",
+                attempt_count=0,
             )
         async with self._semaphores[reference.provider]:
             await self._pace(reference.provider)
-            try:
-                result = await self.resolver_for(reference.resolver_kind).resolve(
-                    reference.canonical_reference,
-                    context=ResolverContext(bbox=bbox, environment=self.environment),
-                )
-            except ProviderNotFound:
-                result = ResolutionResult(
-                    status="not_found",
-                    reason="provider_asset_not_found",
-                )
-            except ProviderAccessDenied:
-                result = ResolutionResult(
-                    status="requires_auth",
-                    reason="provider_access_denied",
-                )
-            except ProviderRateLimited as error:
-                seconds = error.retry_after_seconds
-                if seconds is not None:
-                    await self._cooldown(reference.provider, seconds)
-                self._progress(
-                    {
-                        "event": "asset_provider_cooldown",
-                        "provider": reference.provider,
-                        "retry_after_seconds": seconds,
-                    }
-                )
-                result = ResolutionResult(
-                    status="temporary_failure",
-                    retry_after=(
-                        self._utcnow() + timedelta(seconds=seconds) if seconds is not None else None
-                    ),
-                    reason="provider_rate_limited",
-                )
-            except SafeHttpError:
-                result = ResolutionResult(
-                    status="temporary_failure",
-                    reason="provider_request_failed",
-                )
+            attempt_count = 0
+            while True:
+                attempt_count += 1
+                try:
+                    result = await self.resolver_for(reference.resolver_kind).resolve(
+                        reference.canonical_reference,
+                        context=ResolverContext(bbox=bbox, environment=self.environment),
+                    )
+                except ProviderNotFound:
+                    result = ResolutionResult(
+                        status="not_found",
+                        reason="provider_asset_not_found",
+                    )
+                except ProviderAccessDenied:
+                    result = ResolutionResult(
+                        status="requires_auth",
+                        reason="provider_access_denied",
+                    )
+                except ProviderRateLimited as error:
+                    seconds = error.retry_after_seconds
+                    if seconds is not None:
+                        await self._cooldown(reference.provider, seconds)
+                    self._progress(
+                        {
+                            "event": "asset_provider_cooldown",
+                            "provider": reference.provider,
+                            "retry_after_seconds": seconds,
+                        }
+                    )
+                    result = ResolutionResult(
+                        status="temporary_failure",
+                        retry_after=(
+                            self._utcnow() + timedelta(seconds=seconds)
+                            if seconds is not None
+                            else self._utcnow() + timedelta(seconds=_TRANSIENT_RETRY_SECONDS)
+                        ),
+                        reason="provider_rate_limited",
+                    )
+                except UnsafeUrlError:
+                    raise
+                except SafeHttpError:
+                    if attempt_count < _TRANSIENT_ATTEMPTS:
+                        delay = 2 ** (attempt_count - 1)
+                        self._progress(
+                            {
+                                "event": "asset_provider_retry",
+                                "provider": reference.provider,
+                                "attempt": attempt_count + 1,
+                                "delay_seconds": delay,
+                            }
+                        )
+                        await self._sleep(delay)
+                        continue
+                    result = ResolutionResult(
+                        status="temporary_failure",
+                        retry_after=self._utcnow() + timedelta(seconds=_TRANSIENT_RETRY_SECONDS),
+                        reason="provider_request_failed",
+                    )
+                break
         assets: list[dict[str, object]] = []
         for asset in result.assets:
             payload = asdict(asset)
@@ -178,6 +203,7 @@ class ResolverRegistry:
             retry_after=result.retry_after,
             reason=result.reason,
             category_truncated=result.category_truncated,
+            attempt_count=attempt_count,
         )
 
     async def _pace(self, provider: str) -> None:

@@ -14,6 +14,7 @@ from osm_polygon_image_tag.assets.schema import (
     ASSET_SCHEMA_VERSION,
     RESOLVER_CONTRACT_VERSION,
 )
+from osm_polygon_image_tag.assets.storage import AssetStorageError, validate_asset_parquet
 from osm_polygon_image_tag.core.errors import PublicationError
 from osm_polygon_image_tag.core.manifest import (
     DATASET_SCHEMA_VERSION,
@@ -48,6 +49,10 @@ def publication_inventory(data_root: Path) -> tuple[PublicationFile, ...]:
     manifests = verified_manifests(root)
     asset_manifests = verified_asset_manifests(root)
     for manifest, output in asset_manifests:
+        try:
+            validate_asset_parquet(output, expected_rows=manifest.output.row_count)
+        except AssetStorageError as error:
+            raise PublicationError(f"invalid asset Parquet: {output}") from error
         if file_sha256(output) != manifest.output.sha256:
             raise PublicationError(f"asset digest mismatch: {manifest.output.relative_path}")
     manifested_digests = {

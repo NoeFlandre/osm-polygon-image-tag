@@ -143,6 +143,26 @@ def test_inventory_rejects_same_size_asset_corruption(tmp_path: Path) -> None:
         publication_inventory(tmp_path)
 
 
+def test_inventory_rejects_self_consistent_non_parquet_asset(tmp_path: Path) -> None:
+    _dataset(tmp_path)
+    _asset_dataset(tmp_path)
+    output = tmp_path / "assets" / "region.assets.parquet"
+    output.write_bytes(b"not a parquet file")
+    manifest_path = tmp_path / "asset-manifests" / "region.assets.manifest.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["output"].update(
+        {
+            "size_bytes": output.stat().st_size,
+            "sha256": file_sha256(output),
+            "row_count": 0,
+        }
+    )
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(PublicationError, match="asset Parquet"):
+        publication_inventory(tmp_path)
+
+
 def test_inventory_reuses_manifest_digest_for_parquet(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

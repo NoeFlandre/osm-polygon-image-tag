@@ -110,7 +110,7 @@ recommended command to prove the data root is still healthy.
 ### Smart historical backfill
 
 Every finalized polygon shard is queued for enrichment. A compatible asset
-manifest skips in constant time; a missing asset shard reads only needed
+manifest reads only its lightweight expiry column before skipping; a missing asset shard reads only needed
 Parquet columns and consults `cache/resolutions.sqlite`. It never opens the
 original PBF. If no polygon or asset output changed, publication receipts
 prevent a redundant Hub commit.

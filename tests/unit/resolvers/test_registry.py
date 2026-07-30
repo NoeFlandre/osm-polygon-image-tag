@@ -1,5 +1,5 @@
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -224,23 +224,34 @@ async def test_rate_limit_delays_following_provider_request() -> None:
 
 @pytest.mark.asyncio
 async def test_registry_turns_transient_http_errors_into_retryable_records() -> None:
+    calls = 0
+    delays: list[float] = []
+    now = datetime(2026, 7, 30, tzinfo=UTC)
+
     class Resolver:
         provider = "mapillary"
 
         async def resolve(
             self, canonical_reference: str, *, context: ResolverContext
         ) -> ResolutionResult:
+            nonlocal calls
             del canonical_reference, context
+            calls += 1
             raise SafeHttpError("provider request failed")
 
     class Http:
         async def aclose(self) -> None:
             return None
 
+    async def no_wait(seconds: float) -> None:
+        delays.append(seconds)
+
     registry = ResolverRegistry(
         {"mapillary": Resolver()},
         environment={},
         http=Http(),
+        sleep=no_wait,
+        utcnow=lambda: now,
     )
     reference = SourceReference("mapillary", "mapillary", "id", "id", "mapillary")
 
@@ -252,7 +263,10 @@ async def test_registry_turns_transient_http_errors_into_retryable_records() -> 
 
     assert record.status == "temporary_failure"
     assert record.reason == "provider_request_failed"
-    assert record.retry_after is None
+    assert record.retry_after == now + timedelta(minutes=5)
+    assert record.attempt_count == 3
+    assert calls == 3
+    assert delays == [1, 2]
 
 
 @pytest.mark.asyncio

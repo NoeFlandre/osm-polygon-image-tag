@@ -61,10 +61,12 @@ def test_empty_metadata_is_deterministic_and_factual(tmp_path: Path) -> None:
     assert b"cryptographically verified" not in first_card
     assert statistics["assets"] == {
         "asset_schema_versions": {},
+        "cache_hits": 0,
         "direct_urls": 0,
         "duplicate_assets": 0,
         "expiring_urls": 0,
         "licensed_assets": 0,
+        "network_resolutions": 0,
         "output_bytes": 0,
         "page_urls": 0,
         "pending_retries": 0,
@@ -220,6 +222,8 @@ def test_metadata_derives_factual_asset_statistics(tmp_path: Path) -> None:
             0,
             0,
             1,
+            3,
+            4,
         ),
     )
     write_asset_manifest(
@@ -241,3 +245,7 @@ def test_metadata_derives_factual_asset_statistics(tmp_path: Path) -> None:
     assert statistics["assets"]["stable_direct_urls"] == 1
     assert statistics["assets"]["page_urls"] == 2
     assert statistics["assets"]["licensed_assets"] == 1
+    assert statistics["assets"]["cache_hits"] == 3
+    assert statistics["assets"]["network_resolutions"] == 4
+    assert b"Resolution cache hits: 3" in result.card_path.read_bytes()
+    assert b"Provider resolver requests: 4" in result.card_path.read_bytes()
