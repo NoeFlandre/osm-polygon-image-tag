@@ -159,7 +159,12 @@ class SafeHttpClient:
                         raise ProviderAccessDenied("provider access denied")
                     response.raise_for_status()
                     payload = json.loads(await self._body(response))
-            except (httpx.HTTPError, httpcore.NetworkError, httpcore.TimeoutException) as error:
+            except (
+                httpx.HTTPError,
+                httpcore.NetworkError,
+                httpcore.ProtocolError,
+                httpcore.TimeoutException,
+            ) as error:
                 raise SafeHttpError(f"provider request failed: {_redacted_url(current)}") from error
             except json.JSONDecodeError as error:
                 raise SafeHttpError("provider returned invalid JSON") from error
@@ -200,7 +205,12 @@ class SafeHttpClient:
                         if response.headers.get("content-length", "").isdigit()
                         else None,
                     )
-            except (httpx.HTTPError, httpcore.NetworkError, httpcore.TimeoutException) as error:
+            except (
+                httpx.HTTPError,
+                httpcore.NetworkError,
+                httpcore.ProtocolError,
+                httpcore.TimeoutException,
+            ) as error:
                 raise SafeHttpError(f"provider request failed: {_redacted_url(current)}") from error
         raise SafeHttpError("too many redirects")
 

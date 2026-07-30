@@ -2,6 +2,7 @@ import json
 import socket
 from collections.abc import Awaitable, Callable, Sequence
 
+import httpcore
 import httpx
 import pytest
 
@@ -236,6 +237,36 @@ async def test_image_probe_turns_dns_failure_into_safe_http_error() -> None:
 
     with pytest.raises(SafeHttpError, match="DNS resolution failed"):
         await client.probe_image("https://unresolvable.example/image.jpg")
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_image_probe_turns_remote_protocol_failure_into_safe_http_error() -> None:
+    async def disconnect(_request: httpx.Request) -> httpx.Response:
+        raise httpcore.RemoteProtocolError("Server disconnected without sending a response.")
+
+    client = SafeHttpClient(
+        client=httpx.AsyncClient(transport=httpx.MockTransport(disconnect)),
+        resolve=_resolver({"example.test": ("93.184.216.34",)}),
+    )
+
+    with pytest.raises(SafeHttpError, match="provider request failed"):
+        await client.probe_image("https://example.test/image.jpg")
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_json_request_turns_remote_protocol_failure_into_safe_http_error() -> None:
+    async def disconnect(_request: httpx.Request) -> httpx.Response:
+        raise httpcore.RemoteProtocolError("Server disconnected without sending a response.")
+
+    client = SafeHttpClient(
+        client=httpx.AsyncClient(transport=httpx.MockTransport(disconnect)),
+        resolve=_resolver({"example.test": ("93.184.216.34",)}),
+    )
+
+    with pytest.raises(SafeHttpError, match="provider request failed"):
+        await client.get_json("https://example.test/metadata")
     await client.aclose()
 
 
