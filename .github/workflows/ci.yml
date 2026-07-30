@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "codex/**"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  quality-gate:
+    name: Quality gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: true
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Install osmium-tool for integration tests
+        run: sudo apt-get update && sudo apt-get install -y osmium-tool
+
+      - name: Verify locked environment is up to date
+        run: uv lock --check
+
+      - name: Sync locked dependencies
+        run: uv sync --locked --dev
+
+      - name: Run Ruff lint
+        run: uv run ruff check .
+
+      - name: Verify Ruff format
+        run: uv run ruff format --check .
+
+      - name: Run ty type checker
+        run: uv run ty check
+
+      - name: Run test suite
+        run: uv run pytest -q
+
+      - name: Build source distribution and wheel
+        run: uv build
+
+      - name: Verify no whitespace errors
+        run: git diff --check
