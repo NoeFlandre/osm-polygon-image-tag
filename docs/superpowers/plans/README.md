@@ -13,6 +13,9 @@ preserved as the historical record of how the project was built.
 - `2026-07-29-phase-6-guarded-publication.md`: Phase 6.
 - `2026-07-29-additional-image-tags.md`: the additive plan that delivered
   indexed Panoramax and Bing `bubbleid` support.
+- `2026-07-30-direct-image-assets.md`: the approved implementation plan for
+  cached provider resolution, one-to-many asset shards, automatic historical
+  backfill, two Hugging Face configurations, and the modern project toolchain.
 
 ## Reading the plans
 
