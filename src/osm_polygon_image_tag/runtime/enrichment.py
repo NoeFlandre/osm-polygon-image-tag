@@ -180,14 +180,6 @@ class EnrichmentWorker:
                         "polygon_shard": job.manifest.output.relative_path,
                     }
                 )
-                callback: Checkpoint | None = None
-                with self._checkpoint_lock:
-                    self._completed += 1
-                    if self._checkpoint is not None and self._completed >= self._checkpoint_next:
-                        callback = self._checkpoint
-                        self._checkpoint_next += self._checkpoint_every
-                if callback is not None:
-                    callback()
                 result = await self._builder(
                     job.manifest,
                     job.polygon_path,
@@ -213,6 +205,14 @@ class EnrichmentWorker:
                         "statuses": result.statuses,
                     }
                 )
+                callback: Checkpoint | None = None
+                with self._checkpoint_lock:
+                    self._completed += 1
+                    if self._checkpoint is not None and self._completed >= self._checkpoint_next:
+                        callback = self._checkpoint
+                        self._checkpoint_next += self._checkpoint_every
+                if callback is not None:
+                    callback()
         finally:
             close = getattr(cache, "close", None)
             if callable(close):

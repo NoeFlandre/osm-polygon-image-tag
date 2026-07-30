@@ -78,6 +78,24 @@ def test_asset_storage_failure_preserves_existing_finalized_asset(tmp_path: Path
     assert not list(path.parent.glob("*.tmp"))
 
 
+def test_asset_storage_cleans_temporary_file_when_writer_creation_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "assets" / "region.assets.parquet"
+
+    def fail_writer(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("writer creation failed")
+
+    monkeypatch.setattr(pq, "ParquetWriter", fail_writer)
+
+    with pytest.raises(RuntimeError, match="writer creation failed"):
+        write_asset_parquet([asset_row(1)], path)
+
+    assert not path.exists()
+    assert not list(path.parent.glob("*.tmp"))
+
+
 def test_asset_storage_rejects_symlinked_final_path(tmp_path: Path) -> None:
     target = tmp_path / "target"
     target.write_bytes(b"keep")

@@ -203,6 +203,39 @@ def test_worker_runs_bounded_checkpoints_between_asset_shards(tmp_path: Path) ->
     assert checkpoints == ["publish", "publish"]
 
 
+def test_periodic_checkpoint_runs_after_completed_shards(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    async def build(manifest: Manifest, path: Path, data_root: Path, **_kwargs: object):
+        del manifest, data_root
+        calls.append(path.name)
+        return AssetBuildResult(
+            "built",
+            f"data/{path.name}",
+            tmp_path / "assets" / f"{path.stem}.assets.parquet",
+            tmp_path / "asset-manifests" / f"{path.stem}.json",
+            1,
+            {"resolved": 1},
+        )
+
+    worker = EnrichmentWorker(
+        tmp_path,
+        builder=build,
+        cache_factory=lambda _root: object(),
+        registry_factory=lambda: object(),
+        stop_requested=lambda: False,
+        progress=lambda _event: None,
+    )
+    worker.enable_checkpoints(lambda: calls.append("publish"), every=2)
+    worker.start(
+        AssetJob(_manifest(str(index)), tmp_path / f"{index}.parquet") for index in range(3)
+    )
+
+    worker.finish()
+
+    assert calls == ["0.parquet", "1.parquet", "publish", "2.parquet"]
+
+
 def test_explicit_checkpoint_waits_for_active_shard_and_pauses_next(
     tmp_path: Path,
 ) -> None:

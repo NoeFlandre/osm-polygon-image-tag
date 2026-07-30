@@ -57,13 +57,17 @@ class AtomicAssetWriter:
         ) as temporary:
             self._temporary_path = Path(temporary.name)
         self._schema = asset_schema()
-        self._writer = pq.ParquetWriter(
-            self._temporary_path,
-            self._schema,
-            compression="zstd",
-            use_dictionary=True,
-            write_statistics=True,
-        )
+        try:
+            self._writer = pq.ParquetWriter(
+                self._temporary_path,
+                self._schema,
+                compression="zstd",
+                use_dictionary=True,
+                write_statistics=True,
+            )
+        except BaseException:
+            self._temporary_path.unlink(missing_ok=True)
+            raise
         self._row_count = 0
         self.result: AssetWriteResult | None = None
 
