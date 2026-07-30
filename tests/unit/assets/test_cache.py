@@ -1,0 +1,129 @@
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+
+from osm_polygon_image_tag.assets.cache import (
+    ResolutionCache,
+    ResolutionCacheError,
+    ResolutionKey,
+    ResolutionRecord,
+)
+
+PANORAMAX_ID = "4492cea4-1018-4285-8074-cf3d37f3c673"
+
+
+def _record(
+    reference: str = PANORAMAX_ID,
+    *,
+    status: str = "resolved",
+    retry_after: datetime | None = None,
+) -> ResolutionRecord:
+    return ResolutionRecord(
+        provider="panoramax",
+        canonical_reference=reference,
+        resolver_contract_version=1,
+        status=status,
+        assets=({"image_url": "https://cdn.test/picture.jpg"},),
+        retry_after=retry_after,
+    )
+
+
+def test_cache_creates_schema_and_round_trips_canonical_records(tmp_path: Path) -> None:
+    with ResolutionCache.open(tmp_path) as cache:
+        record = _record()
+        cache.put(record)
+        loaded = cache.get(record.key)
+
+    assert (tmp_path / "cache" / "resolutions.sqlite").is_file()
+    assert loaded == record
+    assert loaded is not None
+    assert len(loaded.response_sha256) == 64
+
+
+def test_cache_key_includes_provider_reference_and_contract(tmp_path: Path) -> None:
+    with ResolutionCache.open(tmp_path) as cache:
+        cache.put(_record())
+
+        assert cache.get(ResolutionKey("panoramax", PANORAMAX_ID, 1)) is not None
+        assert cache.get(ResolutionKey("mapillary", PANORAMAX_ID, 1)) is None
+        assert cache.get(ResolutionKey("panoramax", "other", 1)) is None
+        assert cache.get(ResolutionKey("panoramax", PANORAMAX_ID, 2)) is None
+
+
+@pytest.mark.parametrize("status", ["not_found", "private", "requires_auth"])
+def test_negative_results_are_reused(tmp_path: Path, status: str) -> None:
+    with ResolutionCache.open(tmp_path) as cache:
+        record = _record(status=status)
+        cache.put(record)
+
+        assert cache.get(record.key) == record
+
+
+def test_temporary_retry_timestamp_round_trips(tmp_path: Path) -> None:
+    retry = datetime(2026, 7, 30, 12, 30, tzinfo=UTC)
+    with ResolutionCache.open(tmp_path) as cache:
+        record = _record(status="temporary_failure", retry_after=retry)
+        cache.put(record)
+
+        assert cache.get(record.key) == record
+
+
+def test_failed_transaction_preserves_previous_record(tmp_path: Path) -> None:
+    with ResolutionCache.open(tmp_path) as cache:
+        original = _record()
+        cache.put(original)
+        cache._connection.execute(  # Transactional fault injection.
+            """
+            CREATE TRIGGER reject_update BEFORE UPDATE ON resolutions
+            BEGIN SELECT RAISE(ABORT, 'injected'); END
+            """
+        )
+
+        with pytest.raises(sqlite3.IntegrityError, match="injected"):
+            cache.put(_record(status="private"))
+
+        assert cache.get(original.key) == original
+
+
+def test_process_local_writer_lock_serializes_threads(tmp_path: Path) -> None:
+    with ResolutionCache.open(tmp_path) as cache:
+        records = [_record(str(index)) for index in range(40)]
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(pool.map(cache.put, records))
+
+        assert all(cache.get(record.key) == record for record in records)
+
+
+def test_cache_rejects_symlinked_database_path(tmp_path: Path) -> None:
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    target = tmp_path / "elsewhere.sqlite"
+    target.write_bytes(b"")
+    (cache_dir / "resolutions.sqlite").symlink_to(target)
+
+    with pytest.raises(ResolutionCacheError, match="symlink"):
+        ResolutionCache.open(tmp_path)
+
+
+@pytest.mark.parametrize("secret", ["access_token", "api_key", "token", "key"])
+def test_cache_rejects_secret_query_parameters(tmp_path: Path, secret: str) -> None:
+    with ResolutionCache.open(tmp_path) as cache:
+        record = _record(f"https://provider.test/item?{secret}=secret")
+
+        with pytest.raises(ResolutionCacheError, match="secret-bearing"):
+            cache.put(record)
+
+
+def test_resolution_snapshot_ignores_unrelated_cache_rows(tmp_path: Path) -> None:
+    with ResolutionCache.open(tmp_path) as cache:
+        used = _record()
+        cache.put(used)
+        before = cache.resolution_snapshot([used.key])
+        cache.put(_record("unrelated"))
+
+        assert cache.resolution_snapshot([used.key]) == before
+        assert before.entry_count == 1
+        assert len(before.sha256) == 64
