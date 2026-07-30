@@ -4,7 +4,7 @@ from osm_polygon_image_tag.core.config import PipelinePaths
 from osm_polygon_image_tag.ingest.discovery import PbfSource
 from osm_polygon_image_tag.runtime.orchestrator import StopToken, run_all
 from osm_polygon_image_tag.runtime.pipeline import BuildResult
-from osm_polygon_image_tag.publication import PublicationResult
+from osm_polygon_image_tag.artifacts.publication import PublicationResult
 from osm_polygon_image_tag.artifacts.reporting import MetadataResult
 
 

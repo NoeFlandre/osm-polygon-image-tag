@@ -16,12 +16,12 @@ from osm_polygon_image_tag.runtime.orchestrator import (
 )
 from osm_polygon_image_tag.runtime.preflight import PreflightReport, run_preflight
 from osm_polygon_image_tag.core.progress import ProgressReporter
-from osm_polygon_image_tag.publication import (
+from osm_polygon_image_tag.artifacts.publication import (
     EXPECTED_REPO,
-    HuggingFaceHub,
     PublicationResult,
     publish_dataset,
 )
+from osm_polygon_image_tag.integrations.huggingface import HuggingFaceHub
 from osm_polygon_image_tag.artifacts.reporting import MetadataResult, generate_metadata
 
 
