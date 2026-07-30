@@ -1,7 +1,10 @@
 # OSM Polygon Image-Tag Dataset Pipeline Design
 
 **Date:** 2026-07-29  
-**Status:** Approved design  
+**Status:** Historical. See [`docs/data-contract.md`](../../data-contract.md) for
+the current contract and
+[`2026-07-29-additional-image-tags-design.md`](2026-07-29-additional-image-tags-design.md)
+for the additive schema-v2 fields (`bubbleid`, `panoramax_values`).  
 **Project:** `NoeFlandre/osm-polygon-image-tag`
 
 ## 1. Purpose
@@ -149,7 +152,9 @@ Generated state is confined to documented namespaces:
 - `manifests/`: one canonical manifest per finalized shard
 - `statistics/`: canonical global statistics
 - `catalog/`: rebuildable local disk-backed indexes
-- `publication/`: verified local publication receipts
+- `receipts/`: verified local publication receipts (originally sketched as
+  `publication/` in this document; the implementation stores them under
+  `receipts/publication.json`)
 - `tmp/`: incomplete project-owned artifacts
 - `README.md`: generated Hugging Face dataset card
 
@@ -182,7 +187,11 @@ final artifacts or verified remote state.
 
 ## 9. Publication
 
-The periodic unit is one completed PBF:
+The periodic unit is one completed PBF. Skipped PBFs do not trigger
+metadata regeneration or publication in the current implementation (this
+document originally suggested publishing after every PBF regardless; the
+current contract publishes only after a shard is newly built, so a resume
+that only skips verified PBFs does not re-publish):
 
 1. Verify finalized Parquet and manifest.
 2. Rebuild or incrementally verify the global catalog.
@@ -190,7 +199,7 @@ The periodic unit is one completed PBF:
 4. Construct a strict managed-file upload plan.
 5. Publish shard, manifest, statistics, and card in one Hugging Face commit.
 6. Verify remote paths, sizes, and digests.
-7. Atomically record a publication receipt.
+7. Atomically record a publication receipt under `receipts/`.
 8. Continue to the next PBF.
 
 An interrupted upload is reconciled with actual Hugging Face state. Matching
@@ -234,6 +243,7 @@ statistics and card output.
 - `run`: process or resume locally without network publication.
 - `publish`: publish or resume finalized artifacts without processing PBFs.
 - `run-and-publish`: process one PBF, publish and verify it, then continue.
+  Skipped PBFs do not trigger a publish; only newly built PBF cycles do.
 - `verify`: validate local artifacts and optionally compare managed remote
   artifacts.
 - `rebuild-metadata`: rebuild catalog, statistics, and card from shards.

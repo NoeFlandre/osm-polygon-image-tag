@@ -1,0 +1,43 @@
+# `runtime/`
+
+Composition of every other layer into resumable, stoppable, observable
+workflows. Modules here are the only place where ingest, artifacts, and
+integrations are wired together.
+
+## What belongs here
+
+- The per-PBF build pipeline (`pipeline`) that owns fast resume and explicit
+  deep verification.
+- The full-run orchestrator (`orchestrator`) that drives `run`,
+  `run-and-publish`, and `verify`, including `SIGINT`/`SIGTERM` handling.
+- The read-only preflight (`preflight`) used by `osm-polygon-image-tag
+  preflight`.
+- Package-data resource resolution (`resources`).
+
+## What must not belong here
+
+- Direct imports of `huggingface_hub`. The Hugging Face adapter lives in
+  `integrations.huggingface`; this package only references its protocol.
+- Hard-coded remote calls. Real publication is invoked by the CLI and is
+  reviewed before each deployment.
+
+## Public entry points and contracts
+
+- `PipelinePaths` is built in `core.config` and consumed unchanged here.
+- `run_all`, `verify_all`, `StopToken`, `graceful_stop_signals`:
+  the orchestrator surface that the CLI wraps.
+- `build_one`, `verify_one`: the per-PBF entry points used by integration
+  tests and the orchestrator.
+- `run_preflight`, `probe_osmium`, `probe_capacity`: the read-only checks.
+
+## Dependencies
+
+- Every other subpackage.
+- `pyarrow`, `pyproj`, `shapely`, `huggingface_hub` transitively via the
+  protocol boundary.
+
+## Focused tests
+
+```bash
+uv run pytest tests/unit/runtime -q --no-cov
+```
