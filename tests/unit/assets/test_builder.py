@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import asdict
 from pathlib import Path
 
@@ -33,7 +34,7 @@ from osm_polygon_image_tag.resolvers.types import (
 PANORAMAX_ID = "4492cea4-1018-4285-8074-cf3d37f3c673"
 
 
-def _polygon_row() -> dict[str, object]:
+def _polygon_row(tags: dict[str, str] | None = None) -> dict[str, object]:
     record = ExportRecord(
         geometry_ewkb_hex=to_wkb(
             Polygon([(4.35, 50.84), (4.37, 50.84), (4.37, 50.86), (4.35, 50.86)]),
@@ -44,17 +45,19 @@ def _polygon_row() -> dict[str, object]:
         version=2,
         changeset=3,
         timestamp="2026-01-01T00:00:00Z",
-        tags={"panoramax": PANORAMAX_ID, "panoramax:0": PANORAMAX_ID},
+        tags=tags or {"panoramax": PANORAMAX_ID, "panoramax:0": PANORAMAX_ID},
     )
     outcome = transform_record(record, source_pbf="region.osm.pbf")
     assert isinstance(outcome, AcceptedRow)
     return outcome.values
 
 
-def polygon_fixture(tmp_path: Path) -> tuple[Manifest, Path, Path]:
+def polygon_fixture(
+    tmp_path: Path, *, tags: dict[str, str] | None = None
+) -> tuple[Manifest, Path, Path]:
     data_root = tmp_path / "generated"
     polygon_path = data_root / "data" / "region.parquet"
-    write_geoparquet([_polygon_row()], polygon_path)
+    write_geoparquet([_polygon_row(tags)], polygon_path)
     manifest = Manifest(
         manifest_schema_version=MANIFEST_SCHEMA_VERSION,
         processing_contract_version=PROCESSING_CONTRACT_VERSION,
@@ -247,3 +250,54 @@ def test_resolution_record_accepts_builder_metadata() -> None:
         category_truncated=False,
     )
     assert record.response_sha256
+
+
+@pytest.mark.asyncio
+async def test_builder_resolves_independent_references_concurrently(tmp_path: Path) -> None:
+    manifest, polygon_path, data_root = polygon_fixture(
+        tmp_path,
+        tags={
+            "image": "https://example.test/image.jpg",
+            "mapillary": "2627502594079174",
+        },
+    )
+
+    class ConcurrentRegistry:
+        def __init__(self) -> None:
+            self.active = 0
+            self.max_active = 0
+
+        async def resolve_reference(
+            self,
+            reference: SourceReference,
+            *,
+            bbox: tuple[float, float, float, float],
+            resolver_contract_version: int,
+        ) -> ResolutionRecord:
+            del bbox
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            await asyncio.sleep(0.02)
+            self.active -= 1
+            return ResolutionRecord(
+                reference.provider,
+                reference.canonical_reference,
+                resolver_contract_version,
+                "resolved",
+                ({"image_url": "https://cdn.test/image.jpg"},),
+                None,
+            )
+
+    registry = ConcurrentRegistry()
+    with ResolutionCache.open(data_root) as cache:
+        await build_asset_shard(
+            manifest,
+            polygon_path,
+            data_root,
+            cache=cache,
+            registry=registry,
+            stop_requested=lambda: False,
+            progress=lambda _event: None,
+        )
+
+    assert registry.max_active == 2

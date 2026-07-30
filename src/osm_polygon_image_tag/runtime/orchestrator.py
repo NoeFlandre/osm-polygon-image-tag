@@ -1,21 +1,33 @@
 import signal
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
+from osm_polygon_image_tag.artifacts.manifest_inventory import verified_manifests
 from osm_polygon_image_tag.artifacts.publication import PublicationResult
 from osm_polygon_image_tag.artifacts.reporting import MetadataResult, generate_metadata
 from osm_polygon_image_tag.core.config import PipelinePaths
+from osm_polygon_image_tag.core.manifest import read_manifest
 from osm_polygon_image_tag.ingest.discovery import PbfSource, discover_pbfs
+from osm_polygon_image_tag.runtime.enrichment import (
+    AssetJob,
+    EnrichmentSummary,
+)
 from osm_polygon_image_tag.runtime.pipeline import BuildResult, build_one, verify_one
 
 Build = Callable[[PbfSource, PipelinePaths], BuildResult]
 MetadataBuilder = Callable[[Path], MetadataResult]
 Publisher = Callable[[Path], PublicationResult]
 Progress = Callable[[dict[str, object]], None]
+
+
+class EnrichmentController(Protocol):
+    def start(self, initial_jobs: Iterable[AssetJob]) -> None: ...
+    def submit(self, job: AssetJob) -> bool: ...
+    def finish(self) -> EnrichmentSummary: ...
 
 
 class StopToken:
@@ -37,6 +49,7 @@ class RunSummary:
     skipped: int
     accepted_rows: int
     stopped: bool
+    enrichment: EnrichmentSummary = field(default_factory=EnrichmentSummary)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -60,6 +73,7 @@ def run_all(
     metadata_builder: MetadataBuilder = generate_metadata,
     publisher: Publisher | None = None,
     progress: Progress | None = None,
+    enrichment_worker: EnrichmentController | None = None,
 ) -> RunSummary:
     token = stop_token or StopToken()
     sources = discover_pbfs(paths.source_root)
@@ -72,6 +86,11 @@ def run_all(
         }
     )
     results: list[BuildResult] = []
+    if enrichment_worker is not None:
+        enrichment_worker.start(
+            AssetJob(manifest, output)
+            for manifest, output in verified_manifests(paths.data_root, progress=emit)
+        )
     for index, source in enumerate(sources, start=1):
         if token.requested:
             break
@@ -86,6 +105,10 @@ def run_all(
         )
         result = build(source, paths)
         results.append(result)
+        if enrichment_worker is not None and result.manifest_path.is_file():
+            enrichment_worker.submit(
+                AssetJob(read_manifest(result.manifest_path), result.output_path)
+            )
         emit(
             {
                 "event": "pbf_completed",
@@ -97,7 +120,7 @@ def run_all(
                 "rejections": result.rejections,
             }
         )
-        if result.status == "skipped":
+        if result.status == "skipped" or enrichment_worker is not None:
             continue
         emit({"event": "metadata_started"})
         metadata = metadata_builder(paths.data_root)
@@ -112,7 +135,14 @@ def run_all(
             emit({"event": "publication_started"})
             publication = publisher(paths.data_root)
             emit({"event": "publication_completed", **publication.to_dict()})
-    if not results:
+    enrichment = (
+        enrichment_worker.finish() if enrichment_worker is not None else EnrichmentSummary()
+    )
+    needs_final_artifacts = not results or (
+        enrichment_worker is not None
+        and (any(result.status == "built" for result in results) or enrichment.built > 0)
+    )
+    if needs_final_artifacts:
         emit({"event": "metadata_started"})
         metadata = metadata_builder(paths.data_root)
         emit(
@@ -132,6 +162,7 @@ def run_all(
         skipped=sum(result.status == "skipped" for result in results),
         accepted_rows=sum(result.accepted_rows for result in results),
         stopped=token.requested,
+        enrichment=enrichment,
     )
     emit({"event": "run_completed", **summary.to_dict()})
     return summary

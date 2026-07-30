@@ -12,6 +12,7 @@ class ProgressReporter:
         self._heartbeat_seconds = heartbeat_seconds
         self._started = time.monotonic()
         self._last_event = "starting"
+        self._positions: dict[str, object] = {}
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -36,6 +37,9 @@ class ProgressReporter:
 
     def emit(self, event: dict[str, object]) -> None:
         self._last_event = str(event["event"])
+        for key in ("pbf_index", "pbf_count", "asset_index", "asset_count"):
+            if key in event:
+                self._positions[key] = event[key]
         self._sink(event)
 
     def _heartbeat_loop(self) -> None:
@@ -45,5 +49,6 @@ class ProgressReporter:
                     "event": "heartbeat",
                     "last_event": self._last_event,
                     "elapsed_seconds": int(time.monotonic() - self._started),
+                    **self._positions,
                 }
             )

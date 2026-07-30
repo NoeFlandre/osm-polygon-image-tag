@@ -1,3 +1,4 @@
+import asyncio
 from collections import Counter
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -102,23 +103,39 @@ async def build_asset_shard(
 
     source_rows = list(polygon_rows(polygon_path))
     references = [(row, reference) for row in source_rows for reference in references_from_row(row)]
-    records: dict[ResolutionKey, ResolutionRecord] = {}
-    for index, (row, reference) in enumerate(references, start=1):
-        if stop_requested():
-            return AssetBuildResult("pending", polygon_shard, asset_path, manifest_path, 0, {})
+    unique: dict[ResolutionKey, tuple[Mapping[str, object], SourceReference]] = {}
+    for row, reference in references:
         key = ResolutionKey(
             reference.provider,
             reference.canonical_reference,
             resolver_contract_version,
         )
-        if key not in records:
-            records[key] = await _resolve(
+        unique.setdefault(key, (row, reference))
+    if stop_requested():
+        return AssetBuildResult("pending", polygon_shard, asset_path, manifest_path, 0, {})
+    semaphore = asyncio.Semaphore(16)
+
+    async def resolve_one(
+        key: ResolutionKey,
+        row: Mapping[str, object],
+        reference: SourceReference,
+    ) -> tuple[ResolutionKey, ResolutionRecord]:
+        async with semaphore:
+            record = await _resolve(
                 reference,
                 row,
                 cache=cache,
                 registry=registry,
                 resolver_contract_version=resolver_contract_version,
             )
+        return key, record
+
+    records = dict(
+        await asyncio.gather(
+            *(resolve_one(key, row, reference) for key, (row, reference) in unique.items())
+        )
+    )
+    for index, (_row, _reference) in enumerate(references, start=1):
         progress(
             {
                 "event": "asset_reference_progress",

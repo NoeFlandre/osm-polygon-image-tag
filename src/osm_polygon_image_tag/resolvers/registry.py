@@ -1,6 +1,8 @@
+import asyncio
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import datetime
+from typing import Protocol
 
 from osm_polygon_image_tag.assets.references import SourceReference
 from osm_polygon_image_tag.assets.resolution import ResolutionRecord
@@ -32,17 +34,25 @@ _LIMITS = {
 }
 
 
+class ClosingClient(Protocol):
+    async def aclose(self) -> None: ...
+
+
 class ResolverRegistry:
     def __init__(
         self,
         resolvers: Mapping[str, Resolver],
         *,
         environment: Mapping[str, str],
-        http: SafeHttpClient,
+        http: ClosingClient,
     ) -> None:
         self._resolvers = dict(resolvers)
         self.environment = dict(environment)
         self._http = http
+        self._semaphores = {
+            provider: asyncio.Semaphore(limit.max_concurrency)
+            for provider, limit in _LIMITS.items()
+        }
 
     @classmethod
     def build(
@@ -75,10 +85,11 @@ class ResolverRegistry:
         bbox: tuple[float, float, float, float],
         resolver_contract_version: int,
     ) -> ResolutionRecord:
-        result = await self.resolver_for(reference.resolver_kind).resolve(
-            reference.canonical_reference,
-            context=ResolverContext(bbox=bbox, environment=self.environment),
-        )
+        async with self._semaphores[reference.provider]:
+            result = await self.resolver_for(reference.resolver_kind).resolve(
+                reference.canonical_reference,
+                context=ResolverContext(bbox=bbox, environment=self.environment),
+            )
         assets: list[dict[str, object]] = []
         for asset in result.assets:
             payload = asdict(asset)

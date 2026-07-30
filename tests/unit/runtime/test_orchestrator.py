@@ -7,6 +7,7 @@ from osm_polygon_image_tag.artifacts.publication import PublicationResult
 from osm_polygon_image_tag.artifacts.reporting import MetadataResult
 from osm_polygon_image_tag.core.config import PipelinePaths
 from osm_polygon_image_tag.ingest.discovery import PbfSource
+from osm_polygon_image_tag.runtime.enrichment import EnrichmentSummary
 from osm_polygon_image_tag.runtime.orchestrator import StopToken, graceful_stop_signals, run_all
 from osm_polygon_image_tag.runtime.pipeline import BuildResult
 
@@ -201,3 +202,48 @@ def test_run_all_reports_ordered_per_pbf_progress(tmp_path: Path) -> None:
     assert events[1]["pbf_count"] == 1
     assert events[2]["status"] == "built"
     assert events[-1]["processed"] == 1
+
+
+def test_all_skipped_polygon_run_flushes_new_asset_backfill_once(tmp_path: Path) -> None:
+    source = tmp_path / "raw"
+    source.mkdir()
+    (source / "region.osm.pbf").write_bytes(b"source")
+    paths = PipelinePaths.build(source_root=source, data_root=tmp_path / "generated")
+    events: list[str] = []
+
+    class Worker:
+        def start(self, initial_jobs: object) -> None:
+            del initial_jobs
+            events.append("asset-start")
+
+        def submit(self, job: object) -> bool:
+            del job
+            events.append("asset-submit")
+            return True
+
+        def finish(self) -> EnrichmentSummary:
+            events.append("asset-finish")
+            return EnrichmentSummary(built=1, rows=2, statuses={"resolved": 2})
+
+    skipped = _result("region.osm.pbf")
+    skipped = BuildResult(
+        "skipped",
+        skipped.source_pbf,
+        skipped.output_path,
+        skipped.manifest_path,
+        skipped.accepted_rows,
+        skipped.rejections,
+    )
+
+    summary = run_all(
+        paths,
+        build=lambda _pbf, _paths: skipped,
+        metadata_builder=lambda root: events.append("metadata") or _metadata(root),
+        publisher=lambda _root: events.append("publish")
+        or PublicationResult("published", "abc", 1),
+        enrichment_worker=Worker(),
+    )
+
+    assert events == ["asset-start", "asset-finish", "metadata", "publish"]
+    assert summary.enrichment.built == 1
+    assert summary.enrichment.rows == 2
