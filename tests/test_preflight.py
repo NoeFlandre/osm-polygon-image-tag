@@ -5,7 +5,7 @@ import pytest
 
 from osm_polygon_image_tag.core.config import PipelinePaths
 from osm_polygon_image_tag.core.errors import PreflightError
-from osm_polygon_image_tag.preflight import (
+from osm_polygon_image_tag.runtime.preflight import (
     Capacity,
     PreflightReport,
     ToolVersion,
@@ -58,9 +58,9 @@ def test_preflight_rejects_missing_osmium(tmp_path: Path) -> None:
 def test_real_osmium_probe_reports_first_version_line(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("osm_polygon_image_tag.preflight.shutil.which", lambda _name: "/bin/osmium")
+    monkeypatch.setattr("osm_polygon_image_tag.runtime.preflight.shutil.which", lambda _name: "/bin/osmium")
     monkeypatch.setattr(
-        "osm_polygon_image_tag.preflight.subprocess.run",
+        "osm_polygon_image_tag.runtime.preflight.subprocess.run",
         lambda *args, **kwargs: subprocess.CompletedProcess(
             args=["/bin/osmium", "--version"],
             returncode=0,
@@ -75,7 +75,7 @@ def test_real_osmium_probe_reports_first_version_line(
 def test_real_osmium_probe_rejects_missing_executable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("osm_polygon_image_tag.preflight.shutil.which", lambda _name: None)
+    monkeypatch.setattr("osm_polygon_image_tag.runtime.preflight.shutil.which", lambda _name: None)
 
     with pytest.raises(PreflightError, match="required executable"):
         probe_osmium()
@@ -94,9 +94,9 @@ def test_real_osmium_probe_rejects_unusable_results(
     stdout: str,
     message: str,
 ) -> None:
-    monkeypatch.setattr("osm_polygon_image_tag.preflight.shutil.which", lambda _name: "/bin/osmium")
+    monkeypatch.setattr("osm_polygon_image_tag.runtime.preflight.shutil.which", lambda _name: "/bin/osmium")
     monkeypatch.setattr(
-        "osm_polygon_image_tag.preflight.subprocess.run",
+        "osm_polygon_image_tag.runtime.preflight.subprocess.run",
         lambda *args, **kwargs: subprocess.CompletedProcess(
             args=["/bin/osmium", "--version"],
             returncode=returncode,

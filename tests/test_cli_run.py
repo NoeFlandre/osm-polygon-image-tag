@@ -5,7 +5,7 @@ import pytest
 from _pytest.capture import CaptureFixture
 
 from osm_polygon_image_tag.cli import _emit_progress, run
-from osm_polygon_image_tag.orchestrator import RunSummary, VerifySummary
+from osm_polygon_image_tag.runtime.orchestrator import RunSummary, VerifySummary
 from osm_polygon_image_tag.publication import EXPECTED_REPO, PublicationResult
 
 

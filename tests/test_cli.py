@@ -4,7 +4,7 @@ from pathlib import Path
 from _pytest.capture import CaptureFixture
 
 from osm_polygon_image_tag.cli import run
-from osm_polygon_image_tag.preflight import Capacity, PreflightReport, ToolVersion
+from osm_polygon_image_tag.runtime.preflight import Capacity, PreflightReport, ToolVersion
 
 
 def test_preflight_command_emits_canonical_json(

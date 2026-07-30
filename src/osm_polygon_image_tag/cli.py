@@ -6,7 +6,7 @@ from pathlib import Path
 
 from osm_polygon_image_tag.core.config import PipelinePaths
 from osm_polygon_image_tag.core.errors import ImageTagPipelineError
-from osm_polygon_image_tag.orchestrator import (
+from osm_polygon_image_tag.runtime.orchestrator import (
     RunSummary,
     StopToken,
     VerifySummary,
@@ -14,7 +14,7 @@ from osm_polygon_image_tag.orchestrator import (
     run_all,
     verify_all,
 )
-from osm_polygon_image_tag.preflight import PreflightReport, run_preflight
+from osm_polygon_image_tag.runtime.preflight import PreflightReport, run_preflight
 from osm_polygon_image_tag.core.progress import ProgressReporter
 from osm_polygon_image_tag.publication import (
     EXPECTED_REPO,

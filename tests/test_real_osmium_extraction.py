@@ -10,7 +10,7 @@ from osm_polygon_image_tag.ingest.extraction import (
     scan_target_source_tags,
     stream_export,
 )
-from osm_polygon_image_tag.resources import osmium_export_config
+from osm_polygon_image_tag.runtime.resources import osmium_export_config
 
 FIXTURE = Path("tests/fixtures/image_tag_coverage.osm")
 EXPECTED = {

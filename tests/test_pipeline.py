@@ -6,11 +6,11 @@ import pytest
 from shapely import to_wkb
 from shapely.geometry import Polygon
 
-import osm_polygon_image_tag.pipeline as pipeline
+import osm_polygon_image_tag.runtime.pipeline as pipeline
 from osm_polygon_image_tag.core.config import PipelinePaths
 from osm_polygon_image_tag.ingest.discovery import PbfSource
 from osm_polygon_image_tag.ingest.extraction import ExportRecord, SourceTagRecord
-from osm_polygon_image_tag.pipeline import build_one, verify_one
+from osm_polygon_image_tag.runtime.pipeline import build_one, verify_one
 
 
 def _source(path: Path) -> PbfSource:

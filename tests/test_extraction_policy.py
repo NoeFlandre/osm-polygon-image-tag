@@ -1,6 +1,6 @@
 import json
 
-from osm_polygon_image_tag.resources import osmium_export_config
+from osm_polygon_image_tag.runtime.resources import osmium_export_config
 
 
 def test_packaged_osmium_policy_preserves_provenance_and_all_tags() -> None:

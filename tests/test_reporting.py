@@ -20,7 +20,7 @@ from osm_polygon_image_tag.core.manifest import (
     file_sha256,
     write_manifest,
 )
-from osm_polygon_image_tag.pipeline import build_one
+from osm_polygon_image_tag.runtime.pipeline import build_one
 from osm_polygon_image_tag.core.progress import Progress
 from osm_polygon_image_tag.artifacts.reporting import generate_metadata
 from osm_polygon_image_tag.artifacts.storage import write_geoparquet

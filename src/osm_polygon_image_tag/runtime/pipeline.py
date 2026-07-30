@@ -29,7 +29,7 @@ from osm_polygon_image_tag.core.manifest import (
     source_identity,
     write_manifest,
 )
-from osm_polygon_image_tag.resources import osmium_export_config
+from osm_polygon_image_tag.runtime.resources import osmium_export_config
 from osm_polygon_image_tag.artifacts.storage import validate_geoparquet, write_geoparquet
 from osm_polygon_image_tag.ingest.tag_store import TagStore
 from osm_polygon_image_tag.ingest.transform import AcceptedRow, RejectedRow, transform_record

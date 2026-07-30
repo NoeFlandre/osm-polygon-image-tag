@@ -7,7 +7,7 @@ import pytest
 from osm_polygon_image_tag.core.config import PipelinePaths
 from osm_polygon_image_tag.ingest.discovery import discover_pbfs
 from osm_polygon_image_tag.core.manifest import file_sha256
-from osm_polygon_image_tag.pipeline import build_one
+from osm_polygon_image_tag.runtime.pipeline import build_one
 
 FIXTURE = Path("tests/fixtures/image_tag_coverage.osm")
 

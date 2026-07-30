@@ -8,7 +8,7 @@ from typing import Any
 
 from osm_polygon_image_tag.core.config import PipelinePaths
 from osm_polygon_image_tag.ingest.discovery import PbfSource, discover_pbfs
-from osm_polygon_image_tag.pipeline import BuildResult, build_one, verify_one
+from osm_polygon_image_tag.runtime.pipeline import BuildResult, build_one, verify_one
 from osm_polygon_image_tag.publication import PublicationResult
 from osm_polygon_image_tag.artifacts.reporting import MetadataResult, generate_metadata
 
