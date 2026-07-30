@@ -18,8 +18,10 @@ def test_registry_has_bounded_provider_limits_and_capabilities() -> None:
 
     assert registry.limit_for("wikimedia_commons") == ProviderLimit(4, 2.0)
     assert registry.limit_for("panoramax").max_concurrency <= 8
-    assert registry.capability("mapillary") == "page_only_missing_token"
-    assert registry.capability("flickr") == "page_only_missing_key"
+    assert registry.capability("mapillary") == "anonymous"
+    assert registry.capability("flickr") == "anonymous"
+    assert registry.capability("wikimedia_commons") == "public"
+    assert registry.capability("panoramax") == "public"
 
 
 def test_registry_reports_direct_capability_with_credentials() -> None:
@@ -27,8 +29,17 @@ def test_registry_reports_direct_capability_with_credentials() -> None:
         environment={"MAPILLARY_ACCESS_TOKEN": "x", "FLICKR_API_KEY": "y"}
     )
 
-    assert registry.capability("mapillary") == "direct"
-    assert registry.capability("flickr") == "direct"
+    assert registry.capability("mapillary") == "credentialed"
+    assert registry.capability("flickr") == "credentialed"
+
+
+def test_empty_credentials_are_anonymous() -> None:
+    registry = ResolverRegistry.build(
+        environment={"MAPILLARY_ACCESS_TOKEN": "", "FLICKR_API_KEY": ""}
+    )
+
+    assert registry.capability("mapillary") == "anonymous"
+    assert registry.capability("flickr") == "anonymous"
 
 
 @pytest.mark.asyncio

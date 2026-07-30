@@ -18,9 +18,11 @@ class CommonsHttp:
     def __init__(self, *, category_pages: list[dict[str, object]] | None = None) -> None:
         self.category_pages = list(category_pages or [])
         self.urls: list[str] = []
+        self.headers: list[object] = []
 
-    async def get_json(self, url: str, **_kwargs: object) -> dict[str, object]:
+    async def get_json(self, url: str, **kwargs: object) -> dict[str, object]:
         self.urls.append(url)
+        self.headers.append(kwargs.get("headers"))
         query = parse_qs(urlparse(url).query)
         if query.get("list") == ["categorymembers"]:
             return self.category_pages.pop(0)
@@ -49,7 +51,8 @@ class CommonsHttp:
 
 @pytest.mark.asyncio
 async def test_commons_file_returns_structured_direct_asset() -> None:
-    resolver = CommonsResolver(CommonsHttp())
+    http = CommonsHttp()
+    resolver = CommonsResolver(http)
 
     result = await resolver.resolve("File:Jam1.jpg", context=ResolverContext())
 
@@ -62,6 +65,13 @@ async def test_commons_file_returns_structured_direct_asset() -> None:
     assert (asset.width, asset.height) == (1200, 800)
     assert asset.license_id == "CC BY-SA 4.0"
     assert asset.author == "Example Author"
+    assert http.headers == [
+        {
+            "User-Agent": (
+                "osm-polygon-image-tag/0.1.0 (https://github.com/NoeFlandre/osm-polygon-image-tag)"
+            )
+        }
+    ]
 
 
 @pytest.mark.asyncio

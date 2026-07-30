@@ -1,6 +1,7 @@
 from dataclasses import asdict
 from pathlib import Path
 
+import pyarrow.parquet as pq
 import pytest
 from shapely import to_wkb
 from shapely.geometry import Polygon
@@ -28,6 +29,10 @@ from osm_polygon_image_tag.resolvers.types import (
 
 
 class Registry:
+    def capability(self, provider: str) -> str:
+        del provider
+        return "public"
+
     async def resolve_reference(
         self,
         reference: SourceReference,
@@ -100,3 +105,102 @@ async def test_historical_asset_backfill_does_not_need_or_modify_pbf(tmp_path: P
     assert result.status == "built"
     assert polygon_path.read_bytes() == before_bytes
     assert polygon_path.stat().st_mtime_ns == before_mtime
+
+
+@pytest.mark.asyncio
+async def test_mapillary_token_resume_reuses_polygon_and_refreshes_asset(tmp_path: Path) -> None:
+    data_root = tmp_path / "generated"
+    polygon_path = data_root / "data" / "region.parquet"
+    record = ExportRecord(
+        geometry_ewkb_hex=to_wkb(
+            Polygon([(4.35, 50.84), (4.37, 50.84), (4.37, 50.86), (4.35, 50.86)]),
+            hex=True,
+        ),
+        osm_type="way",
+        osm_id=7,
+        version=2,
+        changeset=3,
+        timestamp=None,
+        tags={"mapillary": "2627502594079174"},
+    )
+    outcome = transform_record(record, source_pbf="missing/region.osm.pbf")
+    assert isinstance(outcome, AcceptedRow)
+    write_geoparquet([outcome.values], polygon_path)
+    polygon_manifest = Manifest(
+        MANIFEST_SCHEMA_VERSION,
+        PROCESSING_CONTRACT_VERSION,
+        DATASET_SCHEMA_VERSION,
+        SourceIdentity("missing/region.osm.pbf", 1, 1, "a" * 64),
+        OutputIdentity(
+            "data/region.parquet",
+            polygon_path.stat().st_size,
+            file_sha256(polygon_path),
+            1,
+        ),
+        "osmium historical",
+        RunCounts(1, {}),
+    )
+
+    class CredentialRegistry:
+        def __init__(self) -> None:
+            self.credentialed = False
+            self.calls = 0
+
+        def capability(self, provider: str) -> str:
+            assert provider == "mapillary"
+            return "credentialed" if self.credentialed else "anonymous"
+
+        async def resolve_reference(
+            self,
+            reference: SourceReference,
+            *,
+            bbox: tuple[float, float, float, float],
+            resolver_contract_version: int,
+        ) -> ResolutionRecord:
+            del bbox
+            self.calls += 1
+            return ResolutionRecord(
+                reference.provider,
+                reference.canonical_reference,
+                resolver_contract_version,
+                "resolved" if self.credentialed else "resolved_page_only",
+                (
+                    {
+                        "image_url": (
+                            "https://scontent.test/direct.jpg" if self.credentialed else None
+                        )
+                    },
+                ),
+                None,
+            )
+
+    before = polygon_path.read_bytes()
+    registry = CredentialRegistry()
+    with ResolutionCache.open(data_root) as cache:
+        first = await build_asset_shard(
+            polygon_manifest,
+            polygon_path,
+            data_root,
+            cache=cache,
+            registry=registry,
+            stop_requested=lambda: False,
+            progress=lambda _event: None,
+        )
+        registry.credentialed = True
+        second = await build_asset_shard(
+            polygon_manifest,
+            polygon_path,
+            data_root,
+            cache=cache,
+            registry=registry,
+            stop_requested=lambda: False,
+            progress=lambda _event: None,
+        )
+
+    assert (first.status, second.status) == ("built", "built")
+    assert registry.calls == 2
+    assert polygon_path.read_bytes() == before
+    assert not (tmp_path / "missing" / "region.osm.pbf").exists()
+    assert pq.read_table(second.asset_path).column("image_url").to_pylist() == [
+        "https://scontent.test/direct.jpg"
+    ]

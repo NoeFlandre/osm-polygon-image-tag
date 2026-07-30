@@ -119,10 +119,35 @@ After extraction reaches a safe boundary, long asset backfills regenerate
 metadata and publish after every completed asset shard, followed by one final
 receipt-aware publication.
 
-Mapillary direct URLs require `MAPILLARY_ACCESS_TOKEN`; Flickr direct URLs
-require `FLICKR_API_KEY`. Without them the dataset records a factual page URL
-and `resolved_page_only`. Credentials are environment-only and never written
-to Parquet, manifests, logs, or publication artifacts.
+### Provider credentials
+
+Mapillary direct URLs require `MAPILLARY_ACCESS_TOKEN`. Create a Mapillary
+account, register an application in the
+[developer dashboard](https://www.mapillary.com/dashboard/developers), and
+copy its client access token.
+
+Flickr direct URLs optionally use `FLICKR_API_KEY`. Flickr currently disables
+new API-key creation for free accounts; creation is available to Flickr PRO
+subscribers through the
+[App Garden](https://www.flickr.com/services/apps/create/). Without a key,
+Flickr rows remain factual page links with `resolved_page_only`; this does not
+block the pipeline.
+
+Wikimedia Commons public metadata requires no OAuth token. The resolver sends
+the descriptive project `User-Agent` required by Wikimedia policy. Panoramax,
+KartaView, Bing Streetside, and generic public image URLs need no configured
+credential.
+
+Hugging Face publication uses `hf auth login` or `HF_TOKEN`. Provider
+credentials are environment-only and their values, hashes, prefixes, and
+lengths are never written to Parquet, manifests, logs, cache rows, statistics,
+or publication artifacts.
+
+When a Mapillary or Flickr credential becomes available, a new run revisits
+only compatible asset shards containing improvable page-only/auth-required
+results. It reuses polygon Parquet and stable resolver-cache entries; it does
+not reopen PBF files. Each rebuilt asset shard is published at the existing
+enrichment checkpoint.
 
 On Hugging Face, use `polygons` (default) for geometry and `image_assets` for
 resolved references. Join on `osm_type`, `osm_id`, `osm_version`, and

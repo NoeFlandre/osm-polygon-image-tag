@@ -2,6 +2,7 @@ import asyncio
 from dataclasses import asdict
 from pathlib import Path
 
+import pyarrow.parquet as pq
 import yaml
 from shapely import to_wkb
 from shapely.geometry import Polygon
@@ -56,6 +57,12 @@ class _Hub:
 class _Registry:
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.mapillary_credentialed = False
+
+    def capability(self, provider: str) -> str:
+        if provider == "mapillary":
+            return "credentialed" if self.mapillary_credentialed else "anonymous"
+        return "public"
 
     async def resolve_reference(
         self,
@@ -66,12 +73,16 @@ class _Registry:
     ) -> ResolutionRecord:
         del bbox
         self.calls.append(reference.canonical_reference)
-        asset = ResolvedAsset(image_url=reference.canonical_reference)
+        credentialed = reference.provider != "mapillary" or self.mapillary_credentialed
+        asset = ResolvedAsset(
+            page_url=f"https://provider.test/{reference.canonical_reference}",
+            image_url=reference.canonical_reference if credentialed else None,
+        )
         return ResolutionRecord(
             reference.provider,
             reference.canonical_reference,
             resolver_contract_version,
-            "resolved",
+            "resolved" if credentialed else "resolved_page_only",
             (asdict(asset),),
             None,
         )
@@ -80,7 +91,12 @@ class _Registry:
         return None
 
 
-def _polygon_shard(root: Path, index: int) -> tuple[Manifest, Path]:
+def _polygon_shard(
+    root: Path,
+    index: int,
+    *,
+    tags: dict[str, str] | None = None,
+) -> tuple[Manifest, Path]:
     relative = f"data/region-{index}.parquet"
     output = root / relative
     record = ExportRecord(
@@ -93,7 +109,7 @@ def _polygon_shard(root: Path, index: int) -> tuple[Manifest, Path]:
         version=1,
         changeset=1,
         timestamp=None,
-        tags={"image": f"https://images.example.test/{index}.jpg"},
+        tags=tags or {"image": f"https://images.example.test/{index}.jpg"},
     )
     transformed = transform_record(record, source_pbf=f"region-{index}.osm.pbf")
     assert isinstance(transformed, AcceptedRow)
@@ -177,3 +193,47 @@ def test_resume_backfills_only_missing_asset_and_republishes_once(tmp_path: Path
         "polygons",
         "image_assets",
     ]
+
+
+def test_credential_transition_rebuilds_and_publishes_without_pbf_work(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "raw"
+    source.mkdir()
+    data_root = tmp_path / "generated"
+    _manifest, polygon_path = _polygon_shard(
+        data_root,
+        1,
+        tags={"mapillary": "2627502594079174"},
+    )
+    polygon_bytes = polygon_path.read_bytes()
+    registry = _Registry()
+    paths = PipelinePaths.build(source_root=source, data_root=data_root)
+    hub = _Hub()
+
+    def publish(root: Path) -> PublicationResult:
+        return publish_dataset(root, confirm_repo=EXPECTED_REPO, hub=hub)
+
+    anonymous = run_all(
+        paths,
+        stop_token=StopToken(),
+        enrichment_worker=_worker(data_root, registry),
+        metadata_builder=generate_metadata,
+        publisher=publish,
+    )
+    registry.mapillary_credentialed = True
+    credentialed = run_all(
+        paths,
+        stop_token=StopToken(),
+        enrichment_worker=_worker(data_root, registry),
+        metadata_builder=generate_metadata,
+        publisher=publish,
+    )
+
+    asset_path = data_root / "assets" / "region-1.assets.parquet"
+    assert anonymous.processed == credentialed.processed == 0
+    assert anonymous.enrichment.built == credentialed.enrichment.built == 1
+    assert polygon_path.read_bytes() == polygon_bytes
+    assert list(source.glob("*.pbf")) == []
+    assert pq.read_table(asset_path).column("image_url").to_pylist() == ["2627502594079174"]
+    assert len(hub.commits) == 2

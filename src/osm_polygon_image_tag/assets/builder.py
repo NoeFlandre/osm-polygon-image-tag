@@ -36,6 +36,8 @@ from osm_polygon_image_tag.core.progress import Progress
 
 
 class Registry(Protocol):
+    def capability(self, provider: str) -> str: ...
+
     async def resolve_reference(
         self,
         reference: SourceReference,
@@ -74,8 +76,22 @@ async def _resolve(
         and datetime.fromisoformat(value) <= refresh_before
         for asset in cached.assets
     )
+    capability = registry.capability(reference.provider)
+    credentialed = capability == "credentialed"
+    auth_limited = cached is not None and (
+        (
+            cached.status == "requires_auth"
+            and (credentialed or reference.provider == "wikimedia_commons")
+        )
+        or (
+            cached.status == "resolved_page_only"
+            and credentialed
+            and reference.provider in {"mapillary", "flickr"}
+        )
+    )
     if cached is not None and not (
         expiring
+        or auth_limited
         or (
             cached.status == "temporary_failure"
             and (cached.retry_after is None or cached.retry_after <= now)
@@ -111,6 +127,7 @@ async def build_asset_shard(
         source=source,
         data_root=data_root,
         resolver_contract_version=resolver_contract_version,
+        capability=registry.capability,
     )
     if reusable is not None:
         return AssetBuildResult(

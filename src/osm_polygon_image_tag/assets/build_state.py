@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -42,12 +43,27 @@ def polygon_identity(manifest: Manifest) -> AssetSourceIdentity:
     )
 
 
-def _expiring_url(path: Path) -> bool:
+def _needs_refresh(path: Path, capability: Callable[[str], str]) -> bool:
     refresh_before = datetime.now(UTC) + timedelta(hours=1)
     parquet = pq.ParquetFile(path)
-    for batch in parquet.iter_batches(columns=["image_url_expires_at"]):
-        for expiry in batch.column(0).to_pylist():
+    for batch in parquet.iter_batches(columns=["provider", "status", "image_url_expires_at"]):
+        providers = batch.column(0).to_pylist()
+        statuses = batch.column(1).to_pylist()
+        expiries = batch.column(2).to_pylist()
+        for provider, status, expiry in zip(providers, statuses, expiries, strict=True):
             if isinstance(expiry, datetime) and expiry <= refresh_before:
+                return True
+            if not isinstance(provider, str):
+                continue
+            if status == "requires_auth" and (
+                provider == "wikimedia_commons" or capability(provider) == "credentialed"
+            ):
+                return True
+            if (
+                status == "resolved_page_only"
+                and provider in {"mapillary", "flickr"}
+                and capability(provider) == "credentialed"
+            ):
                 return True
     return False
 
@@ -59,6 +75,7 @@ def reusable_manifest(
     source: AssetSourceIdentity,
     data_root: Path,
     resolver_contract_version: int,
+    capability: Callable[[str], str],
 ) -> AssetManifest | None:
     try:
         manifest = read_asset_manifest(path, data_root=data_root)
@@ -70,7 +87,7 @@ def reusable_manifest(
             or not output.is_file()
             or output.is_symlink()
             or output.stat().st_size != manifest.output.size_bytes
-            or _expiring_url(output)
+            or _needs_refresh(output, capability)
         ):
             return None
         return manifest

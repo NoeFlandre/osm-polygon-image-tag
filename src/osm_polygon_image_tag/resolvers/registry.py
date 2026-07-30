@@ -226,13 +226,14 @@ class ResolverRegistry:
         return _LIMITS[provider]
 
     def capability(self, provider: str) -> str:
-        if provider == "mapillary" and "MAPILLARY_ACCESS_TOKEN" not in self.environment:
-            return "page_only_missing_token"
-        if provider == "flickr" and "FLICKR_API_KEY" not in self.environment:
-            return "page_only_missing_key"
-        if provider == "streetside":
-            return "page_only"
-        return "direct"
+        credential_names = {
+            "mapillary": "MAPILLARY_ACCESS_TOKEN",
+            "flickr": "FLICKR_API_KEY",
+        }
+        credential_name = credential_names.get(provider)
+        if credential_name is None:
+            return "public"
+        return "credentialed" if self.environment.get(credential_name) else "anonymous"
 
     async def aclose(self) -> None:
         await self._http.aclose()

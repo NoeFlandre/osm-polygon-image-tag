@@ -107,6 +107,10 @@ class Registry:
     def __init__(self, resolver: Resolver) -> None:
         self.resolver = resolver
 
+    def capability(self, provider: str) -> str:
+        del provider
+        return "public"
+
     async def resolve_reference(
         self,
         reference: SourceReference,
@@ -271,12 +275,226 @@ async def test_cache_hit_rebuilds_missing_asset_without_network(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "tag_value"),
+    [
+        ("mapillary", "2627502594079174"),
+        ("flickr", "6831725321"),
+    ],
+)
+@pytest.mark.parametrize("initial_status", ["resolved_page_only", "requires_auth"])
+async def test_credentialed_resume_refreshes_auth_limited_provider_results(
+    tmp_path: Path,
+    provider: str,
+    tag_value: str,
+    initial_status: str,
+) -> None:
+    manifest, polygon_path, data_root = polygon_fixture(
+        tmp_path,
+        tags={provider: tag_value},
+    )
+
+    class CredentialRegistry:
+        def __init__(self) -> None:
+            self.credentialed = False
+            self.calls = 0
+
+        def capability(self, provider: str) -> str:
+            assert provider in {"mapillary", "flickr"}
+            return "credentialed" if self.credentialed else "anonymous"
+
+        async def resolve_reference(
+            self,
+            reference: SourceReference,
+            *,
+            bbox: tuple[float, float, float, float],
+            resolver_contract_version: int,
+        ) -> ResolutionRecord:
+            del bbox
+            self.calls += 1
+            if not self.credentialed:
+                return ResolutionRecord(
+                    reference.provider,
+                    reference.canonical_reference,
+                    resolver_contract_version,
+                    initial_status,
+                    (),
+                    None,
+                )
+            return ResolutionRecord(
+                reference.provider,
+                reference.canonical_reference,
+                resolver_contract_version,
+                "resolved",
+                ({"image_url": "https://scontent.test/direct.jpg"},),
+                None,
+            )
+
+    registry = CredentialRegistry()
+    with ResolutionCache.open(data_root) as cache:
+        first = await build_asset_shard(
+            manifest,
+            polygon_path,
+            data_root,
+            cache=cache,
+            registry=registry,
+            stop_requested=lambda: False,
+            progress=lambda _event: None,
+        )
+        registry.credentialed = True
+        second = await build_asset_shard(
+            manifest,
+            polygon_path,
+            data_root,
+            cache=cache,
+            registry=registry,
+            stop_requested=lambda: False,
+            progress=lambda _event: None,
+        )
+
+    assert (first.status, second.status) == ("built", "built")
+    assert registry.calls == 2
+    assert pq.read_table(second.asset_path).column("image_url").to_pylist() == [
+        "https://scontent.test/direct.jpg"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_public_commons_resume_refreshes_old_requires_auth_result(tmp_path: Path) -> None:
+    manifest, polygon_path, data_root = polygon_fixture(
+        tmp_path,
+        tags={"wikimedia_commons": "File:Example.jpg"},
+    )
+
+    class CommonsRegistry:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def capability(self, provider: str) -> str:
+            assert provider == "wikimedia_commons"
+            return "public"
+
+        async def resolve_reference(
+            self,
+            reference: SourceReference,
+            *,
+            bbox: tuple[float, float, float, float],
+            resolver_contract_version: int,
+        ) -> ResolutionRecord:
+            del bbox
+            self.calls += 1
+            status = "requires_auth" if self.calls == 1 else "resolved"
+            assets: tuple[dict[str, object], ...] = (
+                ()
+                if self.calls == 1
+                else ({"image_url": "https://upload.wikimedia.org/example.jpg"},)
+            )
+            return ResolutionRecord(
+                reference.provider,
+                reference.canonical_reference,
+                resolver_contract_version,
+                status,
+                assets,
+                None,
+            )
+
+    registry = CommonsRegistry()
+    with ResolutionCache.open(data_root) as cache:
+        first = await build_asset_shard(
+            manifest,
+            polygon_path,
+            data_root,
+            cache=cache,
+            registry=registry,
+            stop_requested=lambda: False,
+            progress=lambda _event: None,
+        )
+        second = await build_asset_shard(
+            manifest,
+            polygon_path,
+            data_root,
+            cache=cache,
+            registry=registry,
+            stop_requested=lambda: False,
+            progress=lambda _event: None,
+        )
+
+    assert (first.status, second.status) == ("built", "built")
+    assert registry.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_credential_does_not_rebuild_unrelated_page_only_rows(tmp_path: Path) -> None:
+    manifest, polygon_path, data_root = polygon_fixture(
+        tmp_path,
+        tags={
+            "mapillary": "2627502594079174",
+            "image": "https://example.test/page",
+        },
+    )
+
+    class MixedRegistry:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def capability(self, provider: str) -> str:
+            return "credentialed" if provider == "mapillary" else "public"
+
+        async def resolve_reference(
+            self,
+            reference: SourceReference,
+            *,
+            bbox: tuple[float, float, float, float],
+            resolver_contract_version: int,
+        ) -> ResolutionRecord:
+            del bbox
+            self.calls += 1
+            status = "resolved" if reference.provider == "mapillary" else "resolved_page_only"
+            return ResolutionRecord(
+                reference.provider,
+                reference.canonical_reference,
+                resolver_contract_version,
+                status,
+                ({"page_url": reference.canonical_reference},),
+                None,
+            )
+
+    registry = MixedRegistry()
+    with ResolutionCache.open(data_root) as cache:
+        first = await build_asset_shard(
+            manifest,
+            polygon_path,
+            data_root,
+            cache=cache,
+            registry=registry,
+            stop_requested=lambda: False,
+            progress=lambda _event: None,
+        )
+        second = await build_asset_shard(
+            manifest,
+            polygon_path,
+            data_root,
+            cache=cache,
+            registry=registry,
+            stop_requested=lambda: False,
+            progress=lambda _event: None,
+        )
+
+    assert (first.status, second.status) == ("built", "skipped")
+    assert registry.calls == 2
+
+
+@pytest.mark.asyncio
 async def test_temporary_failure_manifest_is_rebuilt_for_future_retry(tmp_path: Path) -> None:
     manifest, polygon_path, data_root = polygon_fixture(tmp_path)
 
     class TemporaryRegistry:
         def __init__(self) -> None:
             self.calls = 0
+
+        def capability(self, provider: str) -> str:
+            del provider
+            return "public"
 
         async def resolve_reference(
             self,
@@ -358,6 +576,10 @@ async def test_expired_direct_url_manifest_and_cache_are_refreshed(tmp_path: Pat
     class ExpiringRegistry:
         def __init__(self) -> None:
             self.calls = 0
+
+        def capability(self, provider: str) -> str:
+            del provider
+            return "public"
 
         async def resolve_reference(
             self,
@@ -459,6 +681,10 @@ async def test_builder_resolves_independent_references_concurrently(tmp_path: Pa
         def __init__(self) -> None:
             self.active = 0
             self.max_active = 0
+
+        def capability(self, provider: str) -> str:
+            del provider
+            return "public"
 
         async def resolve_reference(
             self,

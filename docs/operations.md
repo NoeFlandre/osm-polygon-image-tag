@@ -92,6 +92,56 @@ After extraction finishes, ongoing asset work is checkpointed every 25 shards.
 Each checkpoint runs between shard writes, regenerates both catalogs/card, and
 publishes only changed verified artifacts. A final receipt-aware flush follows.
 
+## Credentials and credential-aware resume
+
+Only these secrets can be used by the pipeline:
+
+- `MAPILLARY_ACCESS_TOKEN`: register an application in the
+  [Mapillary developer dashboard](https://www.mapillary.com/dashboard/developers)
+  and copy its client access token.
+- `FLICKR_API_KEY`: optional. Flickr currently limits new API-key creation to
+  Flickr PRO subscribers. Free accounts can leave it unset; Flickr rows remain
+  factual page-only results. Existing/PRO users can use the
+  [Flickr App Garden](https://www.flickr.com/services/apps/create/).
+- Hugging Face: run `hf auth login` interactively, or supply `HF_TOKEN`.
+
+Wikimedia Commons public reads do not need OAuth. The resolver supplies the
+descriptive HTTP `User-Agent` required by Wikimedia. Panoramax, KartaView,
+Bing Streetside, and generic image URLs need no token.
+
+Avoid putting secrets directly in shell commands or checked-in `.env` files.
+For an interactive zsh session, read the Mapillary token without echoing it:
+
+```bash
+read -s "MAPILLARY_ACCESS_TOKEN?Mapillary client token: "
+export MAPILLARY_ACCESS_TOKEN
+echo
+hf auth login
+```
+
+Then resume:
+
+```bash
+uv run osm-polygon-image-tag run-and-publish \
+  --source-root "/Volumes/Seagate M3/projects/osm-polygon-wikidata-only/raw" \
+  --data-root "/Volumes/Seagate M3/projects/osm-polygon-image-tag" \
+  --confirm-repo NoeFlandre/osm-polygon-image-tag
+```
+
+The credential must be exported in the same shell that launches the command.
+A newly started process detects the non-secret capability change and rebuilds
+only asset shards that may improve, using existing polygon Parquet and cached
+stable resolutions. PBF extraction remains skipped. Auth-limited cached
+Mapillary/Flickr records are retried; replacing an invalid token and resuming
+therefore retries them again. Rebuilt asset shards use the existing immediate
+publication checkpoints.
+
+Unset the interactive secret after the command exits:
+
+```bash
+unset MAPILLARY_ACCESS_TOKEN
+```
+
 ## Progress events and heartbeats
 
 Every long-running command emits JSON events to stderr as

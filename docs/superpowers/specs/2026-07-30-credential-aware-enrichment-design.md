@@ -44,9 +44,10 @@ records are refreshed when the corresponding credential is present.
 `requires_auth` records are refreshed when the provider is credentialed. Other
 records remain cache hits.
 
-This deliberately uses existing manifest aggregates. It can conservatively
-rebuild an occasional shard containing unrelated page-only rows, but the
-resolver cache makes that cheap and avoids a manifest migration.
+The reuse check scans only the existing asset shard's provider, status, and
+expiry columns in one pass. This precisely matches refreshable rows, avoids
+rebuilding shards for unrelated page-only providers, and avoids a manifest
+migration.
 
 ## Wikimedia request identity
 
@@ -70,4 +71,3 @@ the existing publish-after-enrichment boundary.
 If a supplied token is invalid, the result remains `requires_auth`. Replacing
 the token and resuming retries it because authenticated `requires_auth` cache
 records are never considered final.
-

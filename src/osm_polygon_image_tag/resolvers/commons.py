@@ -10,6 +10,11 @@ from osm_polygon_image_tag.resolvers.types import (
 
 _API = "https://commons.wikimedia.org/w/api.php"
 _IMAGE_INFO = "url|mime|size|extmetadata"
+_HEADERS = {
+    "User-Agent": (
+        "osm-polygon-image-tag/0.1.0 (https://github.com/NoeFlandre/osm-polygon-image-tag)"
+    )
+}
 
 
 class MetadataClient(Protocol):
@@ -76,7 +81,10 @@ class CommonsResolver:
 
     async def _request(self, parameters: Mapping[str, str]) -> Mapping[str, object]:
         common = {"action": "query", "format": "json", "formatversion": "2"}
-        return await self._http.get_json(f"{_API}?{urlencode({**common, **parameters})}")
+        return await self._http.get_json(
+            f"{_API}?{urlencode({**common, **parameters})}",
+            headers=_HEADERS,
+        )
 
     async def _files(self, titles: Sequence[str]) -> ResolutionResult:
         assets_by_title: dict[str, ResolvedAsset] = {}

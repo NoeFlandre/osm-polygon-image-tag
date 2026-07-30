@@ -101,8 +101,9 @@ Expected: `reusable_manifest` has no capability input.
 
 - [ ] **Step 3: Add the minimal reuse predicate**
 
-Pass the registry's `capability` callable into `reusable_manifest`. Reject reuse
-only for credential-improvable aggregates; keep schema and manifests unchanged.
+Pass the registry's `capability` callable into `reusable_manifest`. Scan only
+provider, status, and expiry columns in one pass and reject reuse only for
+credential-improvable rows; keep schema and manifests unchanged.
 
 - [ ] **Step 4: Run focused tests and verify GREEN**
 
@@ -192,4 +193,3 @@ git add README.md docs src tests
 git commit -m "Make enrichment resume credential-aware"
 git push origin main
 ```
-
