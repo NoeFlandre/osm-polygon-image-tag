@@ -4,6 +4,9 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from osm_polygon_image_tag.artifacts.asset_catalog import sync_asset_catalog
+from osm_polygon_image_tag.artifacts.asset_inventory import verified_asset_manifests
+from osm_polygon_image_tag.artifacts.asset_statistics import asset_statistics
 from osm_polygon_image_tag.artifacts.catalog import sync_catalog
 from osm_polygon_image_tag.artifacts.dataset_card import dataset_card
 from osm_polygon_image_tag.artifacts.manifest_inventory import verified_manifests
@@ -42,9 +45,12 @@ def _atomic_write(path: Path, content: bytes) -> None:
 def generate_metadata(data_root: Path, *, progress: Progress | None = None) -> MetadataResult:
     emit = progress or (lambda _event: None)
     manifests = verified_manifests(data_root, progress=emit)
+    asset_manifests = verified_asset_manifests(data_root, progress=emit)
     catalog_path = sync_catalog(data_root, manifests=manifests, progress=emit)
+    sync_asset_catalog(catalog_path, asset_manifests, progress=emit)
     emit({"event": "metadata_statistics_started"})
     statistics = dataset_statistics(catalog_path, manifests)
+    statistics["assets"] = asset_statistics(catalog_path, asset_manifests)
     emit(
         {
             "event": "metadata_statistics_completed",

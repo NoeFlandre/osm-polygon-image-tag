@@ -11,6 +11,18 @@ from osm_polygon_image_tag.artifacts.publication_inventory import publication_in
 from osm_polygon_image_tag.artifacts.publication_types import HubCommit
 from osm_polygon_image_tag.artifacts.reporting import generate_metadata
 from osm_polygon_image_tag.artifacts.storage import write_geoparquet
+from osm_polygon_image_tag.assets.manifest import (
+    ASSET_MANIFEST_SCHEMA_VERSION,
+    AssetManifest,
+    AssetRunCounts,
+    AssetSourceIdentity,
+    ResolutionSnapshotIdentity,
+    write_asset_manifest,
+)
+from osm_polygon_image_tag.assets.schema import (
+    ASSET_SCHEMA_VERSION,
+    RESOLVER_CONTRACT_VERSION,
+)
 from osm_polygon_image_tag.core.errors import PublicationError
 from osm_polygon_image_tag.core.manifest import (
     DATASET_SCHEMA_VERSION,
@@ -46,6 +58,30 @@ def _dataset(root: Path) -> None:
     generate_metadata(root)
 
 
+def _asset_dataset(root: Path) -> None:
+    output = root / "assets" / "region.assets.parquet"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(b"asset")
+    manifest = AssetManifest(
+        ASSET_MANIFEST_SCHEMA_VERSION,
+        ASSET_SCHEMA_VERSION,
+        RESOLVER_CONTRACT_VERSION,
+        AssetSourceIdentity("data/region.parquet", 1, "a" * 64, 0),
+        ResolutionSnapshotIdentity(0, "b" * 64),
+        OutputIdentity(
+            "assets/region.assets.parquet",
+            output.stat().st_size,
+            file_sha256(output),
+            0,
+        ),
+        AssetRunCounts(0, {}, {}, 0, 0, 0),
+    )
+    write_asset_manifest(
+        manifest,
+        root / "asset-manifests" / "region.assets.manifest.json",
+    )
+
+
 class _FakeHub:
     def __init__(self, *, corrupt: bool = False) -> None:
         self.commits: list[HubCommit] = []
@@ -68,16 +104,31 @@ class _FakeHub:
 
 def test_inventory_contains_only_verified_public_artifacts(tmp_path: Path) -> None:
     _dataset(tmp_path)
+    _asset_dataset(tmp_path)
     (tmp_path / ".DS_Store").write_bytes(b"finder")
 
     inventory = publication_inventory(tmp_path)
 
     assert [item.remote_path for item in inventory] == [
         "README.md",
+        "asset-manifests/region.assets.manifest.json",
+        "assets/region.assets.parquet",
         "data/region.parquet",
         "manifests/region.manifest.json",
         "statistics/dataset-statistics.json",
     ]
+
+
+def test_inventory_keeps_cache_and_retry_state_private(tmp_path: Path) -> None:
+    _dataset(tmp_path)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / "resolutions.sqlite").write_bytes(b"private")
+    (cache / "retry-state.json").write_bytes(b"private")
+
+    inventory = publication_inventory(tmp_path)
+
+    assert all(not item.remote_path.startswith("cache/") for item in inventory)
 
 
 def test_inventory_reuses_manifest_digest_for_parquet(
