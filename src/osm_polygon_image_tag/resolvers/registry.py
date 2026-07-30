@@ -127,10 +127,10 @@ class ResolverRegistry:
                 attempt_count=0,
             )
         async with self._semaphores[reference.provider]:
-            await self._pace(reference.provider)
             attempt_count = 0
             while True:
                 attempt_count += 1
+                await self._pace(reference.provider)
                 try:
                     result = await self.resolver_for(reference.resolver_kind).resolve(
                         reference.canonical_reference,

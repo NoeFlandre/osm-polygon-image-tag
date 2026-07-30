@@ -314,3 +314,34 @@ def test_checkpoint_rejects_dead_worker_failure_before_callback(tmp_path: Path) 
         worker.checkpoint(lambda: callbacks.append("published"))
 
     assert callbacks == []
+
+
+def test_checkpoint_rechecks_failure_after_worker_termination_race(tmp_path: Path) -> None:
+    callbacks: list[str] = []
+
+    async def unused_builder(
+        manifest: Manifest, path: Path, data_root: Path, **_kwargs: object
+    ) -> AssetBuildResult:
+        del manifest, path, data_root
+        raise AssertionError("builder must not run")
+
+    worker = EnrichmentWorker(
+        tmp_path,
+        builder=unused_builder,
+        cache_factory=lambda _root: object(),
+        registry_factory=lambda: object(),
+        stop_requested=lambda: False,
+        progress=lambda _event: None,
+    )
+
+    class TerminatingThread:
+        def is_alive(self) -> bool:
+            worker._error = RuntimeError("late resolver failure")
+            return False
+
+    worker._thread = TerminatingThread()  # ty: ignore[invalid-assignment]
+
+    with pytest.raises(RuntimeError, match="late resolver failure"):
+        worker.checkpoint(lambda: callbacks.append("published"))
+
+    assert callbacks == []

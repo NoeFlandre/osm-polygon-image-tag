@@ -227,6 +227,7 @@ async def test_registry_turns_transient_http_errors_into_retryable_records() -> 
     calls = 0
     delays: list[float] = []
     now = datetime(2026, 7, 30, tzinfo=UTC)
+    elapsed = 0.0
 
     class Resolver:
         provider = "mapillary"
@@ -244,12 +245,15 @@ async def test_registry_turns_transient_http_errors_into_retryable_records() -> 
             return None
 
     async def no_wait(seconds: float) -> None:
+        nonlocal elapsed
         delays.append(seconds)
+        elapsed += seconds
 
     registry = ResolverRegistry(
         {"mapillary": Resolver()},
         environment={},
         http=Http(),
+        monotonic=lambda: elapsed,
         sleep=no_wait,
         utcnow=lambda: now,
     )

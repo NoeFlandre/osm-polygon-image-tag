@@ -111,6 +111,8 @@ class EnrichmentWorker:
         if self._error is not None:
             raise self._error
         if not self._thread.is_alive():
+            if self._error is not None:
+                raise self._error
             callback()
             return
         self._resume.clear()
