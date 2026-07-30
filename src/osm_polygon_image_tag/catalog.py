@@ -86,9 +86,7 @@ def verified_manifests(
         output = (data_root / manifest.output.relative_path).resolve()
         if data_root.resolve() not in output.parents:
             raise ValueError(f"output escapes data root: {output}")
-        if (
-            output.stat().st_size != manifest.output.size_bytes
-        ):
+        if output.stat().st_size != manifest.output.size_bytes:
             raise ValueError(f"output identity mismatch: {output}")
         verified.append((manifest, output))
         verified_bytes += manifest.output.size_bytes

@@ -94,9 +94,7 @@ def test_metadata_reuses_manifest_digest_without_rehashing_parquet(
         processing_contract_version=PROCESSING_CONTRACT_VERSION,
         dataset_schema_version=DATASET_SCHEMA_VERSION,
         source=SourceIdentity("region.osm.pbf", 1, 1, "a" * 64),
-        output=OutputIdentity(
-            "data/region.parquet", data.stat().st_size, file_sha256(data), 0
-        ),
+        output=OutputIdentity("data/region.parquet", data.stat().st_size, file_sha256(data), 0),
         osmium_version="test",
         counts=RunCounts(0, {}),
     )

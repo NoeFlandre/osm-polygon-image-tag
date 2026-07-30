@@ -53,9 +53,7 @@ def _pairs(connection: sqlite3.Connection, column: str) -> dict[str, int]:
     return {str(key): int(value) for key, value in connection.execute(queries[column])}
 
 
-def _statistics(
-    catalog_path: Path, manifests: list[tuple[Manifest, Path]]
-) -> dict[str, Any]:
+def _statistics(catalog_path: Path, manifests: list[tuple[Manifest, Path]]) -> dict[str, Any]:
     rejections: Counter[str] = Counter()
     for manifest, _output in manifests:
         rejections.update(manifest.counts.rejections)
@@ -172,9 +170,7 @@ from cryptographically verified manifests and GeoParquet shards.
     return text.encode("utf-8")
 
 
-def generate_metadata(
-    data_root: Path, *, progress: Progress | None = None
-) -> MetadataResult:
+def generate_metadata(data_root: Path, *, progress: Progress | None = None) -> MetadataResult:
     emit = progress or (lambda _event: None)
     manifests = verified_manifests(data_root, progress=emit)
     catalog_path = sync_catalog(data_root, manifests=manifests, progress=emit)
