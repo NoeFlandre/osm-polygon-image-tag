@@ -1,0 +1,24 @@
+{
+  "query": {
+    "pages": {
+      "10": {
+        "pageid": 10,
+        "title": "File:Jam1.jpg",
+        "imageinfo": [
+          {
+            "descriptionurl": "https://commons.wikimedia.org/wiki/File:Jam1.jpg",
+            "extmetadata": {
+              "Artist": {"value": "Example Author"},
+              "LicenseShortName": {"value": "CC BY-SA 4.0"},
+              "LicenseUrl": {"value": "https://creativecommons.org/licenses/by-sa/4.0/"}
+            },
+            "height": 800,
+            "mime": "image/jpeg",
+            "url": "https://upload.wikimedia.org/jam.jpg",
+            "width": 1200
+          }
+        ]
+      }
+    }
+  }
+}

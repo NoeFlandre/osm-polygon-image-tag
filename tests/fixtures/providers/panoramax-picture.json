@@ -1,0 +1,28 @@
+{
+  "assets": {
+    "hd": {
+      "href": "https://cdn.panoramax.test/full.jpg",
+      "type": "image/jpeg"
+    },
+    "thumb": {
+      "href": "https://cdn.panoramax.test/thumb.jpg",
+      "type": "image/jpeg"
+    }
+  },
+  "id": "4492cea4-1018-4285-8074-cf3d37f3c673",
+  "links": [
+    {
+      "href": "https://origin.panoramax.test/api/pictures/4492cea4-1018-4285-8074-cf3d37f3c673",
+      "rel": "self"
+    },
+    {
+      "href": "https://viewer.panoramax.test/#focus=pic&pic=4492cea4-1018-4285-8074-cf3d37f3c673",
+      "rel": "alternate"
+    }
+  ],
+  "properties": {
+    "height": 2048,
+    "width": 4096
+  },
+  "type": "Feature"
+}

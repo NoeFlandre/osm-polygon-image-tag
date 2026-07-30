@@ -1,0 +1,9 @@
+{
+  "continue": {"cmcontinue": "page-2", "continue": "-||"},
+  "query": {
+    "categorymembers": [
+      {"ns": 6, "pageid": 20, "title": "File:Zeta.jpg"},
+      {"ns": 6, "pageid": 10, "title": "File:Alpha.jpg"}
+    ]
+  }
+}
