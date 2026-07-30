@@ -8,11 +8,9 @@ from osm_polygon_image_tag.manifest import (
     DATASET_SCHEMA_VERSION,
     PROCESSING_CONTRACT_VERSION,
     Manifest,
-    file_sha256,
     read_manifest,
 )
 from osm_polygon_image_tag.progress import Progress
-from osm_polygon_image_tag.storage import validate_geoparquet
 
 PROVIDERS = (
     "image",
@@ -90,10 +88,8 @@ def verified_manifests(
             raise ValueError(f"output escapes data root: {output}")
         if (
             output.stat().st_size != manifest.output.size_bytes
-            or file_sha256(output) != manifest.output.sha256
         ):
             raise ValueError(f"output identity mismatch: {output}")
-        validate_geoparquet(output)
         verified.append((manifest, output))
         verified_bytes += manifest.output.size_bytes
         if index % 10 == 0 or index == len(manifest_paths):

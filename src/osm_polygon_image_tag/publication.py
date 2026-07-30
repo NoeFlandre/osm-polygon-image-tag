@@ -117,6 +117,9 @@ def _regular_file(root: Path, relative: str) -> Path:
 def publication_inventory(data_root: Path) -> tuple[PublicationFile, ...]:
     root = data_root.resolve()
     manifests = verified_manifests(root)
+    manifested_digests = {
+        manifest.output.relative_path: manifest.output.sha256 for manifest, _ in manifests
+    }
     allowed = {"README.md", "statistics/dataset-statistics.json"}
     allowed.update(manifest.output.relative_path for manifest, _ in manifests)
     allowed.update(
@@ -157,7 +160,7 @@ def publication_inventory(data_root: Path) -> tuple[PublicationFile, ...]:
             PublicationFile(
                 local_path=path,
                 remote_path=relative,
-                sha256=file_sha256(path),
+                sha256=manifested_digests.get(relative) or file_sha256(path),
                 size_bytes=path.stat().st_size,
             )
         )

@@ -68,24 +68,37 @@ def _is_reusable(
     manifest_path: Path,
     output_path: Path,
     *,
-    current_source: object,
+    source: PbfSource,
+    deep: bool = False,
 ) -> Manifest | None:
     try:
         manifest = read_manifest(manifest_path)
+        source_stat = source.absolute_path.stat()
         if (
             manifest.processing_contract_version != PROCESSING_CONTRACT_VERSION
             or manifest.dataset_schema_version != DATASET_SCHEMA_VERSION
-            or manifest.source != current_source
+            or manifest.source.relative_path != source.relative_path.as_posix()
+            or manifest.source.size_bytes != source_stat.st_size
+            or manifest.source.mtime_ns != source_stat.st_mtime_ns
             or manifest.output.relative_path
             != output_path.relative_to(manifest_path.parents[1]).as_posix()
             or not output_path.is_file()
             or output_path.stat().st_size != manifest.output.size_bytes
-            or file_sha256(output_path) != manifest.output.sha256
         ):
             return None
-        validate_geoparquet(output_path)
-        if pq.ParquetFile(output_path).metadata.num_rows != manifest.output.row_count:
-            return None
+        if deep:
+            if (
+                source_identity(
+                    source.absolute_path,
+                    relative_path=source.relative_path.as_posix(),
+                )
+                != manifest.source
+                or file_sha256(output_path) != manifest.output.sha256
+            ):
+                return None
+            validate_geoparquet(output_path)
+            if pq.ParquetFile(output_path).metadata.num_rows != manifest.output.row_count:
+                return None
         return manifest
     except (ManifestError, OSError, ValueError):
         return None
@@ -102,11 +115,7 @@ def build_one(
     batch_size: int = 4096,
 ) -> BuildResult:
     output_path, manifest_path = artifact_paths(source, paths.data_root)
-    source_value = source_identity(
-        source.absolute_path,
-        relative_path=source.relative_path.as_posix(),
-    )
-    reusable = _is_reusable(manifest_path, output_path, current_source=source_value)
+    reusable = _is_reusable(manifest_path, output_path, source=source)
     if reusable is not None:
         return BuildResult(
             status="skipped",
@@ -117,6 +126,10 @@ def build_one(
             rejections=dict(reusable.counts.rejections),
         )
 
+    source_value = source_identity(
+        source.absolute_path,
+        relative_path=source.relative_path.as_posix(),
+    )
     accepted_rows = 0
     rejections: Counter[str] = Counter()
     with TagStore.create(paths.data_root) as tags:
@@ -176,8 +189,4 @@ def build_one(
 
 def verify_one(source: PbfSource, paths: PipelinePaths) -> bool:
     output_path, manifest_path = artifact_paths(source, paths.data_root)
-    current_source = source_identity(
-        source.absolute_path,
-        relative_path=source.relative_path.as_posix(),
-    )
-    return _is_reusable(manifest_path, output_path, current_source=current_source) is not None
+    return _is_reusable(manifest_path, output_path, source=source, deep=True) is not None

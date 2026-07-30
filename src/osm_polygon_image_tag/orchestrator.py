@@ -97,6 +97,8 @@ def run_all(
                 "rejections": result.rejections,
             }
         )
+        if result.status == "skipped":
+            continue
         emit({"event": "metadata_started"})
         metadata = metadata_builder(paths.data_root)
         emit(

@@ -14,6 +14,7 @@ from osm_polygon_image_tag.manifest import (
     RunCounts,
     SourceIdentity,
     file_sha256,
+    read_manifest,
     write_manifest,
 )
 from osm_polygon_image_tag.publication import (
@@ -81,6 +82,28 @@ def test_inventory_contains_only_verified_public_artifacts(tmp_path: Path) -> No
         "manifests/region.manifest.json",
         "statistics/dataset-statistics.json",
     ]
+
+
+def test_inventory_reuses_manifest_digest_for_parquet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _dataset(tmp_path)
+    original = file_sha256
+
+    def hash_small_artifacts(path: Path) -> str:
+        if path.suffix == ".parquet":
+            raise AssertionError("publication rehashed a finalized Parquet shard")
+        return original(path)
+
+    monkeypatch.setattr(
+        "osm_polygon_image_tag.publication.file_sha256", hash_small_artifacts
+    )
+
+    inventory = publication_inventory(tmp_path)
+
+    parquet = next(item for item in inventory if item.remote_path.endswith(".parquet"))
+    manifest = read_manifest(tmp_path / "manifests" / "region.manifest.json")
+    assert parquet.sha256 == manifest.output.sha256
 
 
 def test_inventory_ignores_managed_shards_from_old_contract_during_migration(

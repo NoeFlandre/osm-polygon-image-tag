@@ -2,6 +2,7 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -9,10 +10,20 @@ import osm_polygon_image_tag.reporting as reporting
 from osm_polygon_image_tag.catalog import verified_manifests as catalog_verified_manifests
 from osm_polygon_image_tag.config import PipelinePaths
 from osm_polygon_image_tag.discovery import discover_pbfs
-from osm_polygon_image_tag.manifest import Manifest
+from osm_polygon_image_tag.manifest import (
+    DATASET_SCHEMA_VERSION,
+    PROCESSING_CONTRACT_VERSION,
+    Manifest,
+    OutputIdentity,
+    RunCounts,
+    SourceIdentity,
+    file_sha256,
+    write_manifest,
+)
 from osm_polygon_image_tag.pipeline import build_one
 from osm_polygon_image_tag.progress import Progress
 from osm_polygon_image_tag.reporting import generate_metadata
+from osm_polygon_image_tag.storage import write_geoparquet
 
 FIXTURE = Path("tests/fixtures/image_tag_coverage.osm")
 
@@ -71,6 +82,44 @@ def test_metadata_reports_detailed_progress_and_scans_manifests_once(
     ]
     assert events[1]["manifest_count"] == 0
     assert events[3]["active_shards"] == 0
+
+
+def test_metadata_reuses_manifest_digest_without_rehashing_parquet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = tmp_path / "data" / "region.parquet"
+    write_geoparquet([], data)
+    manifest = Manifest(
+        manifest_schema_version=1,
+        processing_contract_version=PROCESSING_CONTRACT_VERSION,
+        dataset_schema_version=DATASET_SCHEMA_VERSION,
+        source=SourceIdentity("region.osm.pbf", 1, 1, "a" * 64),
+        output=OutputIdentity(
+            "data/region.parquet", data.stat().st_size, file_sha256(data), 0
+        ),
+        osmium_version="test",
+        counts=RunCounts(0, {}),
+    )
+    write_manifest(manifest, tmp_path / "manifests" / "region.manifest.json")
+
+    original_open: Any = Path.open
+
+    def reject_python_read(path: Path, *args: Any, **kwargs: Any) -> Any:
+        if path == data and (not args or args[0] == "rb"):
+            raise AssertionError("Parquet was rehashed")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", reject_python_read)
+    monkeypatch.setattr(
+        "osm_polygon_image_tag.catalog.pq.ParquetFile",
+        lambda _path: (_ for _ in ()).throw(
+            AssertionError("finalized Parquet was structurally revalidated")
+        ),
+    )
+
+    manifests = catalog_verified_manifests(tmp_path)
+
+    assert manifests == [(manifest, data.resolve())]
 
 
 @pytest.mark.integration

@@ -103,6 +103,55 @@ def test_run_all_publishes_after_each_completed_pbf(tmp_path: Path) -> None:
     ]
 
 
+def test_resume_defers_metadata_and_publication_until_new_work_is_built(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "raw"
+    source.mkdir()
+    for name in ("a.osm.pbf", "b.osm.pbf", "c.osm.pbf"):
+        (source / name).write_bytes(name.encode())
+    paths = PipelinePaths.build(source_root=source, data_root=tmp_path / "generated")
+    events: list[str] = []
+
+    def build(pbf: PbfSource, _paths: PipelinePaths) -> BuildResult:
+        name = pbf.relative_path.as_posix()
+        events.append(f"build:{name}")
+        result = _result(name)
+        if name != "c.osm.pbf":
+            return BuildResult(
+                status="skipped",
+                source_pbf=result.source_pbf,
+                output_path=result.output_path,
+                manifest_path=result.manifest_path,
+                accepted_rows=result.accepted_rows,
+                rejections=result.rejections,
+            )
+        return result
+
+    def metadata(root: Path) -> MetadataResult:
+        events.append("metadata")
+        return _metadata(root)
+
+    def publish(_root: Path) -> PublicationResult:
+        events.append("publish")
+        return PublicationResult("published", "commit", 1)
+
+    run_all(
+        paths,
+        build=build,
+        metadata_builder=metadata,
+        publisher=publish,
+    )
+
+    assert events == [
+        "build:a.osm.pbf",
+        "build:b.osm.pbf",
+        "build:c.osm.pbf",
+        "metadata",
+        "publish",
+    ]
+
+
 def test_run_all_reports_ordered_per_pbf_progress(tmp_path: Path) -> None:
     source = tmp_path / "raw"
     source.mkdir()

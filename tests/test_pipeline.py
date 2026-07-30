@@ -2,13 +2,15 @@ from collections.abc import Callable, Iterable
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
 
+import pytest
 from shapely import to_wkb
 from shapely.geometry import Polygon
 
+import osm_polygon_image_tag.pipeline as pipeline
 from osm_polygon_image_tag.config import PipelinePaths
 from osm_polygon_image_tag.discovery import PbfSource
 from osm_polygon_image_tag.extraction import ExportRecord, SourceTagRecord
-from osm_polygon_image_tag.pipeline import build_one
+from osm_polygon_image_tag.pipeline import build_one, verify_one
 
 
 def _source(path: Path) -> PbfSource:
@@ -84,6 +86,65 @@ def test_builds_then_skips_only_verified_identical_shard(tmp_path: Path) -> None
     assert calls == ["scan", "export:osmium"]
     assert built.output_path.exists()
     assert built.manifest_path.exists()
+
+
+def test_resume_fast_path_does_not_rehash_finalized_source_or_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    pbf = raw / "region.osm.pbf"
+    pbf.write_bytes(b"source")
+    paths = PipelinePaths.build(source_root=raw, data_root=tmp_path / "generated")
+    scanner = _scanner([SourceTagRecord("way", 1, {"image": "exact"})], [])
+    exporter = _exporter([_record(1)], [])
+    build_one(
+        _source(pbf),
+        paths,
+        scanner=scanner,
+        exporter=exporter,
+        version_getter=_version,
+    )
+
+    def unexpected_hash(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("resume rehashed a finalized artifact")
+
+    monkeypatch.setattr(pipeline, "source_identity", unexpected_hash)
+    monkeypatch.setattr(pipeline, "file_sha256", unexpected_hash)
+    monkeypatch.setattr(pipeline, "validate_geoparquet", unexpected_hash)
+
+    resumed = build_one(
+        _source(pbf),
+        paths,
+        scanner=scanner,
+        exporter=exporter,
+        version_getter=_version,
+    )
+
+    assert resumed.status == "skipped"
+
+
+def test_explicit_verify_retains_deep_digest_validation(tmp_path: Path) -> None:
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    pbf = raw / "region.osm.pbf"
+    pbf.write_bytes(b"source")
+    paths = PipelinePaths.build(source_root=raw, data_root=tmp_path / "generated")
+    source = _source(pbf)
+    result = build_one(
+        source,
+        paths,
+        scanner=_scanner([SourceTagRecord("way", 1, {"image": "exact"})], []),
+        exporter=_exporter([_record(1)], []),
+        version_getter=_version,
+    )
+
+    assert verify_one(source, paths) is True
+    content = bytearray(result.output_path.read_bytes())
+    content[len(content) // 2] ^= 1
+    result.output_path.write_bytes(content)
+
+    assert verify_one(source, paths) is False
 
 
 def test_source_drift_and_output_corruption_each_force_rebuild(tmp_path: Path) -> None:
