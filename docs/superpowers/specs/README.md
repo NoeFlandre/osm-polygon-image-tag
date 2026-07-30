@@ -15,9 +15,15 @@ intentional contract at a particular point in the project's evolution.
   `panoramax_values` map. This is where the current schema v2 fields are
   documented; treat the additive spec as the authoritative reference for
   those columns.
+- `2026-07-30-direct-image-assets-design.md`: the approved, not-yet-implemented
+  design for resumable one-to-many provider resolution from existing polygon
+  shards. It defines the additive asset schema, secure network boundary,
+  provider contracts, cache, automatic backfill, and two-config Hugging Face
+  layout.
 
 ## How to read
 
 - Start with `data-contract.md` for the live contract.
-- Read these specs only when you need historical rationale or when
-  reconciling older assumptions.
+- Check each specification's status before treating it as implemented. Use
+  these documents for historical rationale and approved future contracts;
+  current-facing documentation describes only shipped behavior.
