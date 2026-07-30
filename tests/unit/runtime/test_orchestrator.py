@@ -314,7 +314,7 @@ def test_enriched_run_publishes_periodic_asset_checkpoints(tmp_path: Path) -> No
             return True
 
         def enable_checkpoints(self, callback: Callable[[], None], *, every: int) -> None:
-            assert every == 25
+            assert every == 1
             callback()
             callback()
 

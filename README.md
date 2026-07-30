@@ -116,8 +116,8 @@ original PBF. If no polygon or asset output changed, publication receipts
 prevent a redundant Hub commit.
 
 After extraction reaches a safe boundary, long asset backfills regenerate
-metadata and publish a coalesced checkpoint every 25 completed asset shards,
-followed by one final receipt-aware publication.
+metadata and publish after every completed asset shard, followed by one final
+receipt-aware publication.
 
 Mapillary direct URLs require `MAPILLARY_ACCESS_TOKEN`; Flickr direct URLs
 require `FLICKR_API_KEY`. Without them the dataset records a factual page URL

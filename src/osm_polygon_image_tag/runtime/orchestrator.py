@@ -207,7 +207,7 @@ def run_all(
                 metadata_builder=metadata_builder,
                 publisher=publisher,
             ),
-            every=25,
+            every=1,
         )
     enrichment = (
         enrichment_worker.finish() if enrichment_worker is not None else EnrichmentSummary()

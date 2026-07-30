@@ -211,10 +211,14 @@ class EnrichmentWorker:
                 )
                 callback: Checkpoint | None = None
                 with self._checkpoint_lock:
-                    self._completed += 1
-                    if self._checkpoint is not None and self._completed >= self._checkpoint_next:
-                        callback = self._checkpoint
-                        self._checkpoint_next += self._checkpoint_every
+                    if result.status == "built":
+                        self._completed += 1
+                        if (
+                            self._checkpoint is not None
+                            and self._completed >= self._checkpoint_next
+                        ):
+                            callback = self._checkpoint
+                            self._checkpoint_next += self._checkpoint_every
                 if callback is not None:
                     callback()
         finally:
