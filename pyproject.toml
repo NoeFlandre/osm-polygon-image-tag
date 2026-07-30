@@ -18,11 +18,16 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "httpx>=0.28,<0.29",
     "huggingface-hub>=1.3,<2",
     "osmium>=4.3,<5",
     "pyarrow>=21,<22",
     "pyproj>=3.7,<4",
+    "pyyaml>=6,<7",
+    "rich>=14,<15",
     "shapely>=2.1,<3",
+    "tqdm>=4.67,<5",
+    "typer>=0.16,<0.17",
 ]
 
 [project.scripts]
@@ -48,6 +53,7 @@ include = [
 
 [dependency-groups]
 dev = [
+    "pre-commit>=4.3,<5",
     "pytest>=8.4,<9",
     "pytest-cov>=6.2,<7",
     "ruff>=0.12,<0.13",

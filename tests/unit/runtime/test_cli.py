@@ -1,10 +1,30 @@
 import json
 from pathlib import Path
 
+import pytest
 from _pytest.capture import CaptureFixture
 
 from osm_polygon_image_tag.cli import run
 from osm_polygon_image_tag.runtime.preflight import Capacity, PreflightReport, ToolVersion
+
+EXPECTED_COMMANDS = {
+    "preflight",
+    "publish",
+    "rebuild-metadata",
+    "run",
+    "run-and-publish",
+    "verify",
+}
+
+
+def test_help_lists_exactly_the_public_commands(capsys: CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        run(["--help"])
+
+    assert exit_info.value.code == 0
+    help_text = capsys.readouterr().out
+    command_list = help_text.split("{", maxsplit=1)[1].split("}", maxsplit=1)[0]
+    assert set(command_list.split(",")) == EXPECTED_COMMANDS
 
 
 def test_preflight_command_emits_canonical_json(

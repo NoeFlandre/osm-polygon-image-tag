@@ -31,26 +31,14 @@ jobs:
       - name: Install osmium-tool for integration tests
         run: sudo apt-get update && sudo apt-get install -y osmium-tool
 
-      - name: Verify locked environment is up to date
-        run: uv lock --check
+      - name: Install Just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
 
       - name: Sync locked dependencies
         run: uv sync --locked --dev
 
-      - name: Run Ruff lint
-        run: uv run ruff check .
-
-      - name: Verify Ruff format
-        run: uv run ruff format --check .
-
-      - name: Run ty type checker
-        run: uv run ty check
-
-      - name: Run test suite
-        run: uv run pytest -q
-
-      - name: Build source distribution and wheel
-        run: uv build
+      - name: Run canonical quality gate
+        run: just ci
 
       - name: Verify no whitespace errors
         run: |
