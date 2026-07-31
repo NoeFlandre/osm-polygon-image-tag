@@ -22,15 +22,8 @@ def test_repository_readme_is_a_public_landing_page() -> None:
     assert "just ci" in readme
 
 
-def test_github_readme_describes_public_automation_contract() -> None:
-    readme = " ".join((ROOT / ".github/README.md").read_text(encoding="utf-8").split())
-
-    assert "Repository automation" in readme
-    assert "quality gate" in readme
-    assert "GitHub Pages" in readme
-    assert "Hugging Face" in readme
-    assert "Seagate" in readme
-    assert "The contents are read by GitHub Actions" not in readme
+def test_github_folder_has_no_competing_repository_readme() -> None:
+    assert not (ROOT / ".github/README.md").exists()
 
 
 def test_mkdocs_site_contract() -> None:
