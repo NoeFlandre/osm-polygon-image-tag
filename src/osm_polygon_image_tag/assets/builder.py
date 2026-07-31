@@ -24,6 +24,7 @@ from osm_polygon_image_tag.assets.manifest import (
 )
 from osm_polygon_image_tag.assets.polygon_input import polygon_bbox, polygon_rows
 from osm_polygon_image_tag.assets.references import SourceReference, references_from_row
+from osm_polygon_image_tag.assets.resolution import is_cacheable_canonical_reference
 from osm_polygon_image_tag.assets.rows import asset_rows
 from osm_polygon_image_tag.assets.schema import (
     ASSET_SCHEMA_VERSION,
@@ -66,8 +67,18 @@ async def _resolve(
     cache: ResolutionCache,
     registry: Registry,
     resolver_contract_version: int,
-) -> tuple[ResolutionRecord, bool]:
+) -> tuple[ResolutionRecord, bool, bool]:
     key = _key(reference, resolver_contract_version)
+    if not is_cacheable_canonical_reference(reference.canonical_reference):
+        # Secret-like source references are resolved once using the original
+        # request URL but are never written to the durable cache or recorded in
+        # the resolution snapshot, so they cannot abort the shard.
+        record = await registry.resolve_reference(
+            reference,
+            bbox=polygon_bbox(row),
+            resolver_contract_version=resolver_contract_version,
+        )
+        return record, False, False
     cached = cache.get(key)
     now = datetime.now(UTC)
     refresh_before = now + timedelta(hours=1)
@@ -97,14 +108,14 @@ async def _resolve(
             and (cached.retry_after is None or cached.retry_after <= now)
         )
     ):
-        return cached, True
+        return cached, True, True
     record = await registry.resolve_reference(
         reference,
         bbox=polygon_bbox(row),
         resolver_contract_version=resolver_contract_version,
     )
     cache.put(record)
-    return record, False
+    return record, False, True
 
 
 async def build_asset_shard(
@@ -163,24 +174,24 @@ async def build_asset_shard(
             key: ResolutionKey,
             row: Mapping[str, object],
             reference: SourceReference,
-        ) -> tuple[ResolutionKey, ResolutionRecord, bool]:
+        ) -> tuple[ResolutionKey, ResolutionRecord, bool, bool]:
             async with semaphore:
-                record, cache_hit = await _resolve(
+                record, cache_hit, cacheable = await _resolve(
                     reference,
                     row,
                     cache=cache,
                     registry=registry,
                     resolver_contract_version=resolver_contract_version,
                 )
-            return key, record, cache_hit
+            return key, record, cache_hit, cacheable
 
         resolved = await asyncio.gather(
             *(resolve_one(key, row, reference) for key, (row, reference) in unique.items())
         )
-        records = {key: record for key, record, _cache_hit in resolved}
-        cache_hits += sum(cache_hit for _key, _record, cache_hit in resolved)
-        resolver_requests += sum(not cache_hit for _key, _record, cache_hit in resolved)
-        snapshot_keys.update(records)
+        records = {key: record for key, record, _cache_hit, _cacheable in resolved}
+        cache_hits += sum(cache_hit for _key, _record, cache_hit, _cacheable in resolved)
+        resolver_requests += sum(not cache_hit for _key, _record, cache_hit, _cacheable in resolved)
+        snapshot_keys.update(key for key, _record, _cache_hit, cacheable in resolved if cacheable)
         chunk_rows = [
             result_row
             for row, reference in pending

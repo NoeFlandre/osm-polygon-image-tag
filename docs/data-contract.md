@@ -139,6 +139,36 @@ polygon identity, asset/resolver versions, output identity, counts, and a
 digest of only cache records used by that shard. Unrelated cache writes cannot
 invalidate a completed asset shard.
 
+### Non-cacheable secret-bearing references
+
+Source-provided URLs whose query contains a secret-like key (`access_token`,
+`api_key`, `token`, or `key`, matched case-insensitively and after
+percent-decoding) are treated as non-cacheable. Such a reference is resolved
+once against the original request URL so direct image resolution is preserved,
+but its `ResolutionRecord` is never written to the SQLite resolution cache and
+its `ResolutionKey` is never added to the shard resolution snapshot. This
+prevents durable cache persistence of secret material while allowing the
+pipeline to continue instead of aborting the shard or the run. A shard that
+contains only non-cacheable references finalizes normally with a zero-entry
+resolution snapshot.
+
+The existing strict rejection in `validate_resolution_record` remains in force
+for every durable cache write, so a non-cacheable reference can never reach the
+cache or snapshot even through other code paths.
+
+Derived asset URLs retain source query parameters. The resolver is handed the
+original request URL verbatim and every URL it returns is recorded faithfully,
+because rewriting or stripping query parameters would discard provenance and
+could silently alter the factual resolution result. The security boundary is
+the durable resolution cache and snapshot: those surfaces never persist
+secret-bearing references, while the asset shard preserves exact source
+provenance exactly as it appears in OpenStreetMap. Original OSM tags and the
+polygon GeoParquet shards are read-only and remain untouched.
+
+Resume rebuilds a shard solely from the finalized polygon Parquet and the
+existing resolution cache; completed PBFs are never reopened or reprocessed. A
+previously interrupted shard rebuilds deterministically on the next run.
+
 ## Global statistics
 
 `generate_metadata` produces `statistics/dataset-statistics.json` and

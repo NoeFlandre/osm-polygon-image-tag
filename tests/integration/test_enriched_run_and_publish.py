@@ -237,3 +237,54 @@ def test_credential_transition_rebuilds_and_publishes_without_pbf_work(
     assert list(source.glob("*.pbf")) == []
     assert pq.read_table(asset_path).column("image_url").to_pylist() == ["2627502594079174"]
     assert len(hub.commits) == 2
+
+
+def test_secret_reference_shard_completes_and_publishes_on_resume(tmp_path: Path) -> None:
+    source = tmp_path / "raw"
+    source.mkdir()
+    data_root = tmp_path / "generated"
+    non_cacheable_url = "https://photos.test/share/abc/photo/xyz?key=redacted-test-secret-token"
+    manifest, polygon_path = _polygon_shard(
+        data_root,
+        1,
+        tags={"image": non_cacheable_url},
+    )
+    polygon_bytes = polygon_path.read_bytes()
+    registry = _Registry()
+    paths = PipelinePaths.build(source_root=source, data_root=data_root)
+    hub = _Hub()
+
+    def publish(root: Path) -> PublicationResult:
+        return publish_dataset(root, confirm_repo=EXPECTED_REPO, hub=hub)
+
+    result = run_all(
+        paths,
+        stop_token=StopToken(),
+        enrichment_worker=_worker(data_root, registry),
+        metadata_builder=generate_metadata,
+        publisher=publish,
+    )
+
+    # The previously-aborting shard now completes and publishes.
+    assert result.enrichment.built == 1
+    assert result.processed == 0
+    assert len(hub.commits) == 1
+    # Resume reuses the polygon Parquet and never opens a PBF.
+    assert polygon_path.read_bytes() == polygon_bytes
+    assert list(source.glob("*.pbf")) == []
+    # The secret query value never reaches the durable cache or any manifest.
+    assert (
+        b"redacted-test-secret-token"
+        not in (data_root / "cache" / "resolutions.sqlite").read_bytes()
+    )
+    manifest_contents = [
+        content for path, content in hub.files.items() if path.endswith(".manifest.json")
+    ]
+    assert manifest_contents
+    assert all(b"redacted-test-secret-token" not in content for content in manifest_contents)
+    # Generated statistics and the README card carry counts only, never URLs.
+    assert (
+        b"redacted-test-secret-token"
+        not in (data_root / "statistics" / "dataset-statistics.json").read_bytes()
+    )
+    assert b"redacted-test-secret-token" not in (data_root / "README.md").read_bytes()

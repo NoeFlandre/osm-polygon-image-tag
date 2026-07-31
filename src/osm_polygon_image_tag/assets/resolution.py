@@ -14,6 +14,20 @@ class ResolutionCacheError(ImageTagPipelineError):
     """Raised when durable resolution state is unsafe or inconsistent."""
 
 
+def is_cacheable_canonical_reference(canonical_reference: str) -> bool:
+    """Return whether a canonical reference is safe to persist durably.
+
+    Source-provided URLs that carry secret-like query keys (``access_token``,
+    ``api_key``, ``token``, ``key``) are treated as non-cacheable: they must
+    never be written to the SQLite resolution cache or included in a
+    resolution snapshot. Matching is case-insensitive and accounts for
+    percent-encoding because :func:`urllib.parse.parse_qsl` decodes query keys.
+    """
+    parsed = urlparse(canonical_reference)
+    query_keys = {key.lower() for key, _value in parse_qsl(parsed.query)}
+    return not (query_keys & _SECRET_QUERY_KEYS)
+
+
 @dataclass(frozen=True, slots=True)
 class ResolutionKey:
     provider: str
@@ -71,9 +85,7 @@ def validate_resolution_record(record: ResolutionRecord) -> None:
         validate_status(record.status)
     except ValueError as error:
         raise ResolutionCacheError(str(error)) from error
-    parsed = urlparse(record.canonical_reference)
-    query_keys = {key.lower() for key, _value in parse_qsl(parsed.query)}
-    if query_keys & _SECRET_QUERY_KEYS:
+    if not is_cacheable_canonical_reference(record.canonical_reference):
         raise ResolutionCacheError("secret-bearing canonical references are not cacheable")
     if record.retry_after is not None and record.retry_after.tzinfo is None:
         raise ResolutionCacheError("retry_after must be timezone-aware")

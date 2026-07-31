@@ -1,6 +1,7 @@
 import asyncio
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
+from json import dumps as json_dumps
 from pathlib import Path
 
 import pyarrow.parquet as pq
@@ -720,3 +721,115 @@ async def test_builder_resolves_independent_references_concurrently(tmp_path: Pa
         )
 
     assert registry.max_active == 2
+
+
+# A deliberately fake, clearly non-real query value. Never copy real source keys.
+NON_CACHEABLE_IMAGE_URL = "https://photos.test/share/abc/photo/xyz?key=redacted-test-secret-token"
+
+
+@pytest.mark.asyncio
+async def test_non_cacheable_reference_is_resolved_without_caching_or_snapshot(
+    tmp_path: Path,
+) -> None:
+    manifest, polygon_path, data_root = polygon_fixture(
+        tmp_path, tags={"image": NON_CACHEABLE_IMAGE_URL}
+    )
+    resolver = Resolver()
+    events: list[dict[str, object]] = []
+    with ResolutionCache.open(data_root) as cache:
+        result = await build_asset_shard(
+            manifest,
+            polygon_path,
+            data_root,
+            cache=cache,
+            registry=Registry(resolver),
+            stop_requested=lambda: False,
+            progress=events.append,
+        )
+        cached_rows = cache._connection.execute("SELECT COUNT(*) FROM resolutions").fetchone()[0]
+        manifest_obj = read_asset_manifest(result.manifest_path, data_root=data_root)
+
+    assert result.status == "built"
+    assert len(resolver.calls) == 1
+    # The secret reference is resolved but never persisted to the cache.
+    assert cached_rows == 0
+    assert manifest_obj.resolution_snapshot.entry_count == 0
+    manifest_text = result.manifest_path.read_text(encoding="utf-8")
+    assert "redacted-test-secret-token" not in manifest_text
+    assert all("redacted-test-secret-token" not in json_dumps(event) for event in events)
+    # Direct image resolution is preserved where safe.
+    table = pq.read_table(result.asset_path)
+    assert table.column("status").to_pylist() == ["resolved"]
+    assert table.column("image_url").to_pylist() == [
+        f"https://cdn.test/{NON_CACHEABLE_IMAGE_URL}.jpg"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cacheable_reference_caches_but_non_cacheable_is_always_resolved(
+    tmp_path: Path,
+) -> None:
+    tags = {
+        "panoramax": PANORAMAX_ID,
+        "image": NON_CACHEABLE_IMAGE_URL,
+    }
+    manifest, polygon_path, data_root = polygon_fixture(tmp_path, tags=tags)
+
+    class TrackingRegistry:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def capability(self, provider: str) -> str:
+            del provider
+            return "public"
+
+        async def resolve_reference(
+            self,
+            reference: SourceReference,
+            *,
+            bbox: tuple[float, float, float, float],
+            resolver_contract_version: int,
+        ) -> ResolutionRecord:
+            del bbox
+            self.calls.append(reference.canonical_reference)
+            return ResolutionRecord(
+                reference.provider,
+                reference.canonical_reference,
+                resolver_contract_version,
+                "resolved",
+                ({"image_url": "https://cdn.test/direct.jpg"},),
+                None,
+            )
+
+    registry = TrackingRegistry()
+    with ResolutionCache.open(data_root) as cache:
+        first = await build_asset_shard(
+            manifest,
+            polygon_path,
+            data_root,
+            cache=cache,
+            registry=registry,
+            stop_requested=lambda: False,
+            progress=lambda _event: None,
+        )
+        first.asset_path.unlink()
+        first.manifest_path.unlink()
+        registry.calls.clear()
+
+        second = await build_asset_shard(
+            manifest,
+            polygon_path,
+            data_root,
+            cache=cache,
+            registry=registry,
+            stop_requested=lambda: False,
+            progress=lambda _event: None,
+        )
+        second_counts = read_asset_manifest(second.manifest_path, data_root=data_root).counts
+
+    assert (first.status, second.status) == ("built", "built")
+    # The cacheable reference is a cache hit on rebuild; only the non-cacheable
+    # reference is resolved again.
+    assert registry.calls == [NON_CACHEABLE_IMAGE_URL]
+    assert second_counts.cache_hits == 1
+    assert second_counts.resolver_requests == 1

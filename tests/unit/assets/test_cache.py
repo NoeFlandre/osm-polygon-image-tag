@@ -117,6 +117,25 @@ def test_cache_rejects_secret_query_parameters(tmp_path: Path, secret: str) -> N
             cache.put(record)
 
 
+def test_cache_rejection_error_never_contains_secret_value(tmp_path: Path) -> None:
+    redacted_query_value = "redacted-test-secret-token"
+    with ResolutionCache.open(tmp_path) as cache:
+        record = _record(f"https://provider.test/item?key={redacted_query_value}")
+
+        with pytest.raises(ResolutionCacheError) as exc_info:
+            cache.put(record)
+
+        assert redacted_query_value not in str(exc_info.value)
+
+
+def test_resolution_snapshot_succeeds_with_no_cacheable_keys(tmp_path: Path) -> None:
+    with ResolutionCache.open(tmp_path) as cache:
+        snapshot = cache.resolution_snapshot([])
+
+    assert snapshot.entry_count == 0
+    assert len(snapshot.sha256) == 64
+
+
 def test_resolution_snapshot_ignores_unrelated_cache_rows(tmp_path: Path) -> None:
     with ResolutionCache.open(tmp_path) as cache:
         used = _record()
