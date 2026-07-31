@@ -1,192 +1,104 @@
 # OSM Polygon Image Tag
 
-An independent, reproducible pipeline for a GeoParquet dataset of OpenStreetMap
-area features carrying raw image-reference tags. The pipeline reads Geofabrik
-`.osm.pbf` files recursively, deterministically, and without ever writing to
-the source tree. It produces one GeoParquet shard per source PBF, a matching
-manifest, and an independently resumable one-to-many image-asset shard. Asset
-resolution reuses polygon Parquet and a transactional cache, so historical
-PBFs are never reprocessed merely to add directly usable URLs. Verified
-polygon and asset artifacts publish as two Hugging Face configurations.
+[![CI](https://github.com/NoeFlandre/osm-polygon-image-tag/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/NoeFlandre/osm-polygon-image-tag/actions/workflows/ci.yml)
+[![Documentation](https://github.com/NoeFlandre/osm-polygon-image-tag/actions/workflows/docs.yml/badge.svg?branch=main)](https://github.com/NoeFlandre/osm-polygon-image-tag/actions/workflows/docs.yml)
 
-- Source: <https://github.com/NoeFlandre/osm-polygon-image-tag>
-- Documentation: <https://noeflandre.github.io/osm-polygon-image-tag/>
-- Dataset: <https://huggingface.co/datasets/NoeFlandre/osm-polygon-image-tag>
+`osm-polygon-image-tag` builds a reproducible GeoParquet dataset of **closed
+ways and relations** from read-only Geofabrik `.osm.pbf` files. It keeps every
+original OSM tag, extracts image references, resolves provider URLs when
+possible, and publishes verified artifacts to Hugging Face.
 
-## Selected tags
+- **Docs:** <https://noeflandre.github.io/osm-polygon-image-tag/>
+- **Dataset:** <https://huggingface.co/datasets/NoeFlandre/osm-polygon-image-tag>
+- **Source:** <https://github.com/NoeFlandre/osm-polygon-image-tag>
 
-A polygon or multipolygon observation is selected when the way or relation
-itself contains at least one non-empty value for any of:
+## What the dataset contains
 
-- `image`
-- `wikimedia_commons`
-- `mapillary`
-- `panoramax`
-- indexed `panoramax:<n>` where `<n>` is one or more ASCII digits
-- `kartaview`
-- `flickr`
-- `bubbleid` (Bing Streetside)
+The Hugging Face dataset has two configurations:
 
-Keys such as `panoramax:left`, `panoramax:`, `panoramax:1:foo`, `image:license`,
-or `contact:flickr` do not match. Every original OSM tag is preserved
-losslessly in the `tags` map column; indexed Panoramax entries are also
-preserved in the `panoramax_values` map with their original keys, and
-`bubbleid` lives in its own nullable column.
+- `polygons`: one row per selected OSM way or relation, with Polygon or
+  MultiPolygon geometry, geodesic `area_m2`, bounding box, OSM metadata, all
+  original `tags`, and normalized provider columns.
+- `image_assets`: one row per image reference, with the exact source value,
+  provider, canonical ID, page URL, direct/thumbnail URL when available,
+  metadata, status, and resolver provenance.
 
-## Layout
+Join the configurations on `osm_type`, `osm_id`, `osm_version`, and
+`source_pbf`. Image bytes are not downloaded; the asset table is designed for
+later retrieval and filtering.
 
-- `src/osm_polygon_image_tag/`: production package, organized by
-  responsibility into `core`, `ingest`, `assets`, `resolvers`, `artifacts`,
-  `runtime`, and `integrations` subpackages. See
-  [`docs/architecture.md`](docs/architecture.md).
-- `tests/`: `unit/` tests mirror the production layout. `integration/`
-  tests exercise the real `osmium` binary. `fixtures/` holds stable OSM XML
-  inputs.
-- `docs/`: current-facing documentation, built as a MkDocs Material site;
-  start at [`docs/index.md`](docs/index.md).
+## References selected
 
-## Commands
+The extractor selects non-empty values for `image`, `wikimedia_commons`,
+`mapillary`, `panoramax`, every numeric `panoramax:<n>`, `kartaview`, `flickr`,
+and `bubbleid`. Similar-looking keys such as `panoramax:left` and
+`image:license` are not selected. The complete selection and schema are in the
+[data contract](docs/data-contract.md).
 
-Every command accepts `--source-root` and `--data-root`. The production
-pipeline runs the following commands against a real read-only PBF tree and a
-real managed data root, but the same commands work against any path on the
-local filesystem.
+## Run or resume the pipeline
+
+Prerequisites: Python 3.12, [uv](https://docs.astral.sh/uv/), and the `osmium`
+executable. Install the locked environment:
+
+```bash
+git clone https://github.com/NoeFlandre/osm-polygon-image-tag.git
+cd osm-polygon-image-tag
+uv sync --locked --dev
+```
+
+Check a source tree without writing anything, then start the resumable run:
 
 ```bash
 uv run osm-polygon-image-tag preflight \
-  --source-root "<source pbf tree>" \
-  --data-root "<managed data root>"
-
-uv run osm-polygon-image-tag run \
-  --source-root "<source pbf tree>" \
-  --data-root "<managed data root>"
-
-uv run osm-polygon-image-tag verify \
-  --source-root "<source pbf tree>" \
-  --data-root "<managed data root>"
-
-uv run osm-polygon-image-tag rebuild-metadata \
-  --source-root "<source pbf tree>" \
-  --data-root "<managed data root>"
-
-uv run osm-polygon-image-tag publish \
-  --source-root "<source pbf tree>" \
-  --data-root "<managed data root>" \
-  --confirm-repo NoeFlandre/osm-polygon-image-tag
+  --source-root "/path/to/geofabrik-pbf" \
+  --data-root "/path/to/osm-polygon-image-tag"
 
 uv run osm-polygon-image-tag run-and-publish \
-  --source-root "<source pbf tree>" \
-  --data-root "<managed data root>" \
+  --source-root "/path/to/geofabrik-pbf" \
+  --data-root "/path/to/osm-polygon-image-tag" \
   --confirm-repo NoeFlandre/osm-polygon-image-tag
 ```
 
-Authenticate first with `hf auth login`.
+Run the same `run-and-publish` command to resume. Fast resume reuses finalized
+shards and historical asset enrichment without reopening completed PBFs. Press
+Ctrl-C once and wait; the next run continues from the last finalized boundary.
+The source tree is always read-only, and all writes stay under `--data-root`.
 
-### What each command does
+Authenticate with `hf auth login` before publishing. Mapillary direct URLs need
+`MAPILLARY_ACCESS_TOKEN`; Flickr keys are optional and unavailable to free
+accounts. Without provider credentials, the pipeline preserves factual
+page-only results and revisits improvable rows when credentials are later
+provided. See [operations](docs/operations.md) for credential setup and
+progress events.
 
-- `preflight`: read-only environment check. Reports `osmium` version,
-  capacity, and the discovered PBF inventory. Mutates nothing.
-- `run`: process or resume every PBF locally while backfilling missing asset
-  shards from finalized polygon Parquet. Compatible polygon and asset shards
-  are fast-skipped.
-- `verify`: deeply revalidate polygon source/output identities and every
-  finalized asset shard SHA-256, row count, and Parquet schema.
-- `rebuild-metadata`: rebuild the catalog, statistics JSON, and dataset
-  card from the existing shards. Useful after schema changes that you
-  already absorbed, or to refresh the card without touching PBFs.
-- `publish`: publish only the existing verified artifacts to the
-  configured Hugging Face dataset. It verifies every changed remote file
-  before atomically recording a local receipt.
-- `run-and-publish`: perform extraction/backfill, regenerate factual metadata
-  when outputs changed, and publish verified polygon and asset shards.
+## Output layout
 
-### Fast resume versus explicit deep verification
+The managed data root contains deterministic, independently resumable shards:
 
-`run` and `run-and-publish` use the fast resume path: they trust the
-manifest's recorded source size, mtime, and contract versions and skip
-shards that still match. They do not rehash the source PBF or re-read the
-Parquet file. `verify` is the explicit deep verification path and is the
-recommended command to prove the data root is still healthy.
-
-### Smart historical backfill
-
-Every finalized polygon shard is queued for enrichment. A compatible asset
-manifest reads only its lightweight expiry column before skipping; a missing asset shard reads only needed
-Parquet columns and consults `cache/resolutions.sqlite`. It never opens the
-original PBF. If no polygon or asset output changed, publication receipts
-prevent a redundant Hub commit.
-
-After extraction reaches a safe boundary, long asset backfills regenerate
-metadata and publish after every completed asset shard, followed by one final
-receipt-aware publication.
-
-### Provider credentials
-
-Mapillary direct URLs require `MAPILLARY_ACCESS_TOKEN`. Create a Mapillary
-account, register an application in the
-[developer dashboard](https://www.mapillary.com/dashboard/developers), and
-copy its client access token.
-
-Flickr direct URLs optionally use `FLICKR_API_KEY`. Flickr currently disables
-new API-key creation for free accounts; creation is available to Flickr PRO
-subscribers through the
-[App Garden](https://www.flickr.com/services/apps/create/). Without a key,
-Flickr rows remain factual page links with `resolved_page_only`; this does not
-block the pipeline.
-
-Wikimedia Commons public metadata requires no OAuth token. The resolver sends
-the descriptive project `User-Agent` required by Wikimedia policy. Panoramax,
-KartaView, Bing Streetside, and generic public image URLs need no configured
-credential.
-
-Hugging Face publication uses `hf auth login` or `HF_TOKEN`. Provider
-credentials are environment-only and their values, hashes, prefixes, and
-lengths are never written to Parquet, manifests, logs, cache rows, statistics,
-or publication artifacts.
-
-When a Mapillary or Flickr credential becomes available, a new run revisits
-only compatible asset shards containing improvable page-only/auth-required
-results. It reuses polygon Parquet and stable resolver-cache entries; it does
-not reopen PBF files. Each rebuilt asset shard is published at the existing
-enrichment checkpoint.
-
-On Hugging Face, use `polygons` (default) for geometry and `image_assets` for
-resolved references. Join on `osm_type`, `osm_id`, `osm_version`, and
-`source_pbf`. Wikimedia Commons category rows are marked
-`category_membership`; membership does not prove depiction.
-
-### Heartbeats and progress events
-
-Every long-running command emits JSON events to stderr, one per line:
-
-```
-progress {"event":"run_started","pbf_count":3,"pbf_bytes":12345}
-progress {"event":"pbf_started","pbf_index":1,"pbf_count":3,"source_pbf":"europe/france.osm.pbf"}
-progress {"event":"pbf_completed","pbf_index":1,"pbf_count":3,"status":"built","accepted_rows":42,"rejections":{}}
-progress {"event":"asset_shard_started","asset_index":1,"asset_count":3,"polygon_shard":"data/example.parquet"}
-progress {"event":"asset_reference_progress","reference_index":1,"reference_count":8}
-progress {"event":"metadata_started"}
-progress {"event":"heartbeat","last_event":"metadata_manifest_scan_started","elapsed_seconds":42}
+```text
+data/             polygon GeoParquet shards
+manifests/        polygon identities and counts
+assets/           one-to-many image-asset shards
+asset-manifests/  enrichment checkpoints
+statistics/       generated factual statistics
+README.md         generated dataset card
 ```
 
-Asset events cover backfill/shard lifecycle, reference progress, provider
-cooldowns, and final counts. Heartbeats keep long runs observable. The final
-summary is canonical JSON on stdout. Non-TTY output and `--log-format json`
-are stable JSON; TTY `auto` mode uses restrained Rich/tqdm rendering.
+## Documentation and development
 
-### Safe Ctrl-C behaviour
+- [Getting started](docs/getting-started.md)
+- [CLI reference](docs/cli.md)
+- [Architecture](docs/architecture.md)
+- [Data contract](docs/data-contract.md)
+- [Operations and credentials](docs/operations.md)
+- [Development and contribution](docs/development.md)
 
-`SIGINT` (Ctrl-C) and `SIGTERM` set a stop token so the orchestrator starts no
-next PBF after the current build returns. If the terminal signal also aborts
-the active `osmium` process, that shard fails without promoting a partial
-artifact. Already finalized shards remain valid, and the next run resumes from
-the last finalized boundary.
+Run the complete local quality gate with `just ci`; build the docs locally with
+`just docs`. The project uses `uv`, Ruff, ty, pytest, pre-commit, Just, Typer,
+Rich, tqdm, and GitHub Actions.
 
 ## License
 
-Pipeline source code is Apache-2.0. OpenStreetMap-derived data remains
-subject to the Open Database License (ODbL); the generated dataset card
-records attribution to the OpenStreetMap contributors and to Geofabrik.
-
-See [`LICENSE`](LICENSE), [`CONTRIBUTING.md`](CONTRIBUTING.md), and
-[`docs/`](docs/).
+Pipeline source code is Apache-2.0. OpenStreetMap-derived data is subject to
+the Open Database License (ODbL); the generated dataset card carries the
+required OpenStreetMap and Geofabrik attribution.

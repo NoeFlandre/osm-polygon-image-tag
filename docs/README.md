@@ -17,17 +17,12 @@ Pages at <https://noeflandre.github.io/osm-polygon-image-tag/>.
   observe progress, handle Ctrl-C, and reason about resumability.
 - `development.md`: how to set up the development environment, run the test
   suite, lint, type-check, build the wheel, and contribute changes.
-- `superpowers/specs/`: historical and additive design specifications.
-- `superpowers/plans/`: historical implementation plans used during initial
-  development. They document how the project was built, not the current
-  contract; see `data-contract.md` and `architecture.md` for the live view.
 
 ## How this folder is maintained
 
 - Current-facing documentation (`architecture.md`, `data-contract.md`,
   `operations.md`, `development.md`, `index.md`, `getting-started.md`, and
   `cli.md`) is authoritative and is built by `mkdocs.yml`.
-- Historical plans and specs are preserved untouched so they continue to
-  describe the work they originally motivated. If a historical document
-  contradicts a current-facing one, treat the current-facing document as
-  the source of truth.
+- Agent plans and design notes are intentionally kept out of the public
+  repository and MkDocs site. Keep any private working copies under the
+  ignored `docs/superpowers/` path if they are needed locally.

@@ -6,6 +6,22 @@ from pathlib import Path
 ROOT = Path(__file__).parents[2]
 
 
+def test_repository_readme_is_a_public_landing_page() -> None:
+    readme = " ".join((ROOT / "README.md").read_text(encoding="utf-8").split())
+
+    assert "GeoParquet" in readme
+    assert "closed ways and relations" in readme
+    assert "https://noeflandre.github.io/osm-polygon-image-tag/" in readme
+    assert "https://huggingface.co/datasets/NoeFlandre/osm-polygon-image-tag" in readme
+    assert "polygons" in readme
+    assert "image_assets" in readme
+    assert "uv sync --locked --dev" in readme
+    assert "run-and-publish" in readme
+    assert "--source-root" in readme
+    assert "--data-root" in readme
+    assert "just ci" in readme
+
+
 def test_mkdocs_site_contract() -> None:
     config = (ROOT / "mkdocs.yml").read_text(encoding="utf-8")
 
