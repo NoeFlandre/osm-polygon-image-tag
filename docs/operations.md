@@ -67,6 +67,18 @@ publication planning. The pipeline never deletes files it does not own.
 - `run-and-publish`: runs extraction and enrichment, then regenerates and
   publishes both configurations when verified outputs changed.
 
+## Publish the documentation site
+
+The repository's `Documentation` workflow builds the strict MkDocs Material
+site and deploys it through GitHub Pages. In repository settings, set **Pages →
+Build and deployment → Source** to **GitHub Actions** once. Pushes to `main`
+then publish the site at:
+
+<https://noeflandre.github.io/osm-polygon-image-tag/>
+
+The workflow can also be started manually from the Actions tab. It never reads
+the PBF source tree, the managed dataset root, or Hugging Face credentials.
+
 ## Fast resume versus explicit deep verification
 
 `run` and `run-and-publish` use the fast resume path. For each PBF they

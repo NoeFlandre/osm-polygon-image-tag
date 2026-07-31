@@ -6,9 +6,12 @@ gates documented in [`docs/development.md`](../../docs/development.md).
 
 ## Contents
 
-- `ci.yml`: the single required workflow. It runs on every push to `main`
-  and on every pull request targeting `main`, and on pushes to any
-  `codex/**` branch.
+- `ci.yml`: the required quality workflow. It runs on every push to `main` and
+  on every pull request targeting `main`, and on pushes to any `codex/**`
+  branch.
+- `docs.yml`: the GitHub Pages workflow. It runs on pushes to `main` and on
+  manual dispatch, builds the strict MkDocs Material site, and deploys it to
+  the `github-pages` environment.
 
 ## What the CI does
 
@@ -27,6 +30,10 @@ The single `quality-gate` job, on `ubuntu-latest`:
 10. Run `uv run pytest -q`.
 11. Build the wheel and sdist (`uv build`).
 12. Verify no whitespace errors (`git diff --check`).
+
+The documentation workflow uses the same locked `uv` environment, runs
+`uv run mkdocs build --strict --site-dir site`, uploads the Pages artifact, and
+deploys it with the minimum Pages/OIDC permissions.
 
 ## What the CI does not do
 

@@ -10,6 +10,7 @@ PBFs are never reprocessed merely to add directly usable URLs. Verified
 polygon and asset artifacts publish as two Hugging Face configurations.
 
 - Source: <https://github.com/NoeFlandre/osm-polygon-image-tag>
+- Documentation: <https://noeflandre.github.io/osm-polygon-image-tag/>
 - Dataset: <https://huggingface.co/datasets/NoeFlandre/osm-polygon-image-tag>
 
 ## Selected tags
@@ -41,8 +42,8 @@ preserved in the `panoramax_values` map with their original keys, and
 - `tests/`: `unit/` tests mirror the production layout. `integration/`
   tests exercise the real `osmium` binary. `fixtures/` holds stable OSM XML
   inputs.
-- `docs/`: current-facing documentation, including `architecture.md`,
-  `data-contract.md`, `operations.md`, and `development.md`.
+- `docs/`: current-facing documentation, built as a MkDocs Material site;
+  start at [`docs/index.md`](docs/index.md).
 
 ## Commands
 

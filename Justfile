@@ -21,6 +21,9 @@ check:
 build:
     uv build
 
+docs:
+    uv run mkdocs build --strict --site-dir site
+
 install-hooks:
     uv run pre-commit install --hook-type pre-commit --hook-type pre-push
 
@@ -29,4 +32,5 @@ ci:
     uv run pre-commit run --all-files
     just test
     just build
+    just docs
     git diff --check

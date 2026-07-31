@@ -1,0 +1,36 @@
+site_name: OSM Polygon Image Tag
+site_description: A resumable, reproducible OSM polygon image-reference dataset pipeline.
+site_url: https://noeflandre.github.io/osm-polygon-image-tag/
+repo_name: NoeFlandre/osm-polygon-image-tag
+repo_url: https://github.com/NoeFlandre/osm-polygon-image-tag
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed
+  - tables
+
+exclude_docs: |
+  README.md
+  superpowers/**
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - CLI reference: cli.md
+  - Architecture: architecture.md
+  - Data contract: data-contract.md
+  - Operations: operations.md
+  - Development: development.md

@@ -43,7 +43,16 @@ uv run pytest tests/unit -q --no-cov
 ```
 
 `just ci` runs the locked checks, repository-local pre-commit hooks, tests,
-build, and whitespace gate used by GitHub Actions.
+build, strict documentation build, and whitespace gate used by GitHub Actions.
+
+Build the documentation site locally with:
+
+```bash
+just docs
+```
+
+The GitHub Pages workflow runs the same locked `mkdocs build --strict` command
+on every push to `main` and can also be started manually from Actions.
 
 ## Smoke-testing the installed wheel
 

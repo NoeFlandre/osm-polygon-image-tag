@@ -54,6 +54,7 @@ include = [
 
 [dependency-groups]
 dev = [
+    "mkdocs-material>=9.6,<10",
     "pre-commit>=4.3,<5",
     "pytest>=8.4,<9",
     "pytest-asyncio>=1.2,<2",
