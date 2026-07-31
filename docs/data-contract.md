@@ -176,9 +176,39 @@ previously interrupted shard rebuilds deterministically on the next run.
 `osm_types` and `geometry_types` counts, per-provider counts, exact
 provider combinations, minimum/maximum feature timestamps, sum/min/max/mean
 `area_m2`, exact rejection counts by reason, exact duplicate-observation
-counts across PBFs, and per-shard digests. The README card mirrors these
+counts across PBFs, per-shard digests, and a `geography` block describing
+the generated H3 polygon-density map. The README card mirrors these
 statistics and includes OpenStreetMap/Geofabrik attribution and ODbL
 licensing.
+
+## Geographic coverage map
+
+`generate_metadata` also renders a static PNG `assets/geographic_polygon_density.png`
+that visualizes the raw count of finalized `polygons` rows per H3 cell. The
+map is built exclusively from finalized polygon GeoParquet shards; the raw
+PBF tree is never opened during metadata generation.
+
+- Each polygon row contributes exactly once, computed from its Shapely
+  geometry centroid in `OGC:CRS84`. The bounding-box midpoint is not used.
+- H3 resolution is fixed at `3` (the dataset-card artifact contract).
+- Overlapping Geofabrik extracts are preserved as separate observations,
+  so two shards covering the same OSM feature count it twice.
+- The colour scale is logarithmic (`magma`); raw counts per cell range
+  from the minimum to the maximum finalized polygon row count.
+- `image_assets` rows are not separately counted in this map.
+- The basemap is a bundled Natural Earth 1:110m landmass reference
+  (public domain) shipped with the package; no network call is performed
+  during map generation.
+- The map is omitted as a separate PNG from the GeoParquet schema: centroids
+  are recomputed transiently from each finalized shard's `geometry` column.
+
+The generated `geography` block in `statistics/dataset-statistics.json`
+exposes:
+
+- `h3_resolution`, `cell_count`, `polygon_rows`,
+  `min_cell_count`, `max_cell_count`, `input_shard_count`,
+  `input_digest` (a deterministic SHA-256 over the finalized shard
+  identities used to compute the map).
 
 ## Publication inventory
 
@@ -186,11 +216,22 @@ licensing.
 
 - `README.md`
 - `statistics/dataset-statistics.json`
+- `assets/geographic_polygon_density.png` (the dataset-card map).
 - Every GeoParquet shard whose manifest matches the current contract, plus
   the matching manifest.
 - Every asset shard whose manifest matches the current asset/resolver
   contracts, plus its matching manifest.
-- `catalog/`, `cache/`, and `receipts/` are internal and never uploaded.
+- `cache/`, `catalog/`, and `receipts/` are internal and never uploaded.
+
+The geographic PNG is treated as a required, validated publication
+artifact: it must be a non-empty regular PNG file inside the data root,
+never a symlink or path escape. A missing or corrupt PNG fails the
+inventory with a `PublicationError`.
+
+The private `cache/geographic-density/` directory holds the per-shard
+H3 cell cache and the per-shard input digest metadata used to short
+circuit regenerations during repeated metadata runs. It is never
+included in the publication inventory.
 
 Symlinks, top-level escapes, and unexpected files fail closed with a
 `PublicationError`.

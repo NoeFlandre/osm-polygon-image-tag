@@ -12,6 +12,10 @@ that lives inside the managed data root.
   (`dataset_card`).
 - Publication types, inventory, planning, and receipt writing
   (`publication_types`, `publication_inventory`, `publication`).
+- The dataset-card geographic density map (`geography/`): typed models,
+  H3 helpers, validated Parquet input pruning, the bundled Natural Earth
+  basemap, the deterministic matplotlib renderer, and the per-shard
+  cached aggregation pipeline.
 
 ## What must not belong here
 
@@ -24,17 +28,19 @@ that lives inside the managed data root.
 
 - `write_geoparquet`, `validate_geoparquet`: round-trip-safe shard I/O.
 - `verified_manifests`, `verified_asset_manifests`, and their catalog syncs.
-- `generate_metadata`: deterministic statistics and card writer.
+- `generate_metadata`: deterministic statistics and card writer; also
+  refreshes the H3 geographic density map.
 - `publication_inventory`, `publish_dataset`: the local publication planner
   that takes any `Hub` adapter. Inventory planning is non-destructive:
-  temporary or unknown files are preserved and rejected.
+  temporary or unknown files are preserved and rejected. The geographic
+  PNG is required, validated, and verified at receive time.
 - `EXPECTED_REPO`: the constant that callers must echo back via
   `--confirm-repo`.
 
 ## Dependencies
 
 - `core` for manifest, schema, errors.
-- `pyarrow`, `pyproj`, `shapely`, `sqlite3`.
+- `pyarrow`, `pyproj`, `shapely`, `sqlite3`, `h3`, `matplotlib`.
 
 ## Focused tests
 

@@ -123,6 +123,8 @@ def test_metadata_reports_detailed_progress_and_scans_manifests_once(
         "metadata_asset_catalog_sync_completed",
         "metadata_statistics_started",
         "metadata_statistics_completed",
+        "metadata_geography_started",
+        "metadata_geography_completed",
         "metadata_write_started",
         "metadata_write_completed",
     ]

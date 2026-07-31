@@ -11,6 +11,7 @@ check, build the wheel, and contribute changes.
 - `pytest` with `pytest-cov` for tests and coverage.
 - `hatchling` for the build backend.
 - `osmium` for the integration tests that exercise the real extractor.
+- `h3` and `matplotlib` for the dataset-card geographic density map.
 - `pre-commit` for local hooks and `just` for canonical recipes.
 
 ## Initial setup

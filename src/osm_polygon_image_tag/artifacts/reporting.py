@@ -9,6 +9,7 @@ from osm_polygon_image_tag.artifacts.asset_inventory import verified_asset_manif
 from osm_polygon_image_tag.artifacts.asset_statistics import asset_statistics
 from osm_polygon_image_tag.artifacts.catalog import sync_catalog
 from osm_polygon_image_tag.artifacts.dataset_card import dataset_card
+from osm_polygon_image_tag.artifacts.geography.pipeline import build_geographic_map
 from osm_polygon_image_tag.artifacts.manifest_inventory import verified_manifests
 from osm_polygon_image_tag.artifacts.statistics import dataset_statistics
 from osm_polygon_image_tag.core.progress import Progress
@@ -58,6 +59,8 @@ def generate_metadata(data_root: Path, *, progress: Progress | None = None) -> M
             "rows": statistics["rows"],
         }
     )
+    map_result = build_geographic_map(data_root, progress=emit)
+    statistics["geography"] = map_result.statistics.to_dict()
     statistics_path = data_root / "statistics" / "dataset-statistics.json"
     card_path = data_root / "README.md"
     serialized = (

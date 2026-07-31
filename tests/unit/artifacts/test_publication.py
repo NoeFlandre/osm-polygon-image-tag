@@ -112,6 +112,7 @@ def test_inventory_contains_only_verified_public_artifacts(tmp_path: Path) -> No
     assert [item.remote_path for item in inventory] == [
         "README.md",
         "asset-manifests/region.assets.manifest.json",
+        "assets/geographic_polygon_density.png",
         "assets/region.assets.parquet",
         "data/region.parquet",
         "manifests/region.manifest.json",
@@ -122,7 +123,7 @@ def test_inventory_contains_only_verified_public_artifacts(tmp_path: Path) -> No
 def test_inventory_keeps_cache_and_retry_state_private(tmp_path: Path) -> None:
     _dataset(tmp_path)
     cache = tmp_path / "cache"
-    cache.mkdir()
+    cache.mkdir(exist_ok=True)
     (cache / "resolutions.sqlite").write_bytes(b"private")
     (cache / "retry-state.json").write_bytes(b"private")
 

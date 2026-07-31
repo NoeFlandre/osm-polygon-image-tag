@@ -18,9 +18,11 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "h3>=4.1,<5",
     "httpcore>=1,<2",
     "httpx>=0.28,<0.29",
     "huggingface-hub>=1.3,<2",
+    "matplotlib>=3.10,<4",
     "osmium>=4.3,<5",
     "pyarrow>=21,<22",
     "pyproj>=3.7,<4",
@@ -49,7 +51,11 @@ include = [
     "src/osm_polygon_image_tag/README.md",
     "src/osm_polygon_image_tag/_data/*.json",
     "src/osm_polygon_image_tag/_data/*.md",
+    "src/osm_polygon_image_tag/_data/*.geojson",
     "src/osm_polygon_image_tag/*/README.md",
+    "src/osm_polygon_image_tag/*/_data/*.geojson",
+    "src/osm_polygon_image_tag/*/_data/*.json",
+    "src/osm_polygon_image_tag/*/_data/*.md",
 ]
 
 [dependency-groups]

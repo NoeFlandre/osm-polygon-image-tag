@@ -4,6 +4,8 @@ from typing import Any
 
 import yaml
 
+from osm_polygon_image_tag.artifacts.geography.render import GEOGRAPHIC_PNG_RELATIVE
+
 
 def dataset_card(statistics: dict[str, Any]) -> bytes:
     """Render a card containing only facts derived from the statistics payload."""
@@ -27,6 +29,13 @@ def dataset_card(statistics: dict[str, Any]) -> bytes:
     }
     frontmatter = yaml.safe_dump(metadata, sort_keys=False, allow_unicode=True)
     assets = statistics["assets"]
+    geography = statistics.get("geography") or {}
+    polygon_rows = statistics["rows"]
+    h3_resolution = int(geography.get("h3_resolution") or 3)
+    cell_count = int(geography.get("cell_count") or 0)
+    min_cell_count = int(geography.get("min_cell_count") or 0)
+    max_cell_count = int(geography.get("max_cell_count") or 0)
+    input_shard_count = int(geography.get("input_shard_count") or 0)
     text = f"""---\n{frontmatter}---
 # OSM Polygon Image Tag
 
@@ -47,6 +56,25 @@ way or relation carries at least one raw image-reference tag.
 
 Provider observations:
 {providers}
+
+## Geographic coverage
+
+### OSM polygon density
+
+![Geographic OSM Polygon Density]({GEOGRAPHIC_PNG_RELATIVE})
+
+Each colored H3 cell contains the raw count of finalized `polygons` rows
+whose geometry centroid falls inside the cell. Every polygon row
+contributes exactly once, computed from its Shapely geometry centroid
+in CRS84 (not its bounding-box midpoint). The map is built at H3 resolution
+{h3_resolution}. Overlapping Geofabrik extracts are
+intentionally preserved as separate observations, so two shards
+covering the same OSM feature will count it twice. The colour scale
+is logarithmic (`magma`); raw counts per-cell range from
+{min_cell_count:,} to {max_cell_count:,} across {cell_count:,} H3
+cells, with {polygon_rows:,} finalized polygon rows from
+{input_shard_count:,} shard(s). The `image_assets` configuration is
+not separately counted in this map.
 
 ## Schema
 
@@ -85,5 +113,7 @@ it is labeled as `category_membership`. No image body is downloaded.
 Overlapping Geofabrik extracts are intentionally preserved as separate
 observations and quantified above. Statistics in this card are generated only
 from finalized manifests and their size-checked GeoParquet and asset shards.
+The geographic coverage map references Natural Earth 1:110m landmass data
+(public domain) for context only.
 """
     return text.encode("utf-8")
