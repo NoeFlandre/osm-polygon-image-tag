@@ -155,6 +155,24 @@ async def test_image_probe_revalidates_redirect_targets() -> None:
 
 
 @pytest.mark.asyncio
+async def test_image_probe_preserves_wrapped_unsafe_target_error() -> None:
+    async def handle(_request: httpx.Request) -> httpx.Response:
+        try:
+            raise UnsafeUrlError("host resolved to a non-public IP address")
+        except UnsafeUrlError as error:
+            raise httpcore.ConnectError("connection rejected") from error
+
+    client = SafeHttpClient(
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handle)),
+        resolve=_resolver({"example.test": ("93.184.216.34",)}),
+    )
+
+    with pytest.raises(UnsafeUrlError, match="non-public"):
+        await client.probe_image("https://example.test/image.jpg")
+    await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_json_body_and_headers_are_bounded() -> None:
     async def body_handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=json.dumps({"data": "x" * 100}))

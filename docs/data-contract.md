@@ -130,6 +130,13 @@ Expiring direct URLs refresh when they enter a one-hour refresh window.
 Provider cooldowns and temporary failures remain retryable rather than making
 a shard permanently reusable.
 
+Unsafe network targets are a permanent policy rejection, not a transient
+provider failure. If DNS resolves a host to a non-public address (including
+when the transport wraps that policy error), the resolver records
+`status="invalid_reference"` with `reason="unsafe_url"`, emits an
+`asset_provider_blocked` progress event, and performs no retry. The validated
+connection is never opened.
+
 Asset manifests record cache hits and provider resolver requests. Global
 statistics and the generated card aggregate those factual counts without
 consulting live provider state.

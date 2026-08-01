@@ -167,7 +167,17 @@ class ResolverRegistry:
                         reason="provider_rate_limited",
                     )
                 except UnsafeUrlError:
-                    raise
+                    self._progress(
+                        {
+                            "event": "asset_provider_blocked",
+                            "provider": reference.provider,
+                            "reason": "unsafe_url",
+                        }
+                    )
+                    result = ResolutionResult(
+                        status="invalid_reference",
+                        reason="unsafe_url",
+                    )
                 except SafeHttpError:
                     if attempt_count < _TRANSIENT_ATTEMPTS:
                         delay = 2 ** (attempt_count - 1)

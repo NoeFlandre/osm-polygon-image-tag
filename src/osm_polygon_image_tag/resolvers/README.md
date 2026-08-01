@@ -23,4 +23,9 @@ records remain reusable.
 
 KartaView resolves its sequence/photo pair; Bing Streetside is page-only.
 Provider concurrency and request rates are bounded independently, and HTTP 429
-responses become retryable cache records with cooldown progress.
+responses become retryable cache records with cooldown progress. A URL whose
+DNS answers include a non-public address is rejected by the same policy even if
+that rejection is wrapped by the HTTP transport; it becomes one cached
+`invalid_reference` record with reason `unsafe_url`, emits an
+`asset_provider_blocked` progress event, and is never retried. The connection
+is never opened to the unsafe address.

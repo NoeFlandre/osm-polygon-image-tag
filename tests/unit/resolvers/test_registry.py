@@ -4,7 +4,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from osm_polygon_image_tag.assets.references import SourceReference
-from osm_polygon_image_tag.resolvers.policy import ProviderRateLimited, SafeHttpError
+from osm_polygon_image_tag.resolvers.policy import (
+    ProviderRateLimited,
+    SafeHttpError,
+    UnsafeUrlError,
+)
 from osm_polygon_image_tag.resolvers.registry import ProviderLimit, ResolverRegistry
 from osm_polygon_image_tag.resolvers.types import (
     ResolutionResult,
@@ -282,6 +286,65 @@ async def test_registry_turns_transient_http_errors_into_retryable_records() -> 
     assert record.attempt_count == 3
     assert calls == 3
     assert delays == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_registry_records_unsafe_targets_without_retrying() -> None:
+    events: list[dict[str, object]] = []
+    calls = 0
+    delays: list[float] = []
+
+    class Resolver:
+        provider = "image"
+
+        async def resolve(
+            self, canonical_reference: str, *, context: ResolverContext
+        ) -> ResolutionResult:
+            nonlocal calls
+            del canonical_reference, context
+            calls += 1
+            raise UnsafeUrlError("host resolved to a non-public IP address")
+
+    class Http:
+        async def aclose(self) -> None:
+            return None
+
+    async def no_wait(seconds: float) -> None:
+        delays.append(seconds)
+
+    registry = ResolverRegistry(
+        {"generic_http": Resolver()},
+        environment={},
+        http=Http(),
+        sleep=no_wait,
+        progress=events.append,
+    )
+    reference = SourceReference(
+        "image",
+        "image",
+        "https://example.test/image.jpg",
+        "https://example.test/image.jpg",
+        "generic_http",
+    )
+
+    record = await registry.resolve_reference(
+        reference,
+        bbox=(0, 0, 1, 1),
+        resolver_contract_version=1,
+    )
+
+    assert record.status == "invalid_reference"
+    assert record.reason == "unsafe_url"
+    assert record.attempt_count == 1
+    assert calls == 1
+    assert delays == []
+    assert events == [
+        {
+            "event": "asset_provider_blocked",
+            "provider": "image",
+            "reason": "unsafe_url",
+        }
+    ]
 
 
 @pytest.mark.asyncio

@@ -29,6 +29,17 @@ def _redacted_url(url: str) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
 
 
+def _unsafe_url_cause(error: BaseException) -> UnsafeUrlError | None:
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, UnsafeUrlError):
+            return current
+        current = current.__cause__ or current.__context__
+    return None
+
+
 def _header_size(headers: httpx.Headers) -> int:
     return sum(len(key.encode()) + len(value.encode()) for key, value in headers.multi_items())
 
@@ -165,6 +176,9 @@ class SafeHttpClient:
                 httpcore.ProtocolError,
                 httpcore.TimeoutException,
             ) as error:
+                unsafe = _unsafe_url_cause(error)
+                if unsafe is not None:
+                    raise unsafe from error
                 raise SafeHttpError(f"provider request failed: {_redacted_url(current)}") from error
             except json.JSONDecodeError as error:
                 raise SafeHttpError("provider returned invalid JSON") from error
@@ -211,6 +225,9 @@ class SafeHttpClient:
                 httpcore.ProtocolError,
                 httpcore.TimeoutException,
             ) as error:
+                unsafe = _unsafe_url_cause(error)
+                if unsafe is not None:
+                    raise unsafe from error
                 raise SafeHttpError(f"provider request failed: {_redacted_url(current)}") from error
         raise SafeHttpError("too many redirects")
 
