@@ -5,6 +5,7 @@ from typing import Any
 import yaml
 
 from osm_polygon_image_tag.artifacts.geography.render import GEOGRAPHIC_PNG_RELATIVE
+from osm_polygon_image_tag.artifacts.hero import HERO_PNG_RELATIVE
 
 
 def dataset_card(statistics: dict[str, Any]) -> bytes:
@@ -37,7 +38,7 @@ def dataset_card(statistics: dict[str, Any]) -> bytes:
     max_cell_count = int(geography.get("max_cell_count") or 0)
     input_shard_count = int(geography.get("input_shard_count") or 0)
     text = f"""---\n{frontmatter}---
-![OSM Polygon Image Tag hero](assets/hero.png)
+![OSM Polygon Image Tag hero]({HERO_PNG_RELATIVE})
 
 # OSM Polygon Image Tag
 

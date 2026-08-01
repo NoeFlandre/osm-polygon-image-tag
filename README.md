@@ -1,4 +1,4 @@
-![OSM Polygon Image Tag hero](docs/assets/hero.png)
+![OSM Polygon Image Tag hero](src/osm_polygon_image_tag/_data/hero.png)
 
 # OSM Polygon Image Tag
 

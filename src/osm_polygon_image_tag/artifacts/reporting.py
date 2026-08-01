@@ -10,6 +10,7 @@ from osm_polygon_image_tag.artifacts.asset_statistics import asset_statistics
 from osm_polygon_image_tag.artifacts.catalog import sync_catalog
 from osm_polygon_image_tag.artifacts.dataset_card import dataset_card
 from osm_polygon_image_tag.artifacts.geography.pipeline import build_geographic_map
+from osm_polygon_image_tag.artifacts.hero import HERO_PNG_RELATIVE, packaged_hero_path
 from osm_polygon_image_tag.artifacts.manifest_inventory import verified_manifests
 from osm_polygon_image_tag.artifacts.statistics import dataset_statistics
 from osm_polygon_image_tag.core.progress import Progress
@@ -43,6 +44,14 @@ def _atomic_write(path: Path, content: bytes) -> None:
         raise
 
 
+def _sync_hero(data_root: Path) -> None:
+    target = data_root / HERO_PNG_RELATIVE
+    content = packaged_hero_path().read_bytes()
+    if target.is_file() and target.read_bytes() == content:
+        return
+    _atomic_write(target, content)
+
+
 def generate_metadata(data_root: Path, *, progress: Progress | None = None) -> MetadataResult:
     emit = progress or (lambda _event: None)
     manifests = verified_manifests(data_root, progress=emit)
@@ -61,6 +70,7 @@ def generate_metadata(data_root: Path, *, progress: Progress | None = None) -> M
     )
     map_result = build_geographic_map(data_root, progress=emit)
     statistics["geography"] = map_result.statistics.to_dict()
+    _sync_hero(data_root)
     statistics_path = data_root / "statistics" / "dataset-statistics.json"
     card_path = data_root / "README.md"
     serialized = (

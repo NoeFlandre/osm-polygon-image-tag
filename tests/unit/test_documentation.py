@@ -7,8 +7,14 @@ ROOT = Path(__file__).parents[2]
 
 
 def test_repository_readme_is_a_public_landing_page() -> None:
-    readme = " ".join((ROOT / "README.md").read_text(encoding="utf-8").split())
+    raw_readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    readme = " ".join(raw_readme.split())
 
+    assert raw_readme.startswith(
+        "![OSM Polygon Image Tag hero](src/osm_polygon_image_tag/_data/hero.png)\n"
+    )
+    assert (ROOT / "src/osm_polygon_image_tag/_data/hero.png").is_file()
+    assert not (ROOT / "docs/assets/hero.png").exists()
     assert "GeoParquet" in readme
     assert "closed ways and relations" in readme
     assert "https://noeflandre.github.io/osm-polygon-image-tag/" in readme

@@ -113,6 +113,7 @@ def test_inventory_contains_only_verified_public_artifacts(tmp_path: Path) -> No
         "README.md",
         "asset-manifests/region.assets.manifest.json",
         "assets/geographic_polygon_density.png",
+        "assets/hero.png",
         "assets/region.assets.parquet",
         "data/region.parquet",
         "manifests/region.manifest.json",
@@ -130,6 +131,22 @@ def test_inventory_keeps_cache_and_retry_state_private(tmp_path: Path) -> None:
     inventory = publication_inventory(tmp_path)
 
     assert all(not item.remote_path.startswith("cache/") for item in inventory)
+
+
+def test_inventory_rejects_invalid_hero_png(tmp_path: Path) -> None:
+    _dataset(tmp_path)
+    (tmp_path / "assets/hero.png").write_bytes(b"not a PNG")
+
+    with pytest.raises(PublicationError, match="invalid hero PNG"):
+        publication_inventory(tmp_path)
+
+
+def test_inventory_rejects_noncanonical_hero_png(tmp_path: Path) -> None:
+    _dataset(tmp_path)
+    (tmp_path / "assets/hero.png").write_bytes(b"\x89PNG\r\n\x1a\nother")
+
+    with pytest.raises(PublicationError, match="hero PNG does not match packaged resource"):
+        publication_inventory(tmp_path)
 
 
 def test_inventory_rejects_same_size_asset_corruption(tmp_path: Path) -> None:

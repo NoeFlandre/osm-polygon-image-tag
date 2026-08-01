@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from osm_polygon_image_tag.artifacts.asset_inventory import verified_asset_manifests
+from osm_polygon_image_tag.artifacts.hero import HERO_PNG_RELATIVE, packaged_hero_path
 from osm_polygon_image_tag.artifacts.manifest_inventory import verified_manifests
 from osm_polygon_image_tag.artifacts.publication_types import PublicationFile
 from osm_polygon_image_tag.assets.manifest import (
@@ -42,16 +43,15 @@ def _regular_file(root: Path, relative: str) -> Path:
     return path
 
 
-def _validate_geographic_png(path: Path) -> None:
-    """Validate the dataset-card geographic PNG: must be a regular PNG file."""
+def _validate_png(path: Path, label: str) -> None:
     if not path.is_file():
-        raise PublicationError(f"missing geographic density PNG: {path}")
+        raise PublicationError(f"missing {label}: {path}")
     if path.stat().st_size == 0:
-        raise PublicationError(f"empty geographic density PNG: {path}")
+        raise PublicationError(f"empty {label}: {path}")
     with path.open("rb") as handle:
         signature = handle.read(8)
     if signature != b"\x89PNG\r\n\x1a\n":
-        raise PublicationError(f"invalid geographic density PNG: {path}")
+        raise PublicationError(f"invalid {label}: {path}")
 
 
 def publication_inventory(data_root: Path) -> tuple[PublicationFile, ...]:
@@ -77,20 +77,20 @@ def publication_inventory(data_root: Path) -> tuple[PublicationFile, ...]:
     allowed.update(manifest.output.relative_path for manifest, _ in manifests)
     allowed.update(manifest.output.relative_path for manifest, _ in asset_manifests)
 
-    # The dataset-card geographic PNG is a built artifact that must be
-    # validated explicitly: it must be a regular PNG file, never a
-    # symlink or path escape. It is always required because the dataset
-    # card embeds it; missing it is a publish-time failure.
     from osm_polygon_image_tag.artifacts.geography.render import GEOGRAPHIC_PNG_RELATIVE
 
-    geographic_png = root / GEOGRAPHIC_PNG_RELATIVE
-    _validate_geographic_png(geographic_png)
-    if geographic_png.is_symlink():
-        raise PublicationError(
-            f"geographic density PNG must not be a symlink: {GEOGRAPHIC_PNG_RELATIVE}"
-        )
-    allowed.add(GEOGRAPHIC_PNG_RELATIVE)
-    manifested_digests[GEOGRAPHIC_PNG_RELATIVE] = file_sha256(geographic_png)
+    for relative, label in (
+        (GEOGRAPHIC_PNG_RELATIVE, "geographic density PNG"),
+        (HERO_PNG_RELATIVE, "hero PNG"),
+    ):
+        png = root / relative
+        _validate_png(png, label)
+        if png.is_symlink():
+            raise PublicationError(f"{label} must not be a symlink: {relative}")
+        allowed.add(relative)
+        manifested_digests[relative] = file_sha256(png)
+    if manifested_digests[HERO_PNG_RELATIVE] != file_sha256(packaged_hero_path()):
+        raise PublicationError("hero PNG does not match packaged resource")
     managed: set[str] = set()
     for path in sorted((root / "manifests").glob("*.manifest.json")):
         manifest = read_manifest(path)

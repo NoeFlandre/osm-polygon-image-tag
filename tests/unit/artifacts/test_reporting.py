@@ -94,6 +94,23 @@ def test_empty_metadata_is_deterministic_and_factual(tmp_path: Path) -> None:
     assert b"`osm_type`, `osm_id`, `osm_version`, and `source_pbf`" in first_card
 
 
+def test_metadata_syncs_packaged_hero(tmp_path: Path) -> None:
+    result = generate_metadata(tmp_path)
+    hero = tmp_path / "assets/hero.png"
+
+    assert hero.is_file()
+    assert file_sha256(hero) == "e36f4c54fe8c71f7df2574852b082a294ec66d3077aec2086451acd0f6a3a0bb"
+    body = result.card_path.read_bytes().split(b"---", maxsplit=2)[2]
+    assert body.startswith(
+        b"\n![OSM Polygon Image Tag hero](assets/hero.png)\n\n# OSM Polygon Image Tag\n"
+    )
+
+    hero.write_bytes(b"stale")
+    generate_metadata(tmp_path)
+
+    assert file_sha256(hero) == "e36f4c54fe8c71f7df2574852b082a294ec66d3077aec2086451acd0f6a3a0bb"
+
+
 def test_metadata_reports_detailed_progress_and_scans_manifests_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

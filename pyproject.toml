@@ -52,6 +52,7 @@ include = [
     "src/osm_polygon_image_tag/_data/*.json",
     "src/osm_polygon_image_tag/_data/*.md",
     "src/osm_polygon_image_tag/_data/*.geojson",
+    "src/osm_polygon_image_tag/_data/*.png",
     "src/osm_polygon_image_tag/*/README.md",
     "src/osm_polygon_image_tag/*/_data/*.geojson",
     "src/osm_polygon_image_tag/*/_data/*.json",
