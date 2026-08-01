@@ -1,3 +1,5 @@
+![OSM Polygon Image Tag hero](docs/assets/hero.png)
+
 # OSM Polygon Image Tag
 
 [![CI](https://github.com/NoeFlandre/osm-polygon-image-tag/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/NoeFlandre/osm-polygon-image-tag/actions/workflows/ci.yml)

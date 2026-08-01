@@ -37,6 +37,8 @@ def dataset_card(statistics: dict[str, Any]) -> bytes:
     max_cell_count = int(geography.get("max_cell_count") or 0)
     input_shard_count = int(geography.get("input_shard_count") or 0)
     text = f"""---\n{frontmatter}---
+![OSM Polygon Image Tag hero](assets/hero.png)
+
 # OSM Polygon Image Tag
 
 This dataset contains OpenStreetMap Polygon and MultiPolygon observations whose
