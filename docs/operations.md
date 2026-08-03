@@ -210,9 +210,10 @@ valid because promotion uses atomic rename.
   and receipts remain valid.
 - After a hard kill: stale temporary files are confined to `tmp/` (for
   the per-PBF tag-store) and to the partially-written `.tmp` sibling of
-  any Parquet or manifest write. Publication preserves and rejects all of
-  these files because, without a process lock, they may belong to an active
-  run. Resume the pipeline so its owning operation can clean up safely.
+  any Parquet or manifest write. The next `run` or `run-and-publish` removes
+  only those exact pipeline-owned names before processing resumes; unknown
+  files remain and publication still rejects them. Do not run two pipeline
+  processes against the same data root concurrently.
 
 The enrichment worker finishes an active request, stops starting queued shard
 builds after the stop token, closes HTTP/SQLite resources, and leaves missing

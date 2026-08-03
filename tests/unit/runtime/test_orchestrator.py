@@ -50,6 +50,39 @@ def test_run_all_uses_deterministic_source_order(tmp_path: Path) -> None:
     assert summary.skipped == 0
 
 
+def test_run_all_removes_abandoned_pipeline_temps_before_resuming(tmp_path: Path) -> None:
+    source = tmp_path / "raw"
+    source.mkdir()
+    (source / "a.osm.pbf").write_bytes(b"a")
+    data_root = tmp_path / "generated"
+    data_dir = data_root / "data"
+    manifests_dir = data_root / "manifests"
+    temporary_dir = data_root / "tmp"
+    data_dir.mkdir(parents=True)
+    manifests_dir.mkdir()
+    temporary_dir.mkdir()
+    data_temp = data_dir / ".region.parquet.k_wyod3b.tmp"
+    manifest_temp = manifests_dir / ".region.manifest.json.k_wyod3b.tmp"
+    tag_store_temp = temporary_dir / "tag-store-ziwk538k.sqlite"
+    for path in (data_temp, manifest_temp, tag_store_temp):
+        path.write_bytes(b"abandoned")
+    unknown = temporary_dir / "keep-me.tmp"
+    unknown.write_bytes(b"unknown")
+    paths = PipelinePaths.build(source_root=source, data_root=data_root)
+
+    def build(pbf: PbfSource, _paths: PipelinePaths) -> BuildResult:
+        assert pbf.relative_path.as_posix() == "a.osm.pbf"
+        assert not data_temp.exists()
+        assert not manifest_temp.exists()
+        assert not tag_store_temp.exists()
+        assert unknown.exists()
+        return _result("a.osm.pbf")
+
+    run_all(paths, build=build, metadata_builder=_metadata)
+
+    assert unknown.exists()
+
+
 def test_stop_token_prevents_starting_the_next_pbf(tmp_path: Path) -> None:
     source = tmp_path / "raw"
     source.mkdir()

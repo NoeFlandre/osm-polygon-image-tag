@@ -13,6 +13,7 @@ from osm_polygon_image_tag.artifacts.reporting import MetadataResult, generate_m
 from osm_polygon_image_tag.core.config import PipelinePaths
 from osm_polygon_image_tag.core.manifest import read_manifest
 from osm_polygon_image_tag.ingest.discovery import PbfSource, discover_pbfs
+from osm_polygon_image_tag.runtime.cleanup import cleanup_stale_temps
 from osm_polygon_image_tag.runtime.enrichment import (
     AssetJob,
     EnrichmentSummary,
@@ -182,6 +183,14 @@ def run_all(
     token = stop_token or StopToken()
     sources = discover_pbfs(paths.source_root)
     emit = progress or (lambda _event: None)
+    removed_temps = cleanup_stale_temps(paths.data_root)
+    if removed_temps:
+        emit(
+            {
+                "event": "temporary_cleanup",
+                "removed": len(removed_temps),
+            }
+        )
     emit(
         {
             "event": "run_started",

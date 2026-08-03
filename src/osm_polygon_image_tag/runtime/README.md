@@ -14,6 +14,8 @@ integrations are wired together.
   rendering boundary (`console`).
 - The read-only preflight (`preflight`) used by `osm-polygon-image-tag
   preflight`.
+- Startup cleanup of abandoned, application-owned temporary files from a
+  prior stopped run (`cleanup`). Unknown files are never removed.
 - Package-data resource resolution (`resources`).
 
 ## What must not belong here
