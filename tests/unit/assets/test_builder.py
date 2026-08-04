@@ -167,6 +167,56 @@ async def test_builder_reads_only_needed_polygon_columns_and_deduplicates_resolu
 
 
 @pytest.mark.asyncio
+async def test_builder_reuses_resolved_records_for_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, polygon_path, data_root = polygon_fixture(
+        tmp_path,
+        tags={
+            "panoramax": PANORAMAX_ID,
+            "panoramax:0": "second-picture",
+        },
+    )
+    cached = ResolutionRecord(
+        "panoramax",
+        PANORAMAX_ID,
+        1,
+        "resolved",
+        ({"image_url": f"https://cdn.test/{PANORAMAX_ID}.jpg"},),
+        None,
+    )
+    resolver = Resolver()
+
+    with ResolutionCache.open(data_root) as cache:
+        cache.put(cached)
+        original_get = cache.get
+        get_calls: list[ResolutionKey] = []
+
+        def count_get(key: ResolutionKey) -> ResolutionRecord | None:
+            get_calls.append(key)
+            return original_get(key)
+
+        monkeypatch.setattr(cache, "get", count_get)
+
+        result = await build_asset_shard(
+            manifest,
+            polygon_path,
+            data_root,
+            cache=cache,
+            registry=Registry(resolver),
+            stop_requested=lambda: False,
+            progress=lambda _event: None,
+            resolver_contract_version=1,
+        )
+
+    counts = read_asset_manifest(result.manifest_path, data_root=data_root).counts
+    assert result.status == "built"
+    assert get_calls == [cached.key, ResolutionKey("panoramax", "second-picture", 1)]
+    assert counts.cache_hits == 1
+    assert counts.resolver_requests == 1
+
+
+@pytest.mark.asyncio
 async def test_builder_globally_sorts_rows_across_bounded_chunks(tmp_path: Path) -> None:
     manifest, polygon_path, data_root = polygon_fixture(tmp_path)
     polygon_rows = []

@@ -148,6 +148,105 @@ def test_resolution_snapshot_ignores_unrelated_cache_rows(tmp_path: Path) -> Non
         assert len(before.sha256) == 64
 
 
+def test_resolution_snapshot_from_records_matches_database_snapshot(tmp_path: Path) -> None:
+    with ResolutionCache.open(tmp_path) as cache:
+        records = [_record("z-last"), _record("a-first")]
+        for record in records:
+            cache.put(record)
+        keys = [records[0].key, records[1].key, records[0].key]
+        database_snapshot = cache.resolution_snapshot(keys)
+
+        supplied_snapshot = cache.resolution_snapshot(
+            keys,
+            records={
+                records[0].key: records[0],
+                records[1].key: records[1],
+                _record("ignored-extra").key: _record("ignored-extra"),
+            },
+        )
+
+    assert supplied_snapshot == database_snapshot
+    assert supplied_snapshot.entry_count == 2
+
+
+def test_resolution_snapshot_from_records_avoids_cache_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    record = _record()
+    with ResolutionCache.open(tmp_path) as cache:
+        get_calls = 0
+
+        def fail_on_get(_key: ResolutionKey) -> ResolutionRecord | None:
+            nonlocal get_calls
+            get_calls += 1
+            raise AssertionError("supplied records must avoid cache reads")
+
+        monkeypatch.setattr(cache, "get", fail_on_get)
+
+        snapshot = cache.resolution_snapshot([record.key], records={record.key: record})
+
+    assert snapshot.entry_count == 1
+    assert get_calls == 0
+
+
+def test_resolution_snapshot_from_records_requires_every_requested_key(tmp_path: Path) -> None:
+    record = _record()
+    with (
+        ResolutionCache.open(tmp_path) as cache,
+        pytest.raises(ResolutionCacheError, match="missing resolution"),
+    ):
+        cache.resolution_snapshot([record.key], records={})
+
+
+def test_resolution_snapshot_from_records_rejects_key_mismatch(tmp_path: Path) -> None:
+    record = _record()
+    with (
+        ResolutionCache.open(tmp_path) as cache,
+        pytest.raises(ResolutionCacheError, match="key"),
+    ):
+        cache.resolution_snapshot(
+            [record.key],
+            records={record.key: _record("different")},
+        )
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        _record(status="invalid"),
+        _record("https://provider.test/item?token=secret"),
+    ],
+)
+def test_resolution_snapshot_from_records_validates_requested_records(
+    tmp_path: Path, record: ResolutionRecord
+) -> None:
+    with ResolutionCache.open(tmp_path) as cache, pytest.raises(ResolutionCacheError):
+        cache.resolution_snapshot([record.key], records={record.key: record})
+
+
+def test_resolution_snapshot_without_records_keeps_database_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    records = [_record("one"), _record("two")]
+    with ResolutionCache.open(tmp_path) as cache:
+        for record in records:
+            cache.put(record)
+        original_get = cache.get
+        get_calls = 0
+
+        def count_get(key: ResolutionKey) -> ResolutionRecord | None:
+            nonlocal get_calls
+            get_calls += 1
+            return original_get(key)
+
+        monkeypatch.setattr(cache, "get", count_get)
+
+        snapshot = cache.resolution_snapshot([records[1].key, records[0].key, records[1].key])
+
+    assert snapshot.entry_count == 2
+    assert get_calls == 2
+
+
 def test_cache_preserves_reason_and_category_truncation(tmp_path: Path) -> None:
     record = ResolutionRecord(
         provider="wikimedia_commons",

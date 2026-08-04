@@ -156,7 +156,7 @@ async def build_asset_shard(
     semaphore = asyncio.Semaphore(16)
     statuses: Counter[str] = Counter()
     providers: Counter[str] = Counter()
-    snapshot_keys: set[ResolutionKey] = set()
+    snapshot_records: dict[ResolutionKey, ResolutionRecord] = {}
     direct_urls = reference_index = cache_hits = resolver_requests = 0
 
     async def flush(
@@ -191,7 +191,9 @@ async def build_asset_shard(
         records = {key: record for key, record, _cache_hit, _cacheable in resolved}
         cache_hits += sum(cache_hit for _key, _record, cache_hit, _cacheable in resolved)
         resolver_requests += sum(not cache_hit for _key, _record, cache_hit, _cacheable in resolved)
-        snapshot_keys.update(key for key, _record, _cache_hit, cacheable in resolved if cacheable)
+        snapshot_records.update(
+            (key, record) for key, record, _cache_hit, cacheable in resolved if cacheable
+        )
         chunk_rows = [
             result_row
             for row, reference in pending
@@ -237,7 +239,10 @@ async def build_asset_shard(
         return AssetBuildResult("pending", polygon_shard, asset_path, manifest_path, 0, {})
     if write_result is None:
         raise RuntimeError("asset writer did not finalize")
-    snapshot = cache.resolution_snapshot(list(snapshot_keys))
+    snapshot = cache.resolution_snapshot(
+        list(snapshot_records),
+        records=snapshot_records,
+    )
     output = OutputIdentity(
         relative_path=asset_path.relative_to(data_root).as_posix(),
         size_bytes=write_result.size_bytes,

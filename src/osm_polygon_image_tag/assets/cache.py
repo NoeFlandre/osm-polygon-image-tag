@@ -2,7 +2,7 @@ import hashlib
 import json
 import sqlite3
 import threading
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from types import TracebackType
@@ -121,7 +121,12 @@ class ResolutionCache:
                 self._connection.rollback()
                 raise
 
-    def resolution_snapshot(self, keys: Sequence[ResolutionKey]) -> ResolutionSnapshotIdentity:
+    def resolution_snapshot(
+        self,
+        keys: Sequence[ResolutionKey],
+        *,
+        records: Mapping[ResolutionKey, ResolutionRecord] | None = None,
+    ) -> ResolutionSnapshotIdentity:
         entries = []
         for key in sorted(
             set(keys),
@@ -131,9 +136,13 @@ class ResolutionCache:
                 item.resolver_contract_version,
             ),
         ):
-            record = self.get(key)
+            record = self.get(key) if records is None else records.get(key)
             if record is None:
                 raise ResolutionCacheError("cannot snapshot a missing resolution")
+            if records is not None:
+                if record.key != key:
+                    raise ResolutionCacheError("resolution record key does not match snapshot key")
+                validate_resolution_record(record)
             entries.append(record_payload(record))
         return ResolutionSnapshotIdentity(
             entry_count=len(entries),
