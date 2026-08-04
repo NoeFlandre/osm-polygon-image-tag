@@ -1,22 +1,13 @@
 from collections.abc import Mapping
-from typing import Protocol, cast
+from typing import cast
 from urllib.parse import urlencode
 
+from osm_polygon_image_tag.resolvers.response import MetadataClient, as_mapping
 from osm_polygon_image_tag.resolvers.types import (
     ResolutionResult,
     ResolvedAsset,
     ResolverContext,
 )
-
-
-class MetadataClient(Protocol):
-    async def get_json(
-        self, url: str, *, headers: Mapping[str, str] | None = None
-    ) -> Mapping[str, object]: ...
-
-
-def _mapping(value: object) -> Mapping[str, object]:
-    return cast(Mapping[str, object], value) if isinstance(value, Mapping) else {}
 
 
 def _dimension(value: object) -> int:
@@ -64,7 +55,7 @@ class FlickrResolver:
                 assets=(page_asset,),
                 reason="sizes_unavailable",
             )
-        sizes = _mapping(payload.get("sizes")).get("size")
+        sizes = as_mapping(payload.get("sizes")).get("size")
         if not isinstance(sizes, list):
             return ResolutionResult(
                 status="resolved_page_only",

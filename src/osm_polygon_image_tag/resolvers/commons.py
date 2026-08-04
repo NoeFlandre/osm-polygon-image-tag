@@ -1,7 +1,13 @@
 from collections.abc import Mapping, Sequence
-from typing import Protocol, cast
 from urllib.parse import urlencode
 
+from osm_polygon_image_tag.resolvers.response import (
+    MetadataClient,
+    as_integer,
+    as_mapping,
+    as_sequence,
+    as_text,
+)
 from osm_polygon_image_tag.resolvers.types import (
     ResolutionResult,
     ResolvedAsset,
@@ -17,48 +23,26 @@ _HEADERS = {
 }
 
 
-class MetadataClient(Protocol):
-    async def get_json(
-        self, url: str, *, headers: Mapping[str, str] | None = None
-    ) -> Mapping[str, object]: ...
-
-
-def _mapping(value: object) -> Mapping[str, object]:
-    return cast(Mapping[str, object], value) if isinstance(value, Mapping) else {}
-
-
-def _sequence(value: object) -> Sequence[object]:
-    return value if isinstance(value, list | tuple) else ()
-
-
-def _text(value: object) -> str | None:
-    return value if isinstance(value, str) and value else None
-
-
-def _integer(value: object) -> int | None:
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
-
-
 def _metadata_value(metadata: Mapping[str, object], key: str) -> str | None:
-    return _text(_mapping(metadata.get(key)).get("value"))
+    return as_text(as_mapping(metadata.get(key)).get("value"))
 
 
 def _asset(page: Mapping[str, object]) -> ResolvedAsset | None:
-    info_values = _sequence(page.get("imageinfo"))
+    info_values = as_sequence(page.get("imageinfo"))
     if not info_values:
         return None
-    info = _mapping(info_values[0])
-    mime_type = _text(info.get("mime"))
+    info = as_mapping(info_values[0])
+    mime_type = as_text(info.get("mime"))
     if mime_type is not None and not mime_type.startswith("image/"):
         return None
-    metadata = _mapping(info.get("extmetadata"))
+    metadata = as_mapping(info.get("extmetadata"))
     return ResolvedAsset(
         provider_asset_id=str(page["pageid"]) if isinstance(page.get("pageid"), int) else None,
-        page_url=_text(info.get("descriptionurl")),
-        image_url=_text(info.get("url")),
+        page_url=as_text(info.get("descriptionurl")),
+        image_url=as_text(info.get("url")),
         mime_type=mime_type,
-        width=_integer(info.get("width")),
-        height=_integer(info.get("height")),
+        width=as_integer(info.get("width")),
+        height=as_integer(info.get("height")),
         license_id=_metadata_value(metadata, "LicenseShortName"),
         license_url=_metadata_value(metadata, "LicenseUrl"),
         author=_metadata_value(metadata, "Artist"),
@@ -98,18 +82,18 @@ class CommonsResolver:
                     "titles": "|".join(batch),
                 }
             )
-            pages = _sequence(_mapping(payload.get("query")).get("pages"))
+            pages = as_sequence(as_mapping(payload.get("query")).get("pages"))
             if not pages:
-                pages = tuple(_mapping(_mapping(payload.get("query")).get("pages")).values())
+                pages = tuple(as_mapping(as_mapping(payload.get("query")).get("pages")).values())
             for page_value in pages:
-                page = _mapping(page_value)
+                page = as_mapping(page_value)
                 if page.get("missing") is True:
                     continue
-                title = _text(page.get("title"))
+                title = as_text(page.get("title"))
                 asset = _asset(page)
                 if title is not None and asset is not None:
                     assets_by_title[title] = asset
-                elif _sequence(page.get("imageinfo")):
+                elif as_sequence(page.get("imageinfo")):
                     saw_non_image = True
         assets = tuple(assets_by_title[title] for title in titles if title in assets_by_title)
         if assets:
@@ -133,16 +117,16 @@ class CommonsResolver:
             if continuation is not None:
                 parameters["cmcontinue"] = continuation
             payload = await self._request(parameters)
-            for value in _sequence(_mapping(payload.get("query")).get("categorymembers")):
-                member = _mapping(value)
-                page_id = _integer(member.get("pageid"))
-                member_title = _text(member.get("title"))
+            for value in as_sequence(as_mapping(payload.get("query")).get("categorymembers")):
+                member = as_mapping(value)
+                page_id = as_integer(member.get("pageid"))
+                member_title = as_text(member.get("title"))
                 if page_id is not None and member_title is not None:
                     members.append((page_id, member_title))
             continue_value = payload.get("continue")
             if continue_value is None:
                 break
-            continuation = _text(_mapping(continue_value).get("cmcontinue"))
+            continuation = as_text(as_mapping(continue_value).get("cmcontinue"))
             if continuation is None:
                 return ResolutionResult(
                     status="temporary_failure",

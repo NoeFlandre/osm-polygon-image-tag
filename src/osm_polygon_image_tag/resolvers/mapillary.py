@@ -1,8 +1,12 @@
-from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Protocol, cast
 from urllib.parse import parse_qs, urlencode, urlparse
 
+from osm_polygon_image_tag.resolvers.response import (
+    MetadataClient,
+    as_integer,
+    as_mapping,
+    as_text,
+)
 from osm_polygon_image_tag.resolvers.types import (
     ResolutionResult,
     ResolvedAsset,
@@ -10,24 +14,6 @@ from osm_polygon_image_tag.resolvers.types import (
 )
 
 _FIELDS = "id,thumb_2048_url,thumb_original_url,width,height,captured_at"
-
-
-class MetadataClient(Protocol):
-    async def get_json(
-        self, url: str, *, headers: Mapping[str, str] | None = None
-    ) -> Mapping[str, object]: ...
-
-
-def _mapping(value: object) -> Mapping[str, object]:
-    return cast(Mapping[str, object], value) if isinstance(value, Mapping) else {}
-
-
-def _text(value: object) -> str | None:
-    return value if isinstance(value, str) and value else None
-
-
-def _integer(value: object) -> int | None:
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def _expiry(url: str | None) -> datetime | None:
@@ -61,13 +47,13 @@ class MapillaryResolver:
             f"https://graph.mapillary.com/{canonical_reference}?{query}",
             headers={"Authorization": f"OAuth {token}"},
         )
-        error = _mapping(payload.get("error"))
+        error = as_mapping(payload.get("error"))
         if error:
-            code = _integer(error.get("code"))
+            code = as_integer(error.get("code"))
             status = "requires_auth" if code == 190 else "not_found"
             return ResolutionResult(status=status, reason="mapillary_api_error")
-        image_url = _text(payload.get("thumb_original_url"))
-        thumbnail_url = _text(payload.get("thumb_2048_url"))
+        image_url = as_text(payload.get("thumb_original_url"))
+        thumbnail_url = as_text(payload.get("thumb_2048_url"))
         if image_url is None and thumbnail_url is None:
             return ResolutionResult(
                 status="not_found",
@@ -77,13 +63,13 @@ class MapillaryResolver:
             status="resolved",
             assets=(
                 ResolvedAsset(
-                    provider_asset_id=_text(payload.get("id")) or canonical_reference,
+                    provider_asset_id=as_text(payload.get("id")) or canonical_reference,
                     page_url=page_url,
                     image_url=image_url or thumbnail_url,
                     thumbnail_url=thumbnail_url,
                     image_url_expires_at=_expiry(image_url or thumbnail_url),
-                    width=_integer(payload.get("width")),
-                    height=_integer(payload.get("height")),
+                    width=as_integer(payload.get("width")),
+                    height=as_integer(payload.get("height")),
                 ),
             ),
         )
