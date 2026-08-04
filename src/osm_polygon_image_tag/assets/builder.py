@@ -114,7 +114,6 @@ async def _resolve(
         bbox=polygon_bbox(row),
         resolver_contract_version=resolver_contract_version,
     )
-    cache.put(record)
     return record, False, True
 
 
@@ -187,6 +186,13 @@ async def build_asset_shard(
 
         resolved = await asyncio.gather(
             *(resolve_one(key, row, reference) for key, (row, reference) in unique.items())
+        )
+        cache.put_many(
+            tuple(
+                record
+                for _key, record, cache_hit, cacheable in resolved
+                if cacheable and not cache_hit
+            )
         )
         records = {key: record for key, record, _cache_hit, _cacheable in resolved}
         cache_hits += sum(cache_hit for _key, _record, cache_hit, _cacheable in resolved)

@@ -87,14 +87,30 @@ class ResolutionCache:
         return record
 
     def put(self, record: ResolutionRecord) -> None:
-        validate_resolution_record(record)
-        payload_json = canonical_record_bytes(record).decode()
-        digest = hashlib.sha256(payload_json.encode()).hexdigest()
-        retry_after = record.retry_after.isoformat() if record.retry_after is not None else None
+        self.put_many((record,))
+
+    def put_many(self, records: Sequence[ResolutionRecord]) -> None:
+        values: list[tuple[object, ...]] = []
+        for record in records:
+            validate_resolution_record(record)
+            payload_json = canonical_record_bytes(record).decode()
+            values.append(
+                (
+                    record.provider,
+                    record.canonical_reference,
+                    record.resolver_contract_version,
+                    record.status,
+                    payload_json,
+                    hashlib.sha256(payload_json.encode()).hexdigest(),
+                    record.retry_after.isoformat() if record.retry_after is not None else None,
+                )
+            )
+        if not values:
+            return
         with self._lock:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
-                self._connection.execute(
+                self._connection.executemany(
                     """
                     INSERT INTO resolutions (
                         provider, canonical_reference, resolver_contract_version,
@@ -106,15 +122,7 @@ class ResolutionCache:
                                   response_sha256=excluded.response_sha256,
                                   retry_after=excluded.retry_after
                     """,
-                    (
-                        record.provider,
-                        record.canonical_reference,
-                        record.resolver_contract_version,
-                        record.status,
-                        payload_json,
-                        digest,
-                        retry_after,
-                    ),
+                    values,
                 )
                 self._connection.commit()
             except BaseException:

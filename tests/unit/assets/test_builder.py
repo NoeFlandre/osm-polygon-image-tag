@@ -217,6 +217,42 @@ async def test_builder_reuses_resolved_records_for_snapshot(
 
 
 @pytest.mark.asyncio
+async def test_builder_batches_fresh_cache_records_per_flush(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, polygon_path, data_root = polygon_fixture(
+        tmp_path,
+        tags={"panoramax": PANORAMAX_ID, "panoramax:0": "second-picture"},
+    )
+    resolver = Resolver()
+
+    with ResolutionCache.open(data_root) as cache:
+        calls: list[tuple[ResolutionRecord, ...]] = []
+        original_put_many = cache.put_many
+
+        def capture_put_many(records: list[ResolutionRecord]) -> None:
+            calls.append(tuple(records))
+            original_put_many(records)
+
+        monkeypatch.setattr(cache, "put_many", capture_put_many)
+        result = await build_asset_shard(
+            manifest,
+            polygon_path,
+            data_root,
+            cache=cache,
+            registry=Registry(resolver),
+            stop_requested=lambda: False,
+            progress=lambda _event: None,
+            resolver_contract_version=1,
+        )
+
+    assert result.status == "built"
+    assert [[record.canonical_reference for record in batch] for batch in calls] == [
+        [PANORAMAX_ID, "second-picture"]
+    ]
+
+
+@pytest.mark.asyncio
 async def test_builder_globally_sorts_rows_across_bounded_chunks(tmp_path: Path) -> None:
     manifest, polygon_path, data_root = polygon_fixture(tmp_path)
     polygon_rows = []

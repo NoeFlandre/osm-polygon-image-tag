@@ -88,6 +88,31 @@ def test_failed_transaction_preserves_previous_record(tmp_path: Path) -> None:
         assert cache.get(original.key) == original
 
 
+def test_put_many_commits_records_in_one_transaction(tmp_path: Path) -> None:
+    records = [_record("first"), _record("second")]
+    with ResolutionCache.open(tmp_path) as cache:
+        statements: list[str] = []
+        cache._connection.set_trace_callback(statements.append)
+
+        cache.put_many(records)
+
+        assert all(cache.get(record.key) == record for record in records)
+
+    assert sum(statement.startswith("BEGIN IMMEDIATE") for statement in statements) == 1
+    assert sum(statement == "COMMIT" for statement in statements) == 1
+
+
+def test_put_many_rolls_back_all_records_on_validation_failure(tmp_path: Path) -> None:
+    valid = _record("valid")
+    invalid = _record("https://provider.test/item?token=secret")
+    with ResolutionCache.open(tmp_path) as cache:
+        with pytest.raises(ResolutionCacheError, match="secret-bearing"):
+            cache.put_many([valid, invalid])
+
+        assert cache.get(valid.key) is None
+        assert cache.get(invalid.key) is None
+
+
 def test_process_local_writer_lock_serializes_threads(tmp_path: Path) -> None:
     with ResolutionCache.open(tmp_path) as cache:
         records = [_record(str(index)) for index in range(40)]
