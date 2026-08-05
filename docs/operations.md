@@ -106,12 +106,19 @@ a long pause.
 Fast resume queues all compatible polygon manifests. Existing compatible
 asset manifests skip without provider calls. Missing asset shards read only
 polygon Parquet and cache; the PBF is neither opened nor rebuilt. Metadata and
-publication run after new polygon or asset outputs. Receipts suppress a
-redundant Hub commit on an unchanged second run.
+publication run after new polygon or asset outputs when publishing is enabled.
+Receipts suppress a redundant Hub commit on an unchanged second run.
 
-After extraction finishes, ongoing asset work is checkpointed every 25 shards.
-Each checkpoint runs between shard writes, regenerates both catalogs/card, and
-publishes only changed verified artifacts. A final receipt-aware flush follows.
+During `run-and-publish`, the enrichment worker publishes checkpoints after
+every completed asset shard (interval `every=1`). These periodic checkpoints,
+as well as explicit checkpoints triggered after each completed PBF, are
+coordinated with the main extraction thread so that metadata regeneration and
+publication never run while a PBF build has active temporary files in `data/`
+or `tmp/`. The `run` command performs the same enrichment backfill without a
+publisher and therefore performs only its final metadata refresh. Temporary
+files remain protected by strict publication-inventory validation, which
+rejects any unexpected entries. Stopping and resuming remains safe at the
+documented checkpoint boundaries.
 
 ## Credentials and credential-aware resume
 

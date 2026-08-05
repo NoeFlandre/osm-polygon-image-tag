@@ -82,6 +82,7 @@ def _build_sources(
     enrichment_worker: EnrichmentController | None,
     metadata_builder: MetadataBuilder,
     publisher: Publisher | None,
+    refresh_lock: threading.Lock,
 ) -> list[BuildResult]:
     results: list[BuildResult] = []
     worker_started = False
@@ -104,7 +105,8 @@ def _build_sources(
                     "source_bytes": source.size_bytes,
                 }
             )
-            result = build(source, paths)
+            with refresh_lock:
+                result = build(source, paths)
             results.append(result)
             if enrichment_worker is not None and result.manifest_path.is_file():
                 enrichment_worker.submit(
@@ -128,6 +130,7 @@ def _build_sources(
                         emit,
                         metadata_builder=metadata_builder,
                         publisher=publisher,
+                        refresh_lock=refresh_lock,
                     )
                 )
             if result.status == "skipped" or enrichment_worker is not None:
@@ -137,6 +140,7 @@ def _build_sources(
                 emit,
                 metadata_builder=metadata_builder,
                 publisher=publisher,
+                refresh_lock=refresh_lock,
             )
     except BaseException:
         token.request()
@@ -153,21 +157,23 @@ def _refresh_artifacts(
     *,
     metadata_builder: MetadataBuilder | None,
     publisher: Publisher | None,
+    refresh_lock: threading.Lock,
 ) -> None:
-    builder = metadata_builder or generate_metadata
-    emit({"event": "metadata_started"})
-    metadata = builder(paths.data_root)
-    emit(
-        {
-            "event": "metadata_completed",
-            "statistics_path": str(metadata.statistics_path),
-            "card_path": str(metadata.card_path),
-        }
-    )
-    if publisher is not None:
-        emit({"event": "publication_started"})
-        publication = publisher(paths.data_root)
-        emit({"event": "publication_completed", **publication.to_dict()})
+    with refresh_lock:
+        builder = metadata_builder or generate_metadata
+        emit({"event": "metadata_started"})
+        metadata = builder(paths.data_root)
+        emit(
+            {
+                "event": "metadata_completed",
+                "statistics_path": str(metadata.statistics_path),
+                "card_path": str(metadata.card_path),
+            }
+        )
+        if publisher is not None:
+            emit({"event": "publication_started"})
+            publication = publisher(paths.data_root)
+            emit({"event": "publication_completed", **publication.to_dict()})
 
 
 def run_all(
@@ -198,6 +204,7 @@ def run_all(
             "pbf_bytes": sum(source.size_bytes for source in sources),
         }
     )
+    refresh_lock = threading.Lock()
     if enrichment_worker is not None and publisher is not None:
         enrichment_worker.enable_checkpoints(
             lambda: _refresh_artifacts(
@@ -205,6 +212,7 @@ def run_all(
                 emit,
                 metadata_builder=metadata_builder,
                 publisher=publisher,
+                refresh_lock=refresh_lock,
             ),
             every=1,
         )
@@ -217,6 +225,7 @@ def run_all(
         enrichment_worker=enrichment_worker,
         metadata_builder=metadata_builder,
         publisher=publisher,
+        refresh_lock=refresh_lock,
     )
     enrichment = (
         enrichment_worker.finish() if enrichment_worker is not None else EnrichmentSummary()
@@ -231,6 +240,7 @@ def run_all(
             emit,
             metadata_builder=metadata_builder,
             publisher=publisher,
+            refresh_lock=refresh_lock,
         )
     summary = RunSummary(
         processed=len(results),

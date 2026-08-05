@@ -60,6 +60,22 @@ provider SDK failures into project errors.
 - Core owns shared contracts and the Arrow/CRS schema. It does not depend on
   project orchestration, ingestion, artifacts, integrations, or provider SDKs.
 
+## Worker/main-thread coordination
+
+The orchestrator runs sequential PBF extraction on the main thread while a
+background enrichment worker processes asset shards concurrently. When a
+publisher is configured, both threads may trigger metadata regeneration and
+publication: the main thread after each completed PBF, and the worker thread
+after every completed asset shard (`every=1`). To prevent the worker's periodic
+checkpoints from observing transient PBF-build temporary files (atomic-write
+`.tmp` siblings in `data/` and `tag-store-*.sqlite` in `tmp/`), the
+orchestrator uses a per-run `threading.Lock` (`refresh_lock`). The main thread
+holds this lock for the entire duration of each `build()` call; all refresh
+paths (periodic worker checkpoints, explicit main-thread checkpoints, and the
+final flush) acquire the same lock before invoking `_refresh_artifacts`. This
+ensures that publication inventory validation never sees pipeline-owned
+temporary files, while HTTP enrichment work proceeds without serialization.
+
 ## Public surfaces
 
 - `osm_polygon_image_tag.cli:run` is the installed entry point.
