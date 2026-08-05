@@ -43,18 +43,39 @@ def polygon_identity(manifest: Manifest) -> AssetSourceIdentity:
     )
 
 
-def _needs_refresh(path: Path, capability: Callable[[str], str]) -> bool:
-    refresh_before = datetime.now(UTC) + timedelta(hours=1)
+def _needs_refresh(
+    path: Path,
+    capability: Callable[[str], str],
+    *,
+    check_retry_after: bool = False,
+) -> bool:
+    now = datetime.now(UTC)
+    refresh_before = now + timedelta(hours=1)
     parquet = pq.ParquetFile(path)
-    for batch in parquet.iter_batches(columns=["provider", "status", "image_url_expires_at"]):
+    columns = ["provider", "status", "image_url_expires_at"]
+    if check_retry_after:
+        columns.append("retry_after")
+    for batch in parquet.iter_batches(columns=columns):
         providers = batch.column(0).to_pylist()
         statuses = batch.column(1).to_pylist()
         expiries = batch.column(2).to_pylist()
-        for provider, status, expiry in zip(providers, statuses, expiries, strict=True):
+        retries = batch.column(3).to_pylist() if check_retry_after else [None] * len(providers)
+        rows = zip(providers, statuses, expiries, retries, strict=True)
+        for provider, status, expiry, retry_after in rows:
             if isinstance(expiry, datetime) and expiry <= refresh_before:
                 return True
             if not isinstance(provider, str):
                 continue
+            if (
+                check_retry_after
+                and status == "temporary_failure"
+                and (
+                    not isinstance(retry_after, datetime)
+                    or retry_after.tzinfo is None
+                    or retry_after <= now
+                )
+            ):
+                return True
             if status == "requires_auth" and (
                 provider == "wikimedia_commons" or capability(provider) == "credentialed"
             ):
@@ -83,11 +104,14 @@ def reusable_manifest(
             manifest.source != source
             or manifest.asset_schema_version != ASSET_SCHEMA_VERSION
             or manifest.resolver_contract_version != resolver_contract_version
-            or manifest.counts.pending_retries > 0
             or not output.is_file()
             or output.is_symlink()
             or output.stat().st_size != manifest.output.size_bytes
-            or _needs_refresh(output, capability)
+            or _needs_refresh(
+                output,
+                capability,
+                check_retry_after=manifest.counts.pending_retries > 0,
+            )
         ):
             return None
         return manifest

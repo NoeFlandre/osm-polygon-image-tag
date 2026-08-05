@@ -104,10 +104,13 @@ a long pause.
 ## No-PBF historical backfill
 
 Fast resume queues all compatible polygon manifests. Existing compatible
-asset manifests skip without provider calls. Missing asset shards read only
-polygon Parquet and cache; the PBF is neither opened nor rebuilt. Metadata and
-publication run after new polygon or asset outputs when publishing is enabled.
-Receipts suppress a redundant Hub commit on an unchanged second run.
+asset manifests skip without provider calls. A shard containing temporary
+provider failures is also reusable while every recorded `retry_after` cooldown
+is in the future; it is rebuilt only when a retry is due. Missing asset shards
+read only polygon Parquet and cache; the PBF is neither opened nor rebuilt.
+Metadata and publication run after new polygon or asset outputs when publishing
+is enabled. Receipts suppress a redundant Hub commit on an unchanged second
+run.
 
 During `run-and-publish`, the enrichment worker publishes checkpoints after
 every completed asset shard (interval `every=1`). These periodic checkpoints,

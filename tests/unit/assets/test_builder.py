@@ -572,7 +572,7 @@ async def test_credential_does_not_rebuild_unrelated_page_only_rows(tmp_path: Pa
 
 
 @pytest.mark.asyncio
-async def test_temporary_failure_manifest_is_rebuilt_for_future_retry(tmp_path: Path) -> None:
+async def test_temporary_failure_manifest_is_reused_until_retry_is_due(tmp_path: Path) -> None:
     manifest, polygon_path, data_root = polygon_fixture(tmp_path)
 
     class TemporaryRegistry:
@@ -622,8 +622,63 @@ async def test_temporary_failure_manifest_is_rebuilt_for_future_retry(tmp_path: 
             progress=lambda _event: None,
         )
 
-    assert (first.status, second.status) == ("built", "built")
+    assert (first.status, second.status) == ("built", "skipped")
     assert registry.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_due_temporary_failure_manifest_is_rebuilt(tmp_path: Path) -> None:
+    manifest, polygon_path, data_root = polygon_fixture(tmp_path)
+
+    class DueTemporaryRegistry:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def capability(self, provider: str) -> str:
+            del provider
+            return "public"
+
+        async def resolve_reference(
+            self,
+            reference: SourceReference,
+            *,
+            bbox: tuple[float, float, float, float],
+            resolver_contract_version: int,
+        ) -> ResolutionRecord:
+            del bbox
+            self.calls += 1
+            return ResolutionRecord(
+                reference.provider,
+                reference.canonical_reference,
+                resolver_contract_version,
+                "temporary_failure",
+                (),
+                datetime.now(UTC) - timedelta(seconds=1),
+            )
+
+    registry = DueTemporaryRegistry()
+    with ResolutionCache.open(data_root) as cache:
+        first = await build_asset_shard(
+            manifest,
+            polygon_path,
+            data_root,
+            cache=cache,
+            registry=registry,
+            stop_requested=lambda: False,
+            progress=lambda _event: None,
+        )
+        second = await build_asset_shard(
+            manifest,
+            polygon_path,
+            data_root,
+            cache=cache,
+            registry=registry,
+            stop_requested=lambda: False,
+            progress=lambda _event: None,
+        )
+
+    assert (first.status, second.status) == ("built", "built")
+    assert registry.calls == 2
 
 
 @pytest.mark.asyncio

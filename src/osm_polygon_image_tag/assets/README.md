@@ -18,3 +18,8 @@ the cache or included in a resolution snapshot, so they cannot abort a shard.
 The strict `validate_resolution_record` guard still rejects any such reference
 that reaches a durable cache write through any path. Resume reads only the
 finalized polygon Parquet and cache; completed PBFs are never reopened.
+
+Temporary provider failures retain their `retry_after` cooldown in the asset
+rows. A completed asset shard is reused while all of those cooldowns are in the
+future and is rebuilt once a retry becomes due; authentication, expiry, and
+other credential-aware refresh rules remain unchanged.
