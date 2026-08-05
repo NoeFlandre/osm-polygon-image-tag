@@ -3,6 +3,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from json import dumps as json_dumps
 from pathlib import Path
+from typing import cast
 
 import pyarrow.parquet as pq
 import pytest
@@ -17,7 +18,7 @@ from osm_polygon_image_tag.assets.cache import (
     ResolutionRecord,
 )
 from osm_polygon_image_tag.assets.manifest import read_asset_manifest
-from osm_polygon_image_tag.assets.polygon_input import POLYGON_COLUMNS
+from osm_polygon_image_tag.assets.polygon_input import POLYGON_COLUMNS, REFERENCE_COLUMNS
 from osm_polygon_image_tag.assets.references import SourceReference
 from osm_polygon_image_tag.core.manifest import (
     DATASET_SCHEMA_VERSION,
@@ -164,6 +165,36 @@ async def test_builder_reads_only_needed_polygon_columns_and_deduplicates_resolu
         f"https://cdn.test/{PANORAMAX_ID}.jpg",
         f"https://cdn.test/{PANORAMAX_ID}.jpg",
     ]
+
+
+@pytest.mark.asyncio
+async def test_builder_prunes_progress_count_to_reference_columns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, polygon_path, data_root = polygon_fixture(tmp_path)
+    original_iter_batches = pq.ParquetFile.iter_batches
+    seen_columns: list[tuple[str, ...]] = []
+
+    def capture_iter_batches(parquet: pq.ParquetFile, *args: object, **kwargs: object) -> object:
+        columns = kwargs.get("columns")
+        if isinstance(columns, list):
+            seen_columns.append(tuple(cast(list[str], columns)))
+        return original_iter_batches(parquet, *args, **kwargs)
+
+    monkeypatch.setattr(pq.ParquetFile, "iter_batches", capture_iter_batches)
+    with ResolutionCache.open(data_root) as cache:
+        result = await build_asset_shard(
+            manifest,
+            polygon_path,
+            data_root,
+            cache=cache,
+            registry=Registry(Resolver()),
+            stop_requested=lambda: False,
+            progress=lambda _event: None,
+        )
+
+    assert result.status == "built"
+    assert seen_columns[:2] == [REFERENCE_COLUMNS, POLYGON_COLUMNS]
 
 
 @pytest.mark.asyncio

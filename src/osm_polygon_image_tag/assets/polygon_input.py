@@ -1,4 +1,4 @@
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 
 import pyarrow.parquet as pq
@@ -22,11 +22,26 @@ POLYGON_COLUMNS = (
     "flickr",
     "bubbleid",
 )
+REFERENCE_COLUMNS = (
+    "tags",
+    "image",
+    "wikimedia_commons",
+    "mapillary",
+    "panoramax",
+    "panoramax_values",
+    "kartaview",
+    "flickr",
+    "bubbleid",
+)
 
 
-def polygon_rows(path: Path) -> Iterator[dict[str, object]]:
+def polygon_rows(
+    path: Path,
+    *,
+    columns: Sequence[str] = POLYGON_COLUMNS,
+) -> Iterator[dict[str, object]]:
     parquet = pq.ParquetFile(path)
-    for batch in parquet.iter_batches(batch_size=4096, columns=list(POLYGON_COLUMNS)):
+    for batch in parquet.iter_batches(batch_size=4096, columns=list(columns)):
         yield from batch.to_pylist()
 
 

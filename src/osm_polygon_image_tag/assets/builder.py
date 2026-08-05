@@ -22,7 +22,7 @@ from osm_polygon_image_tag.assets.manifest import (
     AssetRunCounts,
     write_asset_manifest,
 )
-from osm_polygon_image_tag.assets.polygon_input import polygon_bbox, polygon_rows
+from osm_polygon_image_tag.assets.polygon_input import REFERENCE_COLUMNS, polygon_bbox, polygon_rows
 from osm_polygon_image_tag.assets.references import SourceReference, references_from_row
 from osm_polygon_image_tag.assets.resolution import is_cacheable_canonical_reference
 from osm_polygon_image_tag.assets.rows import asset_rows
@@ -151,7 +151,10 @@ async def build_asset_shard(
     if stop_requested():
         return AssetBuildResult("pending", polygon_shard, asset_path, manifest_path, 0, {})
 
-    reference_count = sum(len(references_from_row(row)) for row in polygon_rows(polygon_path))
+    reference_count = sum(
+        len(references_from_row(row))
+        for row in polygon_rows(polygon_path, columns=REFERENCE_COLUMNS)
+    )
     semaphore = asyncio.Semaphore(16)
     statuses: Counter[str] = Counter()
     providers: Counter[str] = Counter()
