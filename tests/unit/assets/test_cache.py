@@ -1,3 +1,5 @@
+import hashlib
+import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -11,6 +13,7 @@ from osm_polygon_image_tag.assets.cache import (
     ResolutionKey,
     ResolutionRecord,
 )
+from osm_polygon_image_tag.assets.resolution import record_payload
 
 PANORAMAX_ID = "4492cea4-1018-4285-8074-cf3d37f3c673"
 
@@ -151,6 +154,45 @@ def test_cache_rejection_error_never_contains_secret_value(tmp_path: Path) -> No
             cache.put(record)
 
         assert redacted_query_value not in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    ["invalid_json", "missing_status", "invalid_retry_after", "invalid_assets"],
+)
+def test_cache_wraps_malformed_rows_as_cache_errors(tmp_path: Path, corruption: str) -> None:
+    record = _record()
+    with ResolutionCache.open(tmp_path) as cache:
+        cache.put(record)
+        payload = record_payload(record)
+        if corruption == "invalid_json":
+            payload_json = "{not valid json"
+        else:
+            if corruption == "missing_status":
+                del payload["status"]
+            elif corruption == "invalid_retry_after":
+                payload["retry_after"] = "not-a-timestamp"
+            else:
+                payload["assets"] = [None]
+            payload_json = json.dumps(payload)
+        cache._connection.execute(
+            """
+            UPDATE resolutions
+            SET payload_json = ?, response_sha256 = ?
+            WHERE provider = ? AND canonical_reference = ?
+              AND resolver_contract_version = ?
+            """,
+            (
+                payload_json,
+                hashlib.sha256(payload_json.encode()).hexdigest(),
+                record.provider,
+                record.canonical_reference,
+                record.resolver_contract_version,
+            ),
+        )
+
+        with pytest.raises(ResolutionCacheError, match="invalid cached resolution"):
+            cache.get(record.key)
 
 
 def test_resolution_snapshot_succeeds_with_no_cacheable_keys(tmp_path: Path) -> None:

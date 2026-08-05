@@ -70,20 +70,27 @@ class ResolutionCache:
         payload_json, stored_sha256 = row
         if hashlib.sha256(payload_json.encode()).hexdigest() != stored_sha256:
             raise ResolutionCacheError("cached resolution digest mismatch")
-        payload = json.loads(payload_json)
-        retry_value = payload["retry_after"]
-        record = ResolutionRecord(
-            provider=payload["provider"],
-            canonical_reference=payload["canonical_reference"],
-            resolver_contract_version=payload["resolver_contract_version"],
-            status=payload["status"],
-            assets=tuple(dict(asset) for asset in payload["assets"]),
-            retry_after=datetime.fromisoformat(retry_value) if retry_value is not None else None,
-            reason=payload.get("reason"),
-            category_truncated=payload.get("category_truncated", False),
-            attempt_count=payload.get("attempt_count", 1),
-        )
-        validate_resolution_record(record)
+        try:
+            payload = json.loads(payload_json)
+            retry_value = payload["retry_after"]
+            record = ResolutionRecord(
+                provider=payload["provider"],
+                canonical_reference=payload["canonical_reference"],
+                resolver_contract_version=payload["resolver_contract_version"],
+                status=payload["status"],
+                assets=tuple(dict(asset) for asset in payload["assets"]),
+                retry_after=(
+                    datetime.fromisoformat(retry_value) if retry_value is not None else None
+                ),
+                reason=payload.get("reason"),
+                category_truncated=payload.get("category_truncated", False),
+                attempt_count=payload.get("attempt_count", 1),
+            )
+            validate_resolution_record(record)
+        except ResolutionCacheError:
+            raise
+        except (AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            raise ResolutionCacheError("invalid cached resolution") from error
         return record
 
     def put(self, record: ResolutionRecord) -> None:

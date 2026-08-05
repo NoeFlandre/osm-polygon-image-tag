@@ -163,6 +163,11 @@ The existing strict rejection in `validate_resolution_record` remains in force
 for every durable cache write, so a non-cacheable reference can never reach the
 cache or snapshot even through other code paths.
 
+Resolution cache reads are fail-closed: a digest mismatch or malformed durable
+payload raises `ResolutionCacheError` rather than leaking a raw JSON, key, or
+timestamp parsing exception. The pipeline never silently repairs or discards a
+corrupt cache row; the error remains available to the operator for recovery.
+
 Derived asset URLs retain source query parameters. The resolver is handed the
 original request URL verbatim and every URL it returns is recorded faithfully,
 because rewriting or stripping query parameters would discard provenance and
