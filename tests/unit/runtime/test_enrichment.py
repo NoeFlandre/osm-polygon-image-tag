@@ -12,6 +12,7 @@ from osm_polygon_image_tag.core.manifest import (
 )
 from osm_polygon_image_tag.runtime.enrichment import (
     AssetJob,
+    EnrichmentSummary,
     EnrichmentWorker,
 )
 
@@ -108,6 +109,60 @@ def test_worker_overlaps_main_thread_extraction_and_accepts_new_jobs(tmp_path: P
     assert summary.skipped == 2
 
 
+def test_worker_start_returns_while_initial_backfill_is_running(tmp_path: Path) -> None:
+    first_started = threading.Event()
+    release_first = threading.Event()
+    start_returned = threading.Event()
+    start_failures: list[BaseException] = []
+
+    async def build(manifest: Manifest, path: Path, data_root: Path, **_kwargs: object):
+        del manifest, data_root
+        if path.name == "0.parquet":
+            first_started.set()
+            assert release_first.wait(timeout=2)
+        return AssetBuildResult(
+            "skipped",
+            f"data/{path.name}",
+            tmp_path / "assets" / f"{path.stem}.assets.parquet",
+            tmp_path / "asset-manifests" / f"{path.stem}.json",
+            1,
+            {"resolved": 1},
+        )
+
+    worker = EnrichmentWorker(
+        tmp_path,
+        builder=build,
+        cache_factory=lambda _root: object(),
+        registry_factory=lambda: object(),
+        stop_requested=lambda: False,
+        progress=lambda _event: None,
+    )
+    jobs = [AssetJob(_manifest(str(index)), tmp_path / f"{index}.parquet") for index in range(18)]
+
+    def start_worker() -> None:
+        try:
+            worker.start(jobs)
+        except BaseException as error:
+            start_failures.append(error)
+        finally:
+            start_returned.set()
+
+    starter = threading.Thread(target=start_worker, daemon=True)
+    starter.start()
+    summary: EnrichmentSummary | None = None
+    try:
+        assert first_started.wait(timeout=2)
+        assert start_returned.wait(timeout=1), "start blocked on initial asset backfill"
+        assert not start_failures
+    finally:
+        release_first.set()
+        starter.join(timeout=2)
+        summary = worker.finish()
+
+    assert summary is not None
+    assert summary.skipped == len(jobs)
+
+
 def test_worker_marks_unstarted_jobs_pending_after_stop(tmp_path: Path) -> None:
     stopped = True
 
@@ -129,7 +184,7 @@ def test_worker_marks_unstarted_jobs_pending_after_stop(tmp_path: Path) -> None:
     assert summary.pending == 1
 
 
-def test_worker_failure_does_not_deadlock_a_full_producer_queue(tmp_path: Path) -> None:
+def test_worker_failure_does_not_deadlock_initial_backfill_start(tmp_path: Path) -> None:
     async def fail(*_args: object, **_kwargs: object) -> AssetBuildResult:
         raise RuntimeError("resolver failed")
 
@@ -159,7 +214,7 @@ def test_worker_failure_does_not_deadlock_a_full_producer_queue(tmp_path: Path) 
     producer.start()
 
     assert returned.wait(timeout=2), "producer blocked after enrichment worker failed"
-    assert isinstance(failures[0], RuntimeError)
+    assert not failures
     with pytest.raises(RuntimeError, match="resolver failed"):
         worker.finish()
 

@@ -1,7 +1,7 @@
 import asyncio
 import queue
 import threading
-from collections import Counter
+from collections import Counter, deque
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -51,6 +51,9 @@ class EnrichmentWorker:
         self._stop_requested = stop_requested
         self._progress = progress
         self._jobs: queue.Queue[AssetJob | None] = queue.Queue(maxsize=16)
+        self._initial_jobs: deque[AssetJob] = deque()
+        self._prefer_initial = True
+        self._finish_marker_seen = False
         self._seen: set[str] = set()
         self._seen_lock = threading.Lock()
         self._thread: threading.Thread | None = None
@@ -71,22 +74,19 @@ class EnrichmentWorker:
         if self._thread is not None:
             raise RuntimeError("enrichment worker already started")
         ordered = sorted(initial_jobs, key=lambda job: job.polygon_path.as_posix())
+        for job in ordered:
+            if self._register(job):
+                self._initial_jobs.append(job)
         self._thread = threading.Thread(
             target=self._thread_main,
             name="image-asset-enrichment",
             daemon=False,
         )
         self._thread.start()
-        for job in ordered:
-            self.submit(job)
 
     def submit(self, job: AssetJob) -> bool:
-        identity = job.polygon_path.resolve().as_posix()
-        with self._seen_lock:
-            if identity in self._seen:
-                return False
-            self._seen.add(identity)
-            self._submitted += 1
+        if not self._register(job):
+            return False
         while True:
             if self._error is not None:
                 raise self._error
@@ -95,6 +95,15 @@ class EnrichmentWorker:
                 break
             except queue.Full:
                 continue
+        return True
+
+    def _register(self, job: AssetJob) -> bool:
+        identity = job.polygon_path.resolve().as_posix()
+        with self._seen_lock:
+            if identity in self._seen:
+                return False
+            self._seen.add(identity)
+            self._submitted += 1
         return True
 
     def enable_checkpoints(self, callback: Checkpoint, *, every: int) -> None:
@@ -166,12 +175,14 @@ class EnrichmentWorker:
                     self._paused.set()
                     self._resume.wait()
                     self._paused.clear()
-                try:
-                    job = self._jobs.get(timeout=0.1)
-                except queue.Empty:
+                job = self._next_job()
+                if job is _NO_JOB:
                     continue
                 if job is None:
+                    if self._initial_jobs:
+                        continue
                     break
+                assert isinstance(job, AssetJob)
                 index += 1
                 if self._stop_requested():
                     pending += 1
@@ -246,3 +257,29 @@ class EnrichmentWorker:
             }
         )
         return summary
+
+    def _next_job(self) -> AssetJob | None | object:
+        if self._initial_jobs:
+            if self._prefer_initial:
+                self._prefer_initial = False
+                return self._initial_jobs.popleft()
+            try:
+                job = self._jobs.get_nowait()
+            except queue.Empty:
+                self._prefer_initial = True
+                return self._initial_jobs.popleft()
+            if job is None and self._initial_jobs:
+                self._finish_marker_seen = True
+                self._prefer_initial = False
+                return self._initial_jobs.popleft()
+            self._prefer_initial = True
+            return job
+        if self._finish_marker_seen:
+            return None
+        try:
+            return self._jobs.get(timeout=0.1)
+        except queue.Empty:
+            return _NO_JOB
+
+
+_NO_JOB = object()
