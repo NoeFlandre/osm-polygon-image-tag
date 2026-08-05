@@ -22,7 +22,11 @@ from osm_polygon_image_tag.assets.manifest import (
     AssetRunCounts,
     write_asset_manifest,
 )
-from osm_polygon_image_tag.assets.polygon_input import REFERENCE_COLUMNS, polygon_bbox, polygon_rows
+from osm_polygon_image_tag.assets.polygon_input import (
+    count_polygon_references,
+    polygon_bbox,
+    polygon_rows,
+)
 from osm_polygon_image_tag.assets.references import SourceReference, references_from_row
 from osm_polygon_image_tag.assets.resolution import is_cacheable_canonical_reference
 from osm_polygon_image_tag.assets.rows import asset_rows
@@ -67,6 +71,7 @@ async def _resolve(
     cache: ResolutionCache,
     registry: Registry,
     resolver_contract_version: int,
+    cached_records: Mapping[ResolutionKey, ResolutionRecord] | None = None,
 ) -> tuple[ResolutionRecord, bool, bool]:
     key = _key(reference, resolver_contract_version)
     if not is_cacheable_canonical_reference(reference.canonical_reference):
@@ -79,7 +84,7 @@ async def _resolve(
             resolver_contract_version=resolver_contract_version,
         )
         return record, False, False
-    cached = cache.get(key)
+    cached = cache.get(key) if cached_records is None else cached_records.get(key)
     now = datetime.now(UTC)
     refresh_before = now + timedelta(hours=1)
     expiring = cached is not None and any(
@@ -151,10 +156,7 @@ async def build_asset_shard(
     if stop_requested():
         return AssetBuildResult("pending", polygon_shard, asset_path, manifest_path, 0, {})
 
-    reference_count = sum(
-        len(references_from_row(row))
-        for row in polygon_rows(polygon_path, columns=REFERENCE_COLUMNS)
-    )
+    reference_count = count_polygon_references(polygon_path)
     semaphore = asyncio.Semaphore(16)
     statuses: Counter[str] = Counter()
     providers: Counter[str] = Counter()
@@ -184,9 +186,21 @@ async def build_asset_shard(
                     cache=cache,
                     registry=registry,
                     resolver_contract_version=resolver_contract_version,
+                    cached_records=cached_records,
                 )
             return key, record, cache_hit, cacheable
 
+        cacheable_keys = tuple(
+            key
+            for key, (_row, reference) in unique.items()
+            if is_cacheable_canonical_reference(reference.canonical_reference)
+        )
+        missing_cache_keys = tuple(key for key in cacheable_keys if key not in snapshot_records)
+        if missing_cache_keys:
+            snapshot_records.update(cache.get_many(missing_cache_keys))
+        cached_records = {
+            key: snapshot_records[key] for key in cacheable_keys if key in snapshot_records
+        }
         resolved = await asyncio.gather(
             *(resolve_one(key, row, reference) for key, (row, reference) in unique.items())
         )

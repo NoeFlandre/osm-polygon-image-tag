@@ -105,6 +105,30 @@ def test_put_many_commits_records_in_one_transaction(tmp_path: Path) -> None:
     assert sum(statement == "COMMIT" for statement in statements) == 1
 
 
+def test_get_many_returns_only_requested_cached_records(tmp_path: Path) -> None:
+    records = [_record(str(index)) for index in range(201)]
+    missing = ResolutionKey("panoramax", "missing", 1)
+    with ResolutionCache.open(tmp_path) as cache:
+        cache.put_many(records)
+
+        loaded = cache.get_many([*reversed([record.key for record in records]), missing])
+
+    assert loaded == {record.key: record for record in records}
+
+
+def test_get_many_rejects_a_corrupt_cached_record(tmp_path: Path) -> None:
+    record = _record()
+    with ResolutionCache.open(tmp_path) as cache:
+        cache.put(record)
+        cache._connection.execute(
+            "UPDATE resolutions SET payload_json = ? WHERE provider = ?",
+            ("{not valid json", record.provider),
+        )
+
+        with pytest.raises(ResolutionCacheError, match="digest mismatch"):
+            cache.get_many([record.key])
+
+
 def test_put_many_rolls_back_all_records_on_validation_failure(tmp_path: Path) -> None:
     valid = _record("valid")
     invalid = _record("https://provider.test/item?token=secret")

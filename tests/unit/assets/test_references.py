@@ -2,7 +2,10 @@ from collections.abc import Mapping
 
 import pytest
 
-from osm_polygon_image_tag.assets.references import SourceReference, references_from_row
+from osm_polygon_image_tag.assets.references import (
+    SourceReference,
+    references_from_row,
+)
 
 
 @pytest.mark.parametrize(

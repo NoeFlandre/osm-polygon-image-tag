@@ -18,7 +18,11 @@ from osm_polygon_image_tag.assets.cache import (
     ResolutionRecord,
 )
 from osm_polygon_image_tag.assets.manifest import read_asset_manifest
-from osm_polygon_image_tag.assets.polygon_input import POLYGON_COLUMNS, REFERENCE_COLUMNS
+from osm_polygon_image_tag.assets.polygon_input import (
+    POLYGON_COLUMNS,
+    REFERENCE_COLUMNS,
+    count_polygon_references,
+)
 from osm_polygon_image_tag.assets.references import SourceReference
 from osm_polygon_image_tag.core.manifest import (
     DATASET_SCHEMA_VERSION,
@@ -197,6 +201,118 @@ async def test_builder_prunes_progress_count_to_reference_columns(
     assert seen_columns[:2] == [REFERENCE_COLUMNS, POLYGON_COLUMNS]
 
 
+def test_count_polygon_references_matches_normalized_asset_references(tmp_path: Path) -> None:
+    _manifest, polygon_path, _data_root = polygon_fixture(
+        tmp_path,
+        tags={
+            "image": "https://example.test/image.jpg",
+            "panoramax": PANORAMAX_ID,
+            "panoramax:0": PANORAMAX_ID,
+        },
+    )
+
+    assert count_polygon_references(polygon_path) == 3
+
+
+@pytest.mark.asyncio
+async def test_builder_reads_cacheable_references_in_one_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image_url = "https://example.test/image.jpg"
+    manifest, polygon_path, data_root = polygon_fixture(
+        tmp_path,
+        tags={"image": image_url, "panoramax": PANORAMAX_ID},
+    )
+    keys = (
+        ResolutionKey("image", image_url, 1),
+        ResolutionKey("panoramax", PANORAMAX_ID, 1),
+    )
+    cached = {
+        key: ResolutionRecord(
+            key.provider,
+            key.canonical_reference,
+            key.resolver_contract_version,
+            "resolved",
+            ({"image_url": f"https://cdn.test/{key.provider}.jpg"},),
+            None,
+        )
+        for key in keys
+    }
+
+    with ResolutionCache.open(data_root) as cache:
+        cache.put_many(tuple(cached.values()))
+        calls: list[tuple[ResolutionKey, ...]] = []
+
+        def get_many(requested: tuple[ResolutionKey, ...]) -> dict[ResolutionKey, ResolutionRecord]:
+            calls.append(requested)
+            return {key: cached[key] for key in requested}
+
+        monkeypatch.setattr(cache, "get_many", get_many, raising=False)
+        result = await build_asset_shard(
+            manifest,
+            polygon_path,
+            data_root,
+            cache=cache,
+            registry=Registry(Resolver()),
+            stop_requested=lambda: False,
+            progress=lambda _event: None,
+        )
+
+    assert result.status == "built"
+    assert calls == [keys]
+
+
+@pytest.mark.asyncio
+async def test_builder_reuses_cache_records_across_resolution_flushes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, polygon_path, data_root = polygon_fixture(tmp_path)
+    rows = []
+    for osm_id in range(256):
+        row = _polygon_row({"panoramax": PANORAMAX_ID})
+        row["osm_id"] = osm_id
+        rows.append(row)
+    write_geoparquet(rows, polygon_path)
+    manifest = Manifest(
+        manifest.manifest_schema_version,
+        manifest.processing_contract_version,
+        manifest.dataset_schema_version,
+        manifest.source,
+        OutputIdentity(
+            manifest.output.relative_path,
+            polygon_path.stat().st_size,
+            file_sha256(polygon_path),
+            len(rows),
+        ),
+        manifest.osmium_version,
+        RunCounts(len(rows), {}),
+    )
+
+    with ResolutionCache.open(data_root) as cache:
+        original_get_many = cache.get_many
+        calls: list[tuple[ResolutionKey, ...]] = []
+
+        def count_get_many(
+            keys: tuple[ResolutionKey, ...],
+        ) -> dict[ResolutionKey, ResolutionRecord]:
+            calls.append(keys)
+            return original_get_many(keys)
+
+        monkeypatch.setattr(cache, "get_many", count_get_many)
+        result = await build_asset_shard(
+            manifest,
+            polygon_path,
+            data_root,
+            cache=cache,
+            registry=Registry(Resolver()),
+            stop_requested=lambda: False,
+            progress=lambda _event: None,
+        )
+
+    assert result.status == "built"
+    assert calls == [(ResolutionKey("panoramax", PANORAMAX_ID, 1),)]
+
+
 @pytest.mark.asyncio
 async def test_builder_reuses_resolved_records_for_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -220,14 +336,16 @@ async def test_builder_reuses_resolved_records_for_snapshot(
 
     with ResolutionCache.open(data_root) as cache:
         cache.put(cached)
-        original_get = cache.get
-        get_calls: list[ResolutionKey] = []
+        original_get_many = cache.get_many
+        get_many_calls: list[tuple[ResolutionKey, ...]] = []
 
-        def count_get(key: ResolutionKey) -> ResolutionRecord | None:
-            get_calls.append(key)
-            return original_get(key)
+        def count_get_many(
+            keys: tuple[ResolutionKey, ...],
+        ) -> dict[ResolutionKey, ResolutionRecord]:
+            get_many_calls.append(keys)
+            return original_get_many(keys)
 
-        monkeypatch.setattr(cache, "get", count_get)
+        monkeypatch.setattr(cache, "get_many", count_get_many)
 
         result = await build_asset_shard(
             manifest,
@@ -242,7 +360,7 @@ async def test_builder_reuses_resolved_records_for_snapshot(
 
     counts = read_asset_manifest(result.manifest_path, data_root=data_root).counts
     assert result.status == "built"
-    assert get_calls == [cached.key, ResolutionKey("panoramax", "second-picture", 1)]
+    assert get_many_calls == [(cached.key, ResolutionKey("panoramax", "second-picture", 1))]
     assert counts.cache_hits == 1
     assert counts.resolver_requests == 1
 

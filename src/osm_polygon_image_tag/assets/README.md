@@ -23,3 +23,11 @@ Temporary provider failures retain their `retry_after` cooldown in the asset
 rows. A completed asset shard is reused while all of those cooldowns are in the
 future and is rebuilt once a retry becomes due; authentication, expiry, and
 other credential-aware refresh rules remain unchanged.
+
+The progress-count pass reads only the normalized provider columns and
+`panoramax_values`; the full `tags` map is read once by the actual asset build
+pass. Within a shard, cacheable resolutions are loaded in bounded SQLite
+batches and reused in memory across resolution chunks. These shortcuts affect
+only local lookup and progress accounting; reference extraction, resolver
+decisions, cache validation, output ordering, and persisted artifacts remain
+unchanged.

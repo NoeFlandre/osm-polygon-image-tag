@@ -53,6 +53,11 @@ provider SDK failures into project errors.
 - A bounded enrichment worker overlaps asset backfill with sequential PBF
   extraction. Provider calls use a transactional cache, global concurrency
   bound, provider semaphores, and request pacing.
+- Asset shards keep the exact full-tag build pass, while their progress count
+  uses only normalized reference columns. Cacheable resolutions are fetched in
+  bounded SQLite batches and reused for the rest of the shard, avoiding
+  repeated synchronous cache queries without changing resolver or snapshot
+  semantics.
 - The HTTP boundary validates every DNS answer, pins the validated address,
   revalidates redirects, strips cross-origin credentials, and bounds metadata.
 - Hugging Face SDK code lives in a single adapter; artifact planning depends
