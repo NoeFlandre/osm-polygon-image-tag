@@ -12,11 +12,14 @@ in this package may import from `ingest`, `artifacts`, `runtime`, or
   `PreflightError`, `PublicationError`).
 - The PyArrow GeoParquet schema and the manifest shape plus its versioning
   constants.
+- The `atomic_write_bytes` primitive used by small durable manifests, metadata,
+  receipts, and private caches.
 - The progress reporting protocol used by long-running commands.
 
 ## What must not belong here
 
-- Anything that opens files inside the managed data root.
+- Pipeline-specific data discovery or validation; callers supply the exact
+  paths they own.
 - Anything that imports `huggingface_hub` or other provider SDKs.
 - Anything that calls `osmium` or other subprocess executables.
 

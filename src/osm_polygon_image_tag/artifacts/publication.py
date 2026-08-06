@@ -11,13 +11,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from osm_polygon_image_tag.artifacts.publication_inventory import publication_inventory
 from osm_polygon_image_tag.artifacts.publication_types import Hub, HubCommit, PublicationFile
+from osm_polygon_image_tag.core.atomic import atomic_write_bytes
 from osm_polygon_image_tag.core.errors import PublicationError
 
 EXPECTED_REPO = "NoeFlandre/osm-polygon-image-tag"
@@ -41,20 +40,10 @@ def _inventory_digest(files: tuple[PublicationFile, ...]) -> str:
 
 
 def _write_receipt(path: Path, payload: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     content = (
         json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"
     ).encode()
-    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as temporary:
-        temporary_path = Path(temporary.name)
-        temporary.write(content)
-        temporary.flush()
-        os.fsync(temporary.fileno())
-    try:
-        os.replace(temporary_path, path)
-    except BaseException:
-        temporary_path.unlink(missing_ok=True)
-        raise
+    atomic_write_bytes(path, content)
 
 
 def publish_dataset(

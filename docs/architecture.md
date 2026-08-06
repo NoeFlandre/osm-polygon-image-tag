@@ -15,7 +15,7 @@ src/osm_polygon_image_tag/
   __init__.py        # __version__
   py.typed           # typed-package marker
   _data/             # package data (osmium-export.json)
-  core/              # configuration, errors, schema, manifest, progress
+  core/              # configuration, errors, schema, manifest, atomic writes, progress
   ingest/            # PBF discovery, osmium subprocess, tag store, transform
   assets/            # asset schema, cache, manifests, deterministic shards
   resolvers/         # hardened HTTP boundary and provider adapters
@@ -62,8 +62,9 @@ provider SDK failures into project errors.
   revalidates redirects, strips cross-origin credentials, and bounds metadata.
 - Hugging Face SDK code lives in a single adapter; artifact planning depends
   only on the structural `Hub` protocol.
-- Core owns shared contracts and the Arrow/CRS schema. It does not depend on
-  project orchestration, ingestion, artifacts, integrations, or provider SDKs.
+- Core owns shared contracts, the Arrow/CRS schema, and the common durable
+  atomic-byte-write primitive. It does not depend on project orchestration,
+  ingestion, artifacts, integrations, or provider SDKs.
 
 ## Worker/main-thread coordination
 

@@ -5,10 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
-import tempfile
 from pathlib import Path
 from typing import TypedDict
+
+from osm_polygon_image_tag.core.atomic import atomic_write_bytes
 
 from .h3 import DEFAULT_H3_RESOLUTION
 
@@ -37,22 +37,7 @@ def cache_root(data_root: Path) -> Path:
 
 def _atomic_write(path: Path, content: bytes) -> None:
     """Write bytes atomically and remove the temporary sibling on failure."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        prefix=f".{path.name}.",
-        suffix=".tmp",
-        dir=path.parent,
-        delete=False,
-    ) as temporary:
-        temporary_path = Path(temporary.name)
-        temporary.write(content)
-        temporary.flush()
-        os.fsync(temporary.fileno())
-    try:
-        os.replace(temporary_path, path)
-    except BaseException:
-        temporary_path.unlink(missing_ok=True)
-        raise
+    atomic_write_bytes(path, content, prefix=f".{path.name}.", suffix=".tmp")
 
 
 def _shard_cache_path(cache_dir: Path) -> Path:

@@ -1,6 +1,4 @@
 import json
-import os
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,6 +11,7 @@ from osm_polygon_image_tag.artifacts.geography.pipeline import build_geographic_
 from osm_polygon_image_tag.artifacts.hero import HERO_PNG_RELATIVE, packaged_hero_path
 from osm_polygon_image_tag.artifacts.manifest_inventory import verified_manifests
 from osm_polygon_image_tag.artifacts.statistics import dataset_statistics
+from osm_polygon_image_tag.core.atomic import atomic_write_bytes
 from osm_polygon_image_tag.core.progress import Progress
 
 
@@ -29,19 +28,7 @@ class MetadataResult:
 
 
 def _atomic_write(path: Path, content: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent, delete=False
-    ) as temporary:
-        temporary_path = Path(temporary.name)
-        temporary.write(content)
-        temporary.flush()
-        os.fsync(temporary.fileno())
-    try:
-        os.replace(temporary_path, path)
-    except BaseException:
-        temporary_path.unlink(missing_ok=True)
-        raise
+    atomic_write_bytes(path, content, prefix=f".{path.name}.", suffix=".tmp")
 
 
 def _sync_hero(data_root: Path) -> None:

@@ -1,11 +1,10 @@
 import hashlib
 import json
-import os
-import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from osm_polygon_image_tag.core.atomic import atomic_write_bytes
 from osm_polygon_image_tag.core.errors import ImageTagPipelineError
 
 MANIFEST_SCHEMA_VERSION = 1
@@ -85,27 +84,13 @@ def _canonical_bytes(manifest: Manifest) -> bytes:
 
 
 def write_manifest(manifest: Manifest, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
+    atomic_write_bytes(
+        path,
+        _canonical_bytes(manifest),
         prefix=f".{path.name}.",
         suffix=".tmp",
-        dir=path.parent,
-        delete=False,
-    ) as temporary:
-        temporary_path = Path(temporary.name)
-        temporary.write(_canonical_bytes(manifest))
-        temporary.flush()
-        os.fsync(temporary.fileno())
-    try:
-        os.replace(temporary_path, path)
-        directory_fd = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-    except BaseException:
-        temporary_path.unlink(missing_ok=True)
-        raise
+        sync_directory=True,
+    )
 
 
 def _require_keys(value: Any, keys: set[str], *, name: str) -> dict[str, Any]:
