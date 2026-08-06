@@ -14,6 +14,8 @@ Deterministic H3 polygon-density map for the Hugging Face dataset card.
 
 - `models`: typed dataclasses for cells, statistics, results, and the
   dedicated `GeographicMapError`.
+- `cache`: private cache paths, schema validation, deterministic JSON
+  serialization, input digests, and atomic persistence.
 - `h3`: coordinate validation, H3 cell assignment at resolution 3,
   antimeridian-safe cell rings.
 - `inputs`: column-pruned, batched reads of finalized `polygons`
@@ -22,8 +24,8 @@ Deterministic H3 polygon-density map for the Hugging Face dataset card.
 - `basemap`: loader and renderer for the bundled Natural Earth GeoJSON.
 - `render`: deterministic matplotlib PNG renderer (1600×800 at 100 DPI,
   world extent, `magma` `LogNorm`, atomic file writes).
-- `pipeline`: per-shard aggregation, cache reuse, combined statistics,
-  and the public `build_geographic_map` entry point.
+- `pipeline`: per-shard aggregation, cache reuse decisions, combined
+  statistics, and the public `build_geographic_map` entry point.
 
 ## Contracts
 

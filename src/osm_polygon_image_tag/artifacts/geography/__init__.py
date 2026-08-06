@@ -8,11 +8,12 @@ The raw PBF source tree is read-only and never opened here.
 Modules:
 
 - :mod:`.models` typed dataclasses and the dedicated :class:`GeographicMapError`.
+- :mod:`.cache` private cache validation, deterministic serialization, and atomic persistence.
 - :mod:`.h3` coordinate validation, H3 cell assignment, antimeridian-safe rings.
 - :mod:`.inputs` column-pruned, batched reads of finalized polygon shards.
 - :mod:`.basemap` bundled Natural Earth 110m land GeoJSON loader.
 - :mod:`.render` matplotlib renderer (atomic PNG writes, log normalization).
-- :mod:`.pipeline` per-shard aggregation, deterministic caching, and combined
+- :mod:`.pipeline` per-shard aggregation, cache reuse decisions, and combined
   public map generation.
 
 The public entry point is :func:`pipeline.build_geographic_map`, used by

@@ -20,7 +20,7 @@ src/osm_polygon_image_tag/
   assets/            # asset schema, cache, manifests, deterministic shards
   resolvers/         # hardened HTTP boundary and provider adapters
   artifacts/         # storage, inventory, catalog, reporting, publication
-  artifacts/geography/  # H3 + matplotlib map: models, h3, inputs, basemap, render, pipeline
+  artifacts/geography/  # H3 + matplotlib map: models, cache, h3, inputs, basemap, render, pipeline
   runtime/           # pipeline, enrichment, console, orchestration
   integrations/      # provider adapters (Hugging Face Hub)
 ```
