@@ -91,6 +91,17 @@ def test_asset_inventory_rejects_size_mismatch(tmp_path: Path) -> None:
         verified_asset_manifests(tmp_path)
 
 
+def test_asset_inventory_rejects_symlinked_output(tmp_path: Path) -> None:
+    _manifest, output, _path = asset_fixture(tmp_path)
+    external = tmp_path / "external.parquet"
+    external.write_bytes(output.read_bytes())
+    output.unlink()
+    output.symlink_to(external)
+
+    with pytest.raises(ValueError, match="symlink"):
+        verified_asset_manifests(tmp_path)
+
+
 def test_asset_inventory_skips_manifest_from_old_asset_contract(tmp_path: Path) -> None:
     _manifest, _output, manifest_path = asset_fixture(tmp_path)
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))

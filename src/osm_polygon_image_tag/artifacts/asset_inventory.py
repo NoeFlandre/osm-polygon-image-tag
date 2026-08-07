@@ -13,6 +13,7 @@ from osm_polygon_image_tag.assets.schema import (
     ASSET_SCHEMA_VERSION,
     RESOLVER_CONTRACT_VERSION,
 )
+from osm_polygon_image_tag.core.paths import resolve_managed_output
 from osm_polygon_image_tag.core.progress import Progress
 
 
@@ -48,11 +49,11 @@ def verified_asset_manifests(
             or manifest.resolver_contract_version != RESOLVER_CONTRACT_VERSION
         ):
             continue
-        output = (root / manifest.output.relative_path).resolve()
-        if root not in output.parents:
-            raise ValueError(f"asset output escapes data root: {output}")
-        if output.is_symlink():
-            raise ValueError(f"asset output is a symlink: {output}")
+        output = resolve_managed_output(
+            root,
+            manifest.output.relative_path,
+            label="asset output",
+        )
         if output.stat().st_size != manifest.output.size_bytes:
             raise ValueError(f"asset output identity mismatch: {output}")
         verified.append((manifest, output))

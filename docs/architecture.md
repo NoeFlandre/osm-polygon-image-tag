@@ -67,8 +67,9 @@ provider SDK failures into project errors.
 - Hugging Face SDK code lives in a single adapter; artifact planning depends
   only on the structural `Hub` protocol.
 - Core owns shared contracts, the Arrow/CRS schema, and the common durable
-  atomic-byte-write primitive. It does not depend on project orchestration,
-  ingestion, artifacts, integrations, or provider SDKs.
+  atomic-byte-write and managed-output path-safety primitives. It does not
+  depend on project orchestration, ingestion, artifacts, integrations, or
+  provider SDKs.
 
 ## Worker/main-thread coordination
 

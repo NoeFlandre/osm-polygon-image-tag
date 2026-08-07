@@ -23,6 +23,7 @@ from osm_polygon_image_tag.core.manifest import (
     file_sha256,
     read_manifest,
 )
+from osm_polygon_image_tag.core.paths import resolve_managed_output
 
 
 def _reject_symlinks(root: Path) -> None:
@@ -32,14 +33,17 @@ def _reject_symlinks(root: Path) -> None:
             raise PublicationError(f"symlink in data root: {relative}")
 
 
+def _resolve_publication_output(root: Path, relative: str, *, label: str) -> Path:
+    try:
+        return resolve_managed_output(root, relative, label=label)
+    except ValueError as error:
+        raise PublicationError(str(error)) from error
+
+
 def _regular_file(root: Path, relative: str) -> Path:
-    path = root / relative
-    if path.is_symlink():
-        raise PublicationError(f"publication artifact must not be a symlink: {relative}")
+    path = _resolve_publication_output(root, relative, label="publication artifact")
     if not path.is_file():
         raise PublicationError(f"missing publication artifact: {relative}")
-    if root.resolve() not in path.resolve().parents:
-        raise PublicationError(f"publication artifact escapes data root: {relative}")
     return path
 
 
@@ -96,9 +100,11 @@ def publication_inventory(data_root: Path) -> tuple[PublicationFile, ...]:
         manifest = read_manifest(path)
         relative_manifest = path.relative_to(root).as_posix()
         managed.add(relative_manifest)
-        output = (root / manifest.output.relative_path).resolve()
-        if root not in output.parents:
-            raise PublicationError(f"managed output escapes data root: {output}")
+        output = _resolve_publication_output(
+            root,
+            manifest.output.relative_path,
+            label="managed output",
+        )
         managed.add(output.relative_to(root).as_posix())
         if (
             manifest.processing_contract_version == PROCESSING_CONTRACT_VERSION
@@ -115,9 +121,11 @@ def publication_inventory(data_root: Path) -> tuple[PublicationFile, ...]:
             header = read_asset_manifest_header(path, data_root=root)
             output_relative = header.output_relative_path
             manifest = None
-        output = (root / output_relative).resolve()
-        if root not in output.parents:
-            raise PublicationError(f"managed asset output escapes data root: {output}")
+        output = _resolve_publication_output(
+            root,
+            output_relative,
+            label="managed asset output",
+        )
         managed.add(output.relative_to(root).as_posix())
         if manifest is not None and (
             manifest.asset_schema_version == ASSET_SCHEMA_VERSION

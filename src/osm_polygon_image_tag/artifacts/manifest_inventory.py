@@ -8,6 +8,7 @@ from osm_polygon_image_tag.core.manifest import (
     Manifest,
     read_manifest,
 )
+from osm_polygon_image_tag.core.paths import resolve_managed_output
 from osm_polygon_image_tag.core.progress import Progress
 
 
@@ -28,9 +29,11 @@ def verified_manifests(
             and manifest.dataset_schema_version == DATASET_SCHEMA_VERSION
         )
         if compatible:
-            output = (data_root / manifest.output.relative_path).resolve()
-            if data_root.resolve() not in output.parents:
-                raise ValueError(f"output escapes data root: {output}")
+            output = resolve_managed_output(
+                data_root,
+                manifest.output.relative_path,
+                label="output",
+            )
             if output.stat().st_size != manifest.output.size_bytes:
                 raise ValueError(f"output identity mismatch: {output}")
             verified.append((manifest, output))

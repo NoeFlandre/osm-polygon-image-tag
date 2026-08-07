@@ -180,6 +180,35 @@ def test_metadata_reuses_manifest_digest_without_rehashing_parquet(
     assert manifests == [(manifest, data.resolve())]
 
 
+def test_manifest_inventory_rejects_symlinked_output(tmp_path: Path) -> None:
+    output = tmp_path / "data" / "region.parquet"
+    write_geoparquet([], output)
+    write_manifest(
+        Manifest(
+            manifest_schema_version=1,
+            processing_contract_version=PROCESSING_CONTRACT_VERSION,
+            dataset_schema_version=DATASET_SCHEMA_VERSION,
+            source=SourceIdentity("region.osm.pbf", 1, 1, "a" * 64),
+            output=OutputIdentity(
+                "data/region.parquet",
+                output.stat().st_size,
+                file_sha256(output),
+                0,
+            ),
+            osmium_version="test",
+            counts=RunCounts(0, {}),
+        ),
+        tmp_path / "manifests" / "region.manifest.json",
+    )
+    external = tmp_path / "external.parquet"
+    external.write_bytes(output.read_bytes())
+    output.unlink()
+    output.symlink_to(external)
+
+    with pytest.raises(ValueError, match="symlink"):
+        verified_manifests(tmp_path)
+
+
 def _asset_row(status: str, *, image_url: str | None) -> dict[str, object]:
     return {
         "source_pbf": "region.osm.pbf",

@@ -82,6 +82,7 @@ def _is_reusable(
             or manifest.source.mtime_ns != source_stat.st_mtime_ns
             or manifest.output.relative_path
             != output_path.relative_to(manifest_path.parents[1]).as_posix()
+            or output_path.is_symlink()
             or not output_path.is_file()
             or output_path.stat().st_size != manifest.output.size_bytes
         ):

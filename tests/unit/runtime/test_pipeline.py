@@ -124,6 +124,28 @@ def test_resume_fast_path_does_not_rehash_finalized_source_or_output(
     assert resumed.status == "skipped"
 
 
+def test_resume_does_not_reuse_a_symlinked_polygon_output(tmp_path: Path) -> None:
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    pbf = raw / "region.osm.pbf"
+    pbf.write_bytes(b"source")
+    paths = PipelinePaths.build(source_root=raw, data_root=tmp_path / "generated")
+    source = _source(pbf)
+    result = build_one(
+        source,
+        paths,
+        scanner=_scanner([SourceTagRecord("way", 1, {"image": "exact"})], []),
+        exporter=_exporter([_record(1)], []),
+        version_getter=_version,
+    )
+    external = tmp_path / "external.parquet"
+    external.write_bytes(result.output_path.read_bytes())
+    result.output_path.unlink()
+    result.output_path.symlink_to(external)
+
+    assert verify_one(source, paths) is False
+
+
 def test_explicit_verify_retains_deep_digest_validation(tmp_path: Path) -> None:
     raw = tmp_path / "raw"
     raw.mkdir()

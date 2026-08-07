@@ -14,6 +14,8 @@ in this package may import from `ingest`, `artifacts`, `runtime`, or
   constants.
 - The `atomic_write_bytes` primitive used by small durable manifests, metadata,
   receipts, and private caches.
+- `resolve_managed_output`, which canonicalizes manifest-relative outputs while
+  rejecting data-root escapes and symlink components.
 - The progress reporting protocol used by long-running commands.
 
 ## What must not belong here
