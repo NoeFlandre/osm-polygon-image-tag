@@ -12,6 +12,10 @@ from osm_polygon_image_tag.assets.manifest import (
     AssetSourceIdentity,
     read_asset_manifest,
 )
+from osm_polygon_image_tag.assets.refresh_policy import (
+    credential_refresh_required,
+    retry_refresh_required,
+)
 from osm_polygon_image_tag.assets.schema import ASSET_SCHEMA_VERSION
 from osm_polygon_image_tag.core.manifest import Manifest
 
@@ -66,25 +70,14 @@ def _needs_refresh(
                 return True
             if not isinstance(provider, str):
                 continue
-            if (
-                check_retry_after
-                and status == "temporary_failure"
-                and (
-                    not isinstance(retry_after, datetime)
-                    or retry_after.tzinfo is None
-                    or retry_after <= now
-                )
+            if retry_refresh_required(
+                status,
+                retry_after,
+                now,
+                enabled=check_retry_after,
             ):
                 return True
-            if status == "requires_auth" and (
-                provider == "wikimedia_commons" or capability(provider) == "credentialed"
-            ):
-                return True
-            if (
-                status == "resolved_page_only"
-                and provider in {"mapillary", "flickr"}
-                and capability(provider) == "credentialed"
-            ):
+            if credential_refresh_required(provider, status, capability):
                 return True
     return False
 

@@ -50,6 +50,10 @@ provider SDK failures into project errors.
 - Asset schema/resolver contracts are versioned independently from polygon
   extraction. Historical enrichment consumes finalized Parquet and never
   invalidates schema-v2 polygon shards.
+- Credential-aware asset refresh and retry-cooldown decisions are implemented
+  once as a pure policy boundary and reused by both per-reference resolution
+  and whole-shard resume checks, preventing those resumability paths from
+  drifting apart.
 - A bounded enrichment worker overlaps asset backfill with sequential PBF
   extraction. Provider calls use a transactional cache, global concurrency
   bound, provider semaphores, and request pacing.

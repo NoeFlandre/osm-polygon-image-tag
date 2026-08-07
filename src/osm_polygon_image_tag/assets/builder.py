@@ -28,6 +28,10 @@ from osm_polygon_image_tag.assets.polygon_input import (
     polygon_rows,
 )
 from osm_polygon_image_tag.assets.references import SourceReference, references_from_row
+from osm_polygon_image_tag.assets.refresh_policy import (
+    credential_refresh_required,
+    retry_refresh_required,
+)
 from osm_polygon_image_tag.assets.resolution import is_cacheable_canonical_reference
 from osm_polygon_image_tag.assets.rows import asset_rows
 from osm_polygon_image_tag.assets.schema import (
@@ -92,26 +96,13 @@ async def _resolve(
         and datetime.fromisoformat(value) <= refresh_before
         for asset in cached.assets
     )
-    capability = registry.capability(reference.provider)
-    credentialed = capability == "credentialed"
-    auth_limited = cached is not None and (
-        (
-            cached.status == "requires_auth"
-            and (credentialed or reference.provider == "wikimedia_commons")
-        )
-        or (
-            cached.status == "resolved_page_only"
-            and credentialed
-            and reference.provider in {"mapillary", "flickr"}
-        )
+    auth_limited = cached is not None and credential_refresh_required(
+        reference.provider,
+        cached.status,
+        registry.capability,
     )
     if cached is not None and not (
-        expiring
-        or auth_limited
-        or (
-            cached.status == "temporary_failure"
-            and (cached.retry_after is None or cached.retry_after <= now)
-        )
+        expiring or auth_limited or retry_refresh_required(cached.status, cached.retry_after, now)
     ):
         return cached, True, True
     record = await registry.resolve_reference(

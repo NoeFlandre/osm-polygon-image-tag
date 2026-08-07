@@ -21,8 +21,10 @@ finalized polygon Parquet and cache; completed PBFs are never reopened.
 
 Temporary provider failures retain their `retry_after` cooldown in the asset
 rows. A completed asset shard is reused while all of those cooldowns are in the
-future and is rebuilt once a retry becomes due; authentication, expiry, and
-other credential-aware refresh rules remain unchanged.
+future and is rebuilt once a retry becomes due. The credential and retry
+decisions used for both cache resolution and whole-shard resume live in a
+single pure refresh-policy boundary, so those paths cannot drift apart; the
+separate expiry checks retain their input-specific timestamp handling.
 
 The progress-count pass reads only the normalized provider columns and
 `panoramax_values`; the full `tags` map is read once by the actual asset build
