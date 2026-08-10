@@ -277,7 +277,10 @@ def test_old_contract_manifest_cannot_escape_data_root(tmp_path: Path) -> None:
         publication_inventory(tmp_path)
 
 
-@pytest.mark.parametrize("unexpected", ["secret.txt", "catalog/extra.txt"])
+@pytest.mark.parametrize(
+    "unexpected",
+    ["secret.txt", "catalog/extra.txt", "data/.DS_Store"],
+)
 def test_inventory_rejects_unexpected_entries(tmp_path: Path, unexpected: str) -> None:
     _dataset(tmp_path)
     path = tmp_path / unexpected

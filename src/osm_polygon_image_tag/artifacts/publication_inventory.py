@@ -1,5 +1,6 @@
 """Build the exact allow-listed inventory eligible for publication."""
 
+from collections.abc import Iterable
 from pathlib import Path
 
 from osm_polygon_image_tag.artifacts.asset_inventory import verified_asset_manifests
@@ -7,6 +8,7 @@ from osm_polygon_image_tag.artifacts.hero import HERO_PNG_RELATIVE, packaged_her
 from osm_polygon_image_tag.artifacts.manifest_inventory import verified_manifests
 from osm_polygon_image_tag.artifacts.publication_types import PublicationFile
 from osm_polygon_image_tag.assets.manifest import (
+    AssetManifest,
     AssetManifestError,
     read_asset_manifest,
     read_asset_manifest_header,
@@ -20,6 +22,7 @@ from osm_polygon_image_tag.core.errors import PublicationError
 from osm_polygon_image_tag.core.manifest import (
     DATASET_SCHEMA_VERSION,
     PROCESSING_CONTRACT_VERSION,
+    Manifest,
     file_sha256,
     read_manifest,
 )
@@ -58,12 +61,11 @@ def _validate_png(path: Path, label: str) -> None:
         raise PublicationError(f"invalid {label}: {path}")
 
 
-def publication_inventory(data_root: Path) -> tuple[PublicationFile, ...]:
-    """Return the deterministic, validated set of files eligible for upload."""
-    root = data_root.resolve()
-    _reject_symlinks(root)
-    manifests = verified_manifests(root)
-    asset_manifests = verified_asset_manifests(root)
+def _verified_output_digests(
+    manifests: Iterable[tuple[Manifest, Path]],
+    asset_manifests: Iterable[tuple[AssetManifest, Path]],
+) -> dict[str, str]:
+    digests = {manifest.output.relative_path: manifest.output.sha256 for manifest, _ in manifests}
     for manifest, output in asset_manifests:
         try:
             validate_asset_parquet(output, expected_rows=manifest.output.row_count)
@@ -71,18 +73,14 @@ def publication_inventory(data_root: Path) -> tuple[PublicationFile, ...]:
             raise PublicationError(f"invalid asset Parquet: {output}") from error
         if file_sha256(output) != manifest.output.sha256:
             raise PublicationError(f"asset digest mismatch: {manifest.output.relative_path}")
-    manifested_digests = {
-        manifest.output.relative_path: manifest.output.sha256 for manifest, _ in manifests
-    }
-    manifested_digests.update(
-        {manifest.output.relative_path: manifest.output.sha256 for manifest, _ in asset_manifests}
-    )
-    allowed = {"README.md", "statistics/dataset-statistics.json"}
-    allowed.update(manifest.output.relative_path for manifest, _ in manifests)
-    allowed.update(manifest.output.relative_path for manifest, _ in asset_manifests)
+        digests[manifest.output.relative_path] = manifest.output.sha256
+    return digests
 
+
+def _validated_png_digests(root: Path) -> dict[str, str]:
     from osm_polygon_image_tag.artifacts.geography.render import GEOGRAPHIC_PNG_RELATIVE
 
+    digests: dict[str, str] = {}
     for relative, label in (
         (GEOGRAPHIC_PNG_RELATIVE, "geographic density PNG"),
         (HERO_PNG_RELATIVE, "hero PNG"),
@@ -91,11 +89,15 @@ def publication_inventory(data_root: Path) -> tuple[PublicationFile, ...]:
         _validate_png(png, label)
         if png.is_symlink():
             raise PublicationError(f"{label} must not be a symlink: {relative}")
-        allowed.add(relative)
-        manifested_digests[relative] = file_sha256(png)
-    if manifested_digests[HERO_PNG_RELATIVE] != file_sha256(packaged_hero_path()):
+        digests[relative] = file_sha256(png)
+    if digests[HERO_PNG_RELATIVE] != file_sha256(packaged_hero_path()):
         raise PublicationError("hero PNG does not match packaged resource")
+    return digests
+
+
+def _managed_polygon_artifacts(root: Path) -> tuple[set[str], set[str]]:
     managed: set[str] = set()
+    eligible_manifests: set[str] = set()
     for path in sorted((root / "manifests").glob("*.manifest.json")):
         manifest = read_manifest(path)
         relative_manifest = path.relative_to(root).as_posix()
@@ -110,7 +112,13 @@ def publication_inventory(data_root: Path) -> tuple[PublicationFile, ...]:
             manifest.processing_contract_version == PROCESSING_CONTRACT_VERSION
             and manifest.dataset_schema_version == DATASET_SCHEMA_VERSION
         ):
-            allowed.add(relative_manifest)
+            eligible_manifests.add(relative_manifest)
+    return managed, eligible_manifests
+
+
+def _managed_asset_artifacts(root: Path) -> tuple[set[str], set[str]]:
+    managed: set[str] = set()
+    eligible_manifests: set[str] = set()
     for path in sorted((root / "asset-manifests").glob("*.assets.manifest.json")):
         relative_manifest = path.relative_to(root).as_posix()
         managed.add(relative_manifest)
@@ -131,7 +139,56 @@ def publication_inventory(data_root: Path) -> tuple[PublicationFile, ...]:
             manifest.asset_schema_version == ASSET_SCHEMA_VERSION
             and manifest.resolver_contract_version == RESOLVER_CONTRACT_VERSION
         ):
-            allowed.add(relative_manifest)
+            eligible_manifests.add(relative_manifest)
+    return managed, eligible_manifests
+
+
+def _actual_files(root: Path) -> set[str]:
+    actual: set[str] = set()
+    for path in root.rglob("*"):
+        relative = path.relative_to(root).as_posix()
+        if path.is_file() and relative != ".DS_Store":
+            actual.add(relative)
+    return actual
+
+
+def _publication_files(
+    root: Path,
+    allowed: set[str],
+    manifested_digests: dict[str, str],
+) -> tuple[PublicationFile, ...]:
+    files: list[PublicationFile] = []
+    for relative in sorted(allowed):
+        path = _regular_file(root, relative)
+        files.append(
+            PublicationFile(
+                local_path=path,
+                remote_path=relative,
+                sha256=manifested_digests.get(relative) or file_sha256(path),
+                size_bytes=path.stat().st_size,
+            )
+        )
+    return tuple(files)
+
+
+def publication_inventory(data_root: Path) -> tuple[PublicationFile, ...]:
+    """Return the deterministic, validated set of files eligible for upload."""
+    root = data_root.resolve()
+    _reject_symlinks(root)
+    manifests = verified_manifests(root)
+    asset_manifests = verified_asset_manifests(root)
+    manifested_digests = _verified_output_digests(manifests, asset_manifests)
+    allowed = {"README.md", "statistics/dataset-statistics.json"}
+    allowed.update(manifest.output.relative_path for manifest, _ in manifests)
+    allowed.update(manifest.output.relative_path for manifest, _ in asset_manifests)
+    png_digests = _validated_png_digests(root)
+    allowed.update(png_digests)
+    manifested_digests.update(png_digests)
+    polygon_managed, polygon_eligible = _managed_polygon_artifacts(root)
+    asset_managed, asset_eligible = _managed_asset_artifacts(root)
+    managed = polygon_managed | asset_managed
+    allowed.update(polygon_eligible)
+    allowed.update(asset_eligible)
     internal = {
         "catalog/catalog.sqlite",
         "catalog/catalog.sqlite-shm",
@@ -139,21 +196,9 @@ def publication_inventory(data_root: Path) -> tuple[PublicationFile, ...]:
         "receipts/publication.json",
         *(managed - allowed),
     }
-    actual: set[str] = set()
-    for path in root.rglob("*"):
-        relative = path.relative_to(root).as_posix()
-        if path.is_file() and relative != ".DS_Store":
-            actual.add(relative)
+    actual = _actual_files(root)
     private = {relative for relative in actual if relative.startswith("cache/")}
     unexpected = actual - allowed - internal - private
     if unexpected:
         raise PublicationError(f"unexpected data-root entries: {sorted(unexpected)}")
-    return tuple(
-        PublicationFile(
-            local_path=(path := _regular_file(root, relative)),
-            remote_path=relative,
-            sha256=manifested_digests.get(relative) or file_sha256(path),
-            size_bytes=path.stat().st_size,
-        )
-        for relative in sorted(allowed)
-    )
+    return _publication_files(root, allowed, manifested_digests)
