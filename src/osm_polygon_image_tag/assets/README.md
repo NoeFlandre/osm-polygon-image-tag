@@ -28,8 +28,10 @@ separate expiry checks retain their input-specific timestamp handling.
 
 The progress-count pass reads only the normalized provider columns and
 `panoramax_values`; the full `tags` map is read once by the actual asset build
-pass. Within a shard, cacheable resolutions are loaded in bounded SQLite
-batches and reused in memory across resolution chunks. These shortcuts affect
-only local lookup and progress accounting; reference extraction, resolver
-decisions, cache validation, output ordering, and persisted artifacts remain
-unchanged.
+pass. `builder.py` owns shard reuse, iteration, atomic output, and manifest
+finalization; `batch.py` owns bounded reference resolution, cache interaction,
+and per-shard accounting. Within a shard, cacheable resolutions are loaded in
+bounded SQLite batches and reused in memory across resolution chunks. These
+shortcuts affect only local lookup and progress accounting; reference
+extraction, resolver decisions, cache validation, output ordering, and
+persisted artifacts remain unchanged.
