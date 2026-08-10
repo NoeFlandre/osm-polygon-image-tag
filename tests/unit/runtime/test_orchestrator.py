@@ -56,18 +56,30 @@ def test_run_all_removes_abandoned_pipeline_temps_before_resuming(tmp_path: Path
     (source / "a.osm.pbf").write_bytes(b"a")
     data_root = tmp_path / "generated"
     data_dir = data_root / "data"
+    assets_dir = data_root / "assets"
     manifests_dir = data_root / "manifests"
     temporary_dir = data_root / "tmp"
     data_dir.mkdir(parents=True)
+    assets_dir.mkdir()
     manifests_dir.mkdir()
     temporary_dir.mkdir()
     data_temp = data_dir / ".region.parquet.k_wyod3b.tmp"
     manifest_temp = manifests_dir / ".region.manifest.json.k_wyod3b.tmp"
     tag_store_temp = temporary_dir / "tag-store-ziwk538k.sqlite"
-    for path in (data_temp, manifest_temp, tag_store_temp):
+    asset_sort_temp = assets_dir / ".asset-sort.4lhdb7ue.sqlite"
+    asset_sort_journal = assets_dir / ".asset-sort.4lhdb7ue.sqlite-journal"
+    for path in (
+        data_temp,
+        manifest_temp,
+        tag_store_temp,
+        asset_sort_temp,
+        asset_sort_journal,
+    ):
         path.write_bytes(b"abandoned")
     unknown = temporary_dir / "keep-me.tmp"
     unknown.write_bytes(b"unknown")
+    unknown_asset = assets_dir / ".asset-sort.not-owned.sqlite"
+    unknown_asset.write_bytes(b"unknown")
     paths = PipelinePaths.build(source_root=source, data_root=data_root)
 
     def build(pbf: PbfSource, _paths: PipelinePaths) -> BuildResult:
@@ -75,12 +87,16 @@ def test_run_all_removes_abandoned_pipeline_temps_before_resuming(tmp_path: Path
         assert not data_temp.exists()
         assert not manifest_temp.exists()
         assert not tag_store_temp.exists()
+        assert not asset_sort_temp.exists()
+        assert not asset_sort_journal.exists()
         assert unknown.exists()
+        assert unknown_asset.exists()
         return _result("a.osm.pbf")
 
     run_all(paths, build=build, metadata_builder=_metadata)
 
     assert unknown.exists()
+    assert unknown_asset.exists()
 
 
 def test_stop_token_prevents_starting_the_next_pbf(tmp_path: Path) -> None:

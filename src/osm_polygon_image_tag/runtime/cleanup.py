@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 
 _ATOMIC_TEMP = re.compile(r"^\.(?P<target>.+)\.[A-Za-z0-9_]{8}\.tmp$")
+_ASSET_SORT_TEMP = re.compile(r"^\.asset-sort\.[A-Za-z0-9_]{8}\.sqlite(?:-journal)?$")
 _TAG_STORE_TEMP = re.compile(r"^tag-store-[A-Za-z0-9_]{8}\.sqlite(?:-(?:wal|shm))?$")
 
 _ATOMIC_LOCATIONS = {
@@ -39,7 +40,10 @@ def cleanup_stale_temps(data_root: Path) -> tuple[Path, ...]:
             if (
                 candidate.is_file()
                 and not candidate.is_symlink()
-                and _is_owned_atomic_temp(candidate, directory_name)
+                and (
+                    _is_owned_atomic_temp(candidate, directory_name)
+                    or (directory_name == "assets" and _ASSET_SORT_TEMP.fullmatch(candidate.name))
+                )
             ):
                 candidate.unlink()
                 removed.append(candidate)
