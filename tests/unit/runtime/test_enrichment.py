@@ -71,6 +71,48 @@ def test_worker_processes_stable_deduplicated_queue_with_progress(tmp_path: Path
     ]
 
 
+def test_worker_prioritizes_missing_asset_artifacts_before_existing(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    async def build(manifest: Manifest, path: Path, data_root: Path, **_kwargs: object):
+        del manifest, data_root
+        calls.append(path.name)
+        return AssetBuildResult(
+            "built",
+            f"data/{path.name}",
+            tmp_path / "assets" / f"{path.stem}.assets.parquet",
+            tmp_path / "asset-manifests" / f"{path.stem}.json",
+            1,
+            {"resolved": 1},
+        )
+
+    existing_assets = tmp_path / "assets"
+    existing_manifests = tmp_path / "asset-manifests"
+    existing_assets.mkdir()
+    existing_manifests.mkdir()
+    (existing_assets / "existing.assets.parquet").write_bytes(b"asset")
+    (existing_manifests / "existing.assets.manifest.json").write_bytes(b"manifest")
+
+    worker = EnrichmentWorker(
+        tmp_path,
+        builder=build,
+        cache_factory=lambda _root: object(),
+        registry_factory=lambda: object(),
+        stop_requested=lambda: False,
+        progress=lambda _event: None,
+    )
+    worker.start(
+        [
+            AssetJob(_manifest("existing"), tmp_path / "data" / "existing.parquet"),
+            AssetJob(_manifest("missing"), tmp_path / "data" / "missing.parquet"),
+        ]
+    )
+
+    worker.finish()
+
+    assert calls == ["missing.parquet", "existing.parquet"]
+
+
 def test_worker_overlaps_main_thread_extraction_and_accepts_new_jobs(tmp_path: Path) -> None:
     asset_started = threading.Event()
     release_asset = threading.Event()

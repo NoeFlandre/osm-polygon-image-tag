@@ -105,8 +105,10 @@ a long pause.
 
 Fast resume registers all compatible polygon manifests with the background
 worker without waiting for that initial backfill queue to drain, so PBF
-extraction can start immediately. Existing compatible asset manifests skip
-without provider calls. A shard containing temporary
+extraction can start immediately. The initial queue schedules shards missing
+either their asset Parquet or asset manifest before shards with both artifacts;
+each group remains in deterministic polygon-path order. Existing compatible
+asset manifests skip without provider calls. A shard containing temporary
 provider failures is also reusable while every recorded `retry_after` cooldown
 is in the future; it is rebuilt only when a retry is due. Missing asset shards
 read only polygon Parquet and cache; the PBF is neither opened nor rebuilt.

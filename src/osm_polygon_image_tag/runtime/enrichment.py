@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from osm_polygon_image_tag.assets.build_state import AssetBuildResult
+from osm_polygon_image_tag.assets.build_state import AssetBuildResult, asset_paths
 from osm_polygon_image_tag.assets.builder import build_asset_shard
 from osm_polygon_image_tag.core.manifest import Manifest
 from osm_polygon_image_tag.core.progress import Progress
@@ -19,6 +19,11 @@ Checkpoint = Callable[[], None]
 class AssetJob:
     manifest: Manifest
     polygon_path: Path
+
+
+def _asset_artifacts_present(job: AssetJob, data_root: Path) -> bool:
+    output, manifest = asset_paths(job.polygon_path, data_root)
+    return all(path.is_file() and not path.is_symlink() for path in (output, manifest))
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,7 +78,13 @@ class EnrichmentWorker:
     def start(self, initial_jobs: Iterable[AssetJob] = ()) -> None:
         if self._thread is not None:
             raise RuntimeError("enrichment worker already started")
-        ordered = sorted(initial_jobs, key=lambda job: job.polygon_path.as_posix())
+        ordered = sorted(
+            initial_jobs,
+            key=lambda job: (
+                _asset_artifacts_present(job, self._data_root),
+                job.polygon_path.as_posix(),
+            ),
+        )
         for job in ordered:
             if self._register(job):
                 self._initial_jobs.append(job)
