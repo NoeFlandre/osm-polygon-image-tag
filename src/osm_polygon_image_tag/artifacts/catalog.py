@@ -5,7 +5,7 @@ from pathlib import Path
 import pyarrow.parquet as pq
 
 from osm_polygon_image_tag.artifacts.manifest_inventory import verified_manifests
-from osm_polygon_image_tag.core.contracts import IMAGE_REFERENCE_KEYS
+from osm_polygon_image_tag.core.contracts import IMAGE_REFERENCE_KEYS, PANORAMAX_VALUES_COLUMN
 from osm_polygon_image_tag.core.manifest import Manifest
 from osm_polygon_image_tag.core.progress import Progress
 
@@ -85,7 +85,7 @@ def sync_catalog(
                 "area_m2",
                 "osm_timestamp",
                 *PROVIDERS,
-                "panoramax_values",
+                PANORAMAX_VALUES_COLUMN,
             ]
             for batch in parquet.iter_batches(batch_size=batch_size, columns=columns):
                 values = []
@@ -94,7 +94,7 @@ def sync_catalog(
                         1 << index
                         for index, provider in enumerate(PROVIDERS)
                         if (
-                            bool(row["panoramax_values"])
+                            bool(row[PANORAMAX_VALUES_COLUMN])
                             if provider == "panoramax"
                             else row[provider] is not None
                         )

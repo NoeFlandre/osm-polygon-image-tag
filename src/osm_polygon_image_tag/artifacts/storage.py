@@ -9,6 +9,7 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from osm_polygon_image_tag.core.contracts import PANORAMAX_VALUES_COLUMN
 from osm_polygon_image_tag.core.errors import ImageTagPipelineError
 from osm_polygon_image_tag.core.schema import GEOPARQUET_VERSION, dataset_schema
 
@@ -29,7 +30,7 @@ def _schema_matches(actual: pa.Schema, expected: pa.Schema) -> bool:
     for actual_field, expected_field in zip(actual, expected, strict=True):
         if actual_field.nullable != expected_field.nullable:
             return False
-        if expected_field.name in {"tags", "panoramax_values"}:
+        if expected_field.name in {"tags", PANORAMAX_VALUES_COLUMN}:
             if not (
                 pa.types.is_map(actual_field.type)
                 and actual_field.type.key_type == pa.string()

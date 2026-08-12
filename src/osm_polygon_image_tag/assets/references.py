@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
+from osm_polygon_image_tag.core.contracts import PANORAMAX_VALUES_COLUMN
+
 _UUID = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-"
     r"[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
@@ -113,7 +115,7 @@ def _reference(key: str, raw_value: str) -> SourceReference | None:
 
 def references_from_row(row: Mapping[str, Any]) -> tuple[SourceReference, ...]:
     tags = _string_mapping(row.get("tags"))
-    panoramax = _string_mapping(row.get("panoramax_values"))
+    panoramax = _string_mapping(row.get(PANORAMAX_VALUES_COLUMN))
     references: list[SourceReference] = []
     for key in _TARGET_KEYS:
         if key == "panoramax" and panoramax:

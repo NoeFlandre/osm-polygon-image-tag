@@ -3,7 +3,11 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 
-from osm_polygon_image_tag.core.contracts import REFERENCE_COLUMNS, SCALAR_REFERENCE_COLUMNS
+from osm_polygon_image_tag.core.contracts import (
+    PANORAMAX_VALUES_COLUMN,
+    REFERENCE_COLUMNS,
+    SCALAR_REFERENCE_COLUMNS,
+)
 
 POLYGON_COLUMNS = (
     "source_pbf",
@@ -60,7 +64,7 @@ def count_polygon_references(path: Path, *, batch_size: int = 4096) -> int:
         total += sum(
             _panoramax_count(value, fallback)
             for value, fallback in zip(
-                columns["panoramax_values"], columns["panoramax"], strict=True
+                columns[PANORAMAX_VALUES_COLUMN], columns["panoramax"], strict=True
             )
         )
     return total
