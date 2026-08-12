@@ -1,6 +1,8 @@
+import ast
 import asyncio
 import socket
 from collections.abc import AsyncIterator
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -15,6 +17,23 @@ from osm_polygon_image_tag.resolvers.pinned_transport import (
     system_resolve,
 )
 from osm_polygon_image_tag.resolvers.policy import UnsafeUrlError
+
+
+def test_system_resolve_uses_normal_asyncio_import() -> None:
+    tree = ast.parse(
+        Path("src/osm_polygon_image_tag/resolvers/pinned_transport.py").read_text(encoding="utf-8")
+    )
+
+    assert any(
+        isinstance(node, ast.Import) and any(alias.name == "asyncio" for alias in node.names)
+        for node in ast.walk(tree)
+    )
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "__import__"
+        for node in ast.walk(tree)
+    )
 
 
 @pytest.mark.asyncio

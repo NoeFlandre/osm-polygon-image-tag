@@ -1,3 +1,4 @@
+import asyncio
 import socket
 from collections.abc import Iterable
 from typing import Any
@@ -101,6 +102,6 @@ class PinnedAsyncTransport(httpx.AsyncBaseTransport):
 
 
 async def system_resolve(host: str) -> tuple[str, ...]:
-    loop = __import__("asyncio").get_running_loop()
+    loop = asyncio.get_running_loop()
     info = await loop.getaddrinfo(host, None, type=socket.SOCK_STREAM)
     return tuple(dict.fromkeys(str(item[4][0]) for item in info))
