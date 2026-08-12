@@ -3,6 +3,8 @@ import json
 import pyarrow as pa
 from pyproj import CRS
 
+from osm_polygon_image_tag.core.contracts import PANORAMAX_VALUES_COLUMN, REFERENCE_COLUMNS
+
 SCHEMA_VERSION = 2
 GEOPARQUET_VERSION = "1.1.0"
 
@@ -22,6 +24,22 @@ def _geo_metadata() -> bytes:
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+def _reference_fields() -> list[pa.Field]:
+    fields: list[pa.Field] = []
+    for name in REFERENCE_COLUMNS:
+        if name == PANORAMAX_VALUES_COLUMN:
+            fields.append(
+                pa.field(
+                    name,
+                    pa.map_(pa.string(), pa.string(), keys_sorted=True),
+                    nullable=False,
+                )
+            )
+        else:
+            fields.append(pa.field(name, pa.string(), nullable=True))
+    return fields
+
+
 def dataset_schema() -> pa.Schema:
     fields = [
         pa.field("osm_type", pa.string(), nullable=False),
@@ -39,19 +57,8 @@ def dataset_schema() -> pa.Schema:
         pa.field("bbox_max_lon", pa.float64(), nullable=False),
         pa.field("bbox_max_lat", pa.float64(), nullable=False),
         pa.field("tags", pa.map_(pa.string(), pa.string(), keys_sorted=True), nullable=False),
-        pa.field("image", pa.string(), nullable=True),
-        pa.field("wikimedia_commons", pa.string(), nullable=True),
-        pa.field("mapillary", pa.string(), nullable=True),
-        pa.field("panoramax", pa.string(), nullable=True),
-        pa.field(
-            "panoramax_values",
-            pa.map_(pa.string(), pa.string(), keys_sorted=True),
-            nullable=False,
-        ),
-        pa.field("kartaview", pa.string(), nullable=True),
-        pa.field("flickr", pa.string(), nullable=True),
-        pa.field("bubbleid", pa.string(), nullable=True),
     ]
+    fields.extend(_reference_fields())
     return pa.schema(
         fields,
         metadata={

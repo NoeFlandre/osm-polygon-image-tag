@@ -7,17 +7,10 @@ from typing import Any
 
 import osmium
 
+from osm_polygon_image_tag.core.contracts import IMAGE_REFERENCE_KEYS
 from osm_polygon_image_tag.ingest.copy_parser import ExportRecord
 
-TARGET_TAG_KEYS = (
-    "image",
-    "wikimedia_commons",
-    "mapillary",
-    "panoramax",
-    "kartaview",
-    "flickr",
-    "bubbleid",
-)
+TARGET_TAG_KEYS = IMAGE_REFERENCE_KEYS
 
 
 @dataclass(frozen=True, slots=True)

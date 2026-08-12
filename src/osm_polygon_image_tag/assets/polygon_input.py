@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 
+from osm_polygon_image_tag.core.contracts import REFERENCE_COLUMNS, SCALAR_REFERENCE_COLUMNS
+
 POLYGON_COLUMNS = (
     "source_pbf",
     "osm_type",
@@ -13,33 +15,9 @@ POLYGON_COLUMNS = (
     "bbox_max_lon",
     "bbox_max_lat",
     "tags",
-    "image",
-    "wikimedia_commons",
-    "mapillary",
-    "panoramax",
-    "panoramax_values",
-    "kartaview",
-    "flickr",
-    "bubbleid",
+    *REFERENCE_COLUMNS,
 )
-REFERENCE_COLUMNS = (
-    "image",
-    "wikimedia_commons",
-    "mapillary",
-    "panoramax",
-    "panoramax_values",
-    "kartaview",
-    "flickr",
-    "bubbleid",
-)
-_REFERENCE_SCALAR_COLUMNS = (
-    "image",
-    "wikimedia_commons",
-    "mapillary",
-    "kartaview",
-    "flickr",
-    "bubbleid",
-)
+_REFERENCE_SCALAR_COLUMNS = SCALAR_REFERENCE_COLUMNS
 
 
 def polygon_rows(

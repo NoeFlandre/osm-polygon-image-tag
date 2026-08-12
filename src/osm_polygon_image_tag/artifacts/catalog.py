@@ -5,18 +5,11 @@ from pathlib import Path
 import pyarrow.parquet as pq
 
 from osm_polygon_image_tag.artifacts.manifest_inventory import verified_manifests
+from osm_polygon_image_tag.core.contracts import IMAGE_REFERENCE_KEYS
 from osm_polygon_image_tag.core.manifest import Manifest
 from osm_polygon_image_tag.core.progress import Progress
 
-PROVIDERS = (
-    "image",
-    "wikimedia_commons",
-    "mapillary",
-    "panoramax",
-    "kartaview",
-    "flickr",
-    "bubbleid",
-)
+PROVIDERS = IMAGE_REFERENCE_KEYS
 
 
 def _connect(path: Path) -> sqlite3.Connection:

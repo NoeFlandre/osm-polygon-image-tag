@@ -12,6 +12,8 @@ in this package may import from `ingest`, `artifacts`, `runtime`, or
   `PreflightError`, `PublicationError`).
 - The PyArrow GeoParquet schema and the manifest shape plus its versioning
   constants.
+- The canonical image-reference keys and normalized reference-column order
+  shared by extraction, storage, asset input, and reporting.
 - The `atomic_write_bytes` primitive used by small durable manifests, metadata,
   receipts, and private caches.
 - `resolve_managed_output`, which canonicalizes manifest-relative outputs while
@@ -33,6 +35,9 @@ in this package may import from `ingest`, `artifacts`, `runtime`, or
   `DATASET_SCHEMA_VERSION`: stable version integers. Bumping them
   deterministically invalidates older shards.
 - `dataset_schema()`: the single source of truth for the GeoParquet schema.
+- `IMAGE_REFERENCE_KEYS`, `REFERENCE_COLUMNS`, and
+  `SCALAR_REFERENCE_COLUMNS`: the single source of truth for image-provider
+  names and their normalized input columns.
 - `Progress`: structural callable contract for emitted events.
 
 ## Dependencies
