@@ -4,21 +4,13 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
-from osm_polygon_image_tag.core.contracts import PANORAMAX_VALUES_COLUMN
+from osm_polygon_image_tag.core.contracts import IMAGE_REFERENCE_KEYS, PANORAMAX_VALUES_COLUMN
 
 _UUID = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-"
     r"[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
 )
-_TARGET_KEYS = (
-    "image",
-    "wikimedia_commons",
-    "mapillary",
-    "panoramax",
-    "kartaview",
-    "flickr",
-    "bubbleid",
-)
+_TARGET_KEYS = IMAGE_REFERENCE_KEYS
 
 
 @dataclass(frozen=True, slots=True)
