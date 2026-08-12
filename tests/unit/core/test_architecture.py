@@ -23,8 +23,11 @@ ALLOWED_IMPORTS = {
 
 def _layer_violations(package_root: Path) -> list[str]:
     violations: list[str] = []
-    for module in sorted(package_root.glob("*/*.py")):
-        layer = module.parent.name
+    for module in sorted(package_root.rglob("*.py")):
+        relative_parts = module.relative_to(package_root).parts
+        if not relative_parts:
+            continue
+        layer = relative_parts[0]
         if layer not in ALLOWED_IMPORTS:
             continue
         tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
@@ -53,6 +56,14 @@ def test_subpackages_only_import_from_allowed_layers() -> None:
 def test_architecture_guard_checks_ordinary_imports(tmp_path: Path) -> None:
     module = tmp_path / "artifacts" / "escape.py"
     module.parent.mkdir()
+    module.write_text("import osm_polygon_image_tag.integrations.huggingface\n")
+
+    assert _layer_violations(tmp_path) == [f"{module}:1 imports integrations"]
+
+
+def test_architecture_guard_checks_nested_modules(tmp_path: Path) -> None:
+    module = tmp_path / "artifacts" / "geography" / "escape.py"
+    module.parent.mkdir(parents=True)
     module.write_text("import osm_polygon_image_tag.integrations.huggingface\n")
 
     assert _layer_violations(tmp_path) == [f"{module}:1 imports integrations"]
