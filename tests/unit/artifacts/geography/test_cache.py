@@ -63,6 +63,25 @@ def test_shard_cache_rejects_malformed_payload(tmp_path: Path) -> None:
     assert load_shard_cache(cache_root) is None
 
 
+def test_shard_cache_rejects_empty_shard_path(tmp_path: Path) -> None:
+    cache_root = tmp_path / "cache"
+    cache_root.mkdir()
+    payload = {
+        "schema_version": CACHE_SCHEMA_VERSION,
+        "h3_resolution": DEFAULT_H3_RESOLUTION,
+        "shards": {
+            "": {
+                "sha256": "a" * 64,
+                "row_count": 1,
+                "cells": [{"h3_cell": "89283082807ffff", "polygon_count": 1}],
+            }
+        },
+    }
+    (cache_root / "shards.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    assert load_shard_cache(cache_root) is None
+
+
 def test_stats_cache_round_trip_and_schema_validation(tmp_path: Path) -> None:
     cache_root = tmp_path / "cache"
     write_stats_cache(

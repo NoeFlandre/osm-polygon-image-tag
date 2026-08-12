@@ -54,6 +54,72 @@ def input_digest(shards: list[tuple[str, str, int]]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _parse_cells(value: object, *, row_count: int) -> dict[str, int] | None:
+    if not isinstance(value, list):
+        return None
+    parsed: dict[str, int] = {}
+    for cell_entry in value:
+        if not isinstance(cell_entry, dict):
+            return None
+        cell = cell_entry.get("h3_cell")
+        count = cell_entry.get("polygon_count")
+        if (
+            not isinstance(cell, str)
+            or not cell
+            or cell in parsed
+            or not isinstance(count, int)
+            or isinstance(count, bool)
+            or count < 0
+        ):
+            return None
+        parsed[cell] = count
+    return parsed if sum(parsed.values()) == row_count else None
+
+
+def _parse_shard_entry(value: object) -> ShardCacheEntry | None:
+    if not isinstance(value, dict):
+        return None
+    sha256 = value.get("sha256")
+    row_count = value.get("row_count")
+    if (
+        not isinstance(sha256, str)
+        or len(sha256) != 64
+        or any(character not in "0123456789abcdef" for character in sha256)
+        or not isinstance(row_count, int)
+        or isinstance(row_count, bool)
+        or row_count < 0
+    ):
+        return None
+    cells = _parse_cells(value.get("cells"), row_count=row_count)
+    if cells is None:
+        return None
+    return {"sha256": sha256, "row_count": row_count, "cells": cells}
+
+
+def _parse_shards(value: object) -> PerShardCache | None:
+    if not isinstance(value, dict):
+        return None
+    result: PerShardCache = {}
+    for shard_path, payload_entry in value.items():
+        if not isinstance(shard_path, str) or not shard_path:
+            return None
+        entry = _parse_shard_entry(payload_entry)
+        if entry is None:
+            return None
+        result[shard_path] = entry
+    return result
+
+
+def _parse_cache_payload(value: object) -> PerShardCache | None:
+    if not isinstance(value, dict):
+        return None
+    if value.get("schema_version") != CACHE_SCHEMA_VERSION:
+        return None
+    if value.get("h3_resolution") != DEFAULT_H3_RESOLUTION:
+        return None
+    return _parse_shards(value.get("shards"))
+
+
 def load_shard_cache(cache_dir: Path) -> PerShardCache | None:
     """Load validated per-shard counts, returning ``None`` for bad state."""
     path = _shard_cache_path(cache_dir)
@@ -64,56 +130,7 @@ def load_shard_cache(cache_dir: Path) -> PerShardCache | None:
     except (OSError, json.JSONDecodeError, ValueError):
         LOGGER.warning("Geographic density cache is unreadable; rebuilding")
         return None
-    if not isinstance(payload, dict):
-        return None
-    if payload.get("schema_version") != CACHE_SCHEMA_VERSION:
-        return None
-    if payload.get("h3_resolution") != DEFAULT_H3_RESOLUTION:
-        return None
-    shards = payload.get("shards")
-    if not isinstance(shards, dict):
-        return None
-    result: PerShardCache = {}
-    for shard_path, payload_entry in shards.items():
-        if not isinstance(shard_path, str) or not isinstance(payload_entry, dict):
-            return None
-        sha256 = payload_entry.get("sha256")
-        row_count = payload_entry.get("row_count")
-        cells = payload_entry.get("cells")
-        if (
-            not isinstance(sha256, str)
-            or len(sha256) != 64
-            or any(character not in "0123456789abcdef" for character in sha256)
-            or not isinstance(row_count, int)
-            or isinstance(row_count, bool)
-            or row_count < 0
-            or not isinstance(cells, list)
-        ):
-            return None
-        parsed: dict[str, int] = {}
-        for cell_entry in cells:
-            if not isinstance(cell_entry, dict):
-                return None
-            cell = cell_entry.get("h3_cell")
-            count = cell_entry.get("polygon_count")
-            if (
-                not isinstance(cell, str)
-                or not cell
-                or cell in parsed
-                or not isinstance(count, int)
-                or isinstance(count, bool)
-                or count < 0
-            ):
-                return None
-            parsed[cell] = count
-        if sum(parsed.values()) != row_count:
-            return None
-        result[shard_path] = {
-            "sha256": sha256,
-            "row_count": row_count,
-            "cells": parsed,
-        }
-    return result
+    return _parse_cache_payload(payload)
 
 
 def write_shard_cache(cache_dir: Path, per_shard: PerShardCache) -> None:
