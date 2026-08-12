@@ -1,5 +1,5 @@
 import signal
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import cast
 
@@ -9,7 +9,7 @@ from osm_polygon_image_tag.artifacts.publication import PublicationResult
 from osm_polygon_image_tag.artifacts.reporting import MetadataResult
 from osm_polygon_image_tag.core.config import PipelinePaths
 from osm_polygon_image_tag.ingest.discovery import PbfSource
-from osm_polygon_image_tag.runtime.enrichment import EnrichmentSummary
+from osm_polygon_image_tag.runtime.enrichment import AssetJob, EnrichmentSummary
 from osm_polygon_image_tag.runtime.orchestrator import StopToken, graceful_stop_signals, run_all
 from osm_polygon_image_tag.runtime.pipeline import BuildResult
 
@@ -27,6 +27,53 @@ def _result(source: str) -> BuildResult:
 
 def _metadata(root: Path) -> MetadataResult:
     return MetadataResult(root / "statistics.json", root / "README.md")
+
+
+class FakeEnrichmentWorker:
+    """Small configurable worker double shared by orchestrator tests."""
+
+    def __init__(
+        self,
+        *,
+        events: list[str] | None = None,
+        summary: EnrichmentSummary | None = None,
+        checkpoint_runs: int = 0,
+        checkpoint_enable_event: str | None = None,
+        start_event: str = "asset-start",
+        finish_event: str = "asset-finish",
+    ) -> None:
+        self._events = events
+        self._summary = summary if summary is not None else EnrichmentSummary()
+        self._checkpoint_runs = checkpoint_runs
+        self._checkpoint_enable_event = checkpoint_enable_event
+        self._start_event = start_event
+        self._finish_event = finish_event
+        self.periodic_callback: Callable[[], None] | None = None
+
+    def start(self, initial_jobs: Iterable[AssetJob]) -> None:
+        del initial_jobs
+        if self._events is not None:
+            self._events.append(self._start_event)
+
+    def submit(self, job: AssetJob) -> bool:
+        del job
+        return True
+
+    def finish(self) -> EnrichmentSummary:
+        if self._events is not None:
+            self._events.append(self._finish_event)
+        return self._summary
+
+    def enable_checkpoints(self, callback: Callable[[], None], *, every: int) -> None:
+        assert every == 1
+        self.periodic_callback = callback
+        if self._events is not None and self._checkpoint_enable_event is not None:
+            self._events.append(self._checkpoint_enable_event)
+        for _ in range(self._checkpoint_runs):
+            callback()
+
+    def checkpoint(self, callback: Callable[[], None]) -> None:
+        callback()
 
 
 def test_run_all_uses_deterministic_source_order(tmp_path: Path) -> None:
@@ -262,25 +309,10 @@ def test_all_skipped_polygon_run_flushes_new_asset_backfill_once(tmp_path: Path)
     paths = PipelinePaths.build(source_root=source, data_root=tmp_path / "generated")
     events: list[str] = []
 
-    class Worker:
-        def start(self, initial_jobs: object) -> None:
-            del initial_jobs
-            events.append("asset-start")
-
-        def submit(self, job: object) -> bool:
-            del job
-            events.append("asset-submit")
-            return True
-
-        def finish(self) -> EnrichmentSummary:
-            events.append("asset-finish")
-            return EnrichmentSummary(built=1, rows=2, statuses={"resolved": 2})
-
-        def enable_checkpoints(self, callback: Callable[[], None], *, every: int) -> None:
-            del callback, every
-
-        def checkpoint(self, callback: Callable[[], None]) -> None:
-            callback()
+    worker = FakeEnrichmentWorker(
+        events=events,
+        summary=EnrichmentSummary(built=1, rows=2, statuses={"resolved": 2}),
+    )
 
     skipped = _result("region.osm.pbf")
     skipped = BuildResult(
@@ -298,7 +330,7 @@ def test_all_skipped_polygon_run_flushes_new_asset_backfill_once(tmp_path: Path)
         metadata_builder=lambda root: events.append("metadata") or _metadata(root),
         publisher=lambda _root: events.append("publish")
         or PublicationResult("published", "abc", 1),
-        enrichment_worker=Worker(),
+        enrichment_worker=worker,
     )
 
     assert events == ["asset-start", "asset-finish", "metadata", "publish"]
@@ -314,24 +346,7 @@ def test_extraction_failure_stops_and_closes_enrichment_worker(tmp_path: Path) -
     token = StopToken()
     events: list[str] = []
 
-    class Worker:
-        def start(self, initial_jobs: object) -> None:
-            del initial_jobs
-            events.append("start")
-
-        def submit(self, job: object) -> bool:
-            del job
-            return True
-
-        def finish(self) -> EnrichmentSummary:
-            events.append("finish")
-            return EnrichmentSummary()
-
-        def enable_checkpoints(self, callback: Callable[[], None], *, every: int) -> None:
-            del callback, every
-
-        def checkpoint(self, callback: Callable[[], None]) -> None:
-            callback()
+    worker = FakeEnrichmentWorker(events=events, start_event="start", finish_event="finish")
 
     def fail(_pbf: PbfSource, _paths: PipelinePaths) -> BuildResult:
         raise RuntimeError("extraction failed")
@@ -341,7 +356,7 @@ def test_extraction_failure_stops_and_closes_enrichment_worker(tmp_path: Path) -
             paths,
             build=fail,
             stop_token=token,
-            enrichment_worker=Worker(),
+            enrichment_worker=worker,
         )
 
     assert token.requested
@@ -354,28 +369,14 @@ def test_enriched_run_publishes_periodic_asset_checkpoints(tmp_path: Path) -> No
     paths = PipelinePaths.build(source_root=source, data_root=tmp_path / "generated")
     events: list[str] = []
 
-    class Worker:
-        def start(self, initial_jobs: object) -> None:
-            del initial_jobs
-
-        def submit(self, job: object) -> bool:
-            del job
-            return True
-
-        def enable_checkpoints(self, callback: Callable[[], None], *, every: int) -> None:
-            assert every == 1
-            callback()
-            callback()
-
-        def checkpoint(self, callback: Callable[[], None]) -> None:
-            callback()
-
-        def finish(self) -> EnrichmentSummary:
-            return EnrichmentSummary(built=50)
+    worker = FakeEnrichmentWorker(
+        summary=EnrichmentSummary(built=50),
+        checkpoint_runs=2,
+    )
 
     run_all(
         paths,
-        enrichment_worker=Worker(),
+        enrichment_worker=worker,
         metadata_builder=lambda root: events.append("metadata") or _metadata(root),
         publisher=lambda _root: events.append("publish")
         or PublicationResult("published", "abc", 1),
@@ -398,25 +399,10 @@ def test_asset_publication_checkpoints_are_enabled_before_pbf_scan(tmp_path: Pat
     paths = PipelinePaths.build(source_root=source, data_root=tmp_path / "generated")
     events: list[str] = []
 
-    class Worker:
-        def enable_checkpoints(self, callback: Callable[[], None], *, every: int) -> None:
-            del callback
-            assert every == 1
-            events.append("checkpoints-enabled")
-
-        def start(self, initial_jobs: object) -> None:
-            del initial_jobs
-            events.append("asset-start")
-
-        def submit(self, job: object) -> bool:
-            del job
-            return True
-
-        def checkpoint(self, callback: Callable[[], None]) -> None:
-            callback()
-
-        def finish(self) -> EnrichmentSummary:
-            return EnrichmentSummary()
+    worker = FakeEnrichmentWorker(
+        events=events,
+        checkpoint_enable_event="checkpoints-enabled",
+    )
 
     def build(pbf: PbfSource, _paths: PipelinePaths) -> BuildResult:
         events.append(f"scan:{pbf.relative_path}")
@@ -432,7 +418,7 @@ def test_asset_publication_checkpoints_are_enabled_before_pbf_scan(tmp_path: Pat
     run_all(
         paths,
         build=build,
-        enrichment_worker=Worker(),
+        enrichment_worker=worker,
         metadata_builder=_metadata,
         publisher=lambda _root: PublicationResult("unchanged", "", 0),
     )
@@ -587,29 +573,7 @@ def test_checkpoint_publication_race_with_active_pbf_build(tmp_path: Path) -> No
             raise
         return PublicationResult("published", "commit", len(inventory))
 
-    # Fake EnrichmentController that captures the periodic checkpoint callback
-    class _FakeWorker:
-        def __init__(self) -> None:
-            self._periodic_callback: Callable[[], None] | None = None
-
-        def enable_checkpoints(self, callback: Callable[[], None], *, every: int) -> None:
-            assert every == 1
-            self._periodic_callback = callback
-
-        def start(self, initial_jobs: object) -> None:
-            del initial_jobs
-
-        def submit(self, job: object) -> bool:
-            del job
-            return True
-
-        def checkpoint(self, callback: Callable[[], None]) -> None:
-            callback()
-
-        def finish(self) -> EnrichmentSummary:
-            return EnrichmentSummary()
-
-    worker = _FakeWorker()
+    worker = FakeEnrichmentWorker()
 
     # Run the pipeline in a separate thread so we can coordinate with it
     def run_pipeline() -> None:
@@ -635,7 +599,7 @@ def test_checkpoint_publication_race_with_active_pbf_build(tmp_path: Path) -> No
         assert (temporary_dir / "tag-store-abc123.sqlite").exists()
 
         # C. Invoke the periodic checkpoint callback from a separate thread.
-        callback = worker._periodic_callback
+        callback = worker.periodic_callback
         assert callback is not None, "Periodic checkpoint callback was not registered"
 
         def invoke_callback() -> None:
