@@ -169,6 +169,55 @@ class EnrichmentWorker:
         except BaseException as error:
             self._error = error
 
+    async def _process_job(
+        self,
+        job: AssetJob,
+        index: int,
+        *,
+        cache: object,
+        registry: object,
+    ) -> AssetBuildResult:
+        self._progress(
+            {
+                "event": "asset_shard_started",
+                "asset_index": index,
+                "asset_count": self._submitted,
+                "polygon_shard": job.manifest.output.relative_path,
+            }
+        )
+        result = await self._builder(
+            job.manifest,
+            job.polygon_path,
+            self._data_root,
+            cache=cache,
+            registry=registry,
+            stop_requested=self._stop_requested,
+            progress=self._progress,
+        )
+        self._progress(
+            {
+                "event": "asset_shard_completed",
+                "asset_index": index,
+                "asset_count": self._submitted,
+                "polygon_shard": result.polygon_shard,
+                "status": result.status,
+                "rows": result.rows,
+                "statuses": result.statuses,
+            }
+        )
+        return result
+
+    def _checkpoint_after(self, result: AssetBuildResult) -> Checkpoint | None:
+        with self._checkpoint_lock:
+            if result.status != "built":
+                return None
+            self._completed += 1
+            if self._checkpoint is None or self._completed < self._checkpoint_next:
+                return None
+            callback = self._checkpoint
+            self._checkpoint_next += self._checkpoint_every
+            return callback
+
     async def _run(self) -> EnrichmentSummary:
         cache = self._cache_factory(self._data_root)
         registry = self._registry_factory()
@@ -198,49 +247,13 @@ class EnrichmentWorker:
                 if self._stop_requested():
                     pending += 1
                     continue
-                self._progress(
-                    {
-                        "event": "asset_shard_started",
-                        "asset_index": index,
-                        "asset_count": self._submitted,
-                        "polygon_shard": job.manifest.output.relative_path,
-                    }
-                )
-                result = await self._builder(
-                    job.manifest,
-                    job.polygon_path,
-                    self._data_root,
-                    cache=cache,
-                    registry=registry,
-                    stop_requested=self._stop_requested,
-                    progress=self._progress,
-                )
+                result = await self._process_job(job, index, cache=cache, registry=registry)
                 built += result.status == "built"
                 skipped += result.status == "skipped"
                 pending += result.status == "pending"
                 rows += result.rows
                 statuses.update(result.statuses)
-                self._progress(
-                    {
-                        "event": "asset_shard_completed",
-                        "asset_index": index,
-                        "asset_count": self._submitted,
-                        "polygon_shard": result.polygon_shard,
-                        "status": result.status,
-                        "rows": result.rows,
-                        "statuses": result.statuses,
-                    }
-                )
-                callback: Checkpoint | None = None
-                with self._checkpoint_lock:
-                    if result.status == "built":
-                        self._completed += 1
-                        if (
-                            self._checkpoint is not None
-                            and self._completed >= self._checkpoint_next
-                        ):
-                            callback = self._checkpoint
-                            self._checkpoint_next += self._checkpoint_every
+                callback = self._checkpoint_after(result)
                 if callback is not None:
                     callback()
         finally:
