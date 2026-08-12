@@ -10,7 +10,6 @@ _UUID = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-"
     r"[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
 )
-_TARGET_KEYS = IMAGE_REFERENCE_KEYS
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,7 +108,7 @@ def references_from_row(row: Mapping[str, Any]) -> tuple[SourceReference, ...]:
     tags = _string_mapping(row.get("tags"))
     panoramax = _string_mapping(row.get(PANORAMAX_VALUES_COLUMN))
     references: list[SourceReference] = []
-    for key in _TARGET_KEYS:
+    for key in IMAGE_REFERENCE_KEYS:
         if key == "panoramax" and panoramax:
             continue
         value = tags.get(key)
