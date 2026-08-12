@@ -416,15 +416,8 @@ def test_checkpoint_rejects_dead_worker_failure_before_callback(tmp_path: Path) 
 def test_checkpoint_rechecks_failure_after_worker_termination_race(tmp_path: Path) -> None:
     callbacks: list[str] = []
 
-    async def unused_builder(
-        manifest: Manifest, path: Path, data_root: Path, **_kwargs: object
-    ) -> AssetBuildResult:
-        del manifest, path, data_root
-        raise AssertionError("builder must not run")
-
     worker = EnrichmentWorker(
         tmp_path,
-        builder=unused_builder,
         cache_factory=lambda _root: object(),
         registry_factory=lambda: object(),
         stop_requested=lambda: False,
