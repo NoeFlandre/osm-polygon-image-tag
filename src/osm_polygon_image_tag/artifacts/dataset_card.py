@@ -194,8 +194,15 @@ This snapshot is versioned as [GitHub release v0.1.0](https://github.com/NoeFlan
 ## Source, license, and citation
 
 The source extracts come from Geofabrik's OpenStreetMap extracts. OpenStreetMap
-data is available under the Open Database License. Attribution: © OpenStreetMap
-contributors.
+geometry, tags, and feature metadata are available under the Open Database License
+(ODbL). Attribution: © OpenStreetMap contributors.
+
+Image links are separate from the OSM data.
+The provider terms and image license are separate from ODbL.
+When available, the `image_assets` row records this information in `license_id`
+and `license_url`. A URL is not permission to copy, redistribute, or use the image.
+Check the provider and the original image page before using an image.
+This dataset does not download or relicense image files.
 
 If you use this dataset, cite **Noé Flandre, OSM Polygon Image Tag, version
 0.1.0**. The machine-readable citation is in the [dataset's

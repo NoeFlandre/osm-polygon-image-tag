@@ -99,6 +99,10 @@ def test_empty_metadata_is_deterministic_and_factual(tmp_path: Path) -> None:
     assert b"## Source, license, and citation" in first_card
     assert "Noé Flandre".encode() in first_card
     assert b"citation.cff" in first_card
+    assert b"The provider terms and image license are separate from ODbL" in first_card
+    assert b"license_id" in first_card
+    assert b"not permission to copy, redistribute, or use the image" in first_card
+    assert b"does not download or relicense image files" in first_card
 
 
 def test_metadata_syncs_packaged_hero(tmp_path: Path) -> None:
