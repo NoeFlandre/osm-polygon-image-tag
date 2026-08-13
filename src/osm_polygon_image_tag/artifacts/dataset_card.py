@@ -89,6 +89,12 @@ tags. It contains closed ways and relations only. A polygon row is one unique
 OSM feature. An image-asset row describes one image reference or one lookup
 result for a feature.
 
+A tag value is the original reference. It may be a direct URL, a provider ID,
+a UUID, or a category name; it is not always an image URL. `image_assets` keeps
+that value and records the lookup result, including a direct image URL when one
+is available. Use `polygons` for the original OSM tags and `image_assets` for
+resolved image links. A polygon can have zero, one, or many image-asset rows.
+
 ## Snapshot summary
 
 This snapshot contains:

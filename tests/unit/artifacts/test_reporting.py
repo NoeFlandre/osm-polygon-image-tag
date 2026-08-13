@@ -103,6 +103,10 @@ def test_empty_metadata_is_deterministic_and_factual(tmp_path: Path) -> None:
     assert b"license_id" in first_card
     assert b"not permission to copy, redistribute, or use the image" in first_card
     assert b"does not download or relicense image files" in first_card
+    assert b"A tag value is the original reference." in first_card
+    assert b"it is not always an image URL." in first_card
+    assert b"Use `polygons` for the original OSM tags" in first_card
+    assert b"A polygon can have zero, one, or many image-asset rows." in first_card
 
 
 def test_metadata_syncs_packaged_hero(tmp_path: Path) -> None:
