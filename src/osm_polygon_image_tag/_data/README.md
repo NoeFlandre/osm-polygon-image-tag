@@ -11,6 +11,8 @@ a published wheel.
   every OSM attribute we care about (type, id, version, changeset,
   timestamp) while preserving every original tag as a JSON object on each
   feature.
+- `citation.cff`: the machine-readable project and dataset citation metadata
+  copied into each generated dataset root.
 
 ## What belongs here
 

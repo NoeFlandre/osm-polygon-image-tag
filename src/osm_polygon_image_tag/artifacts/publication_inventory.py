@@ -1,14 +1,16 @@
 """Build the exact allow-listed inventory eligible for publication."""
 
-from collections.abc import Iterable
 from pathlib import Path
 
-from osm_polygon_image_tag.artifacts.asset_inventory import verified_asset_manifests
 from osm_polygon_image_tag.artifacts.hero import HERO_PNG_RELATIVE, packaged_hero_path
-from osm_polygon_image_tag.artifacts.manifest_inventory import verified_manifests
+from osm_polygon_image_tag.artifacts.public_dataset import (
+    PUBLIC_ASSET_RELATIVE,
+    PUBLIC_MANIFEST_RELATIVE,
+    PUBLIC_POLYGON_RELATIVE,
+    validate_public_dataset,
+)
 from osm_polygon_image_tag.artifacts.publication_types import PublicationFile
 from osm_polygon_image_tag.assets.manifest import (
-    AssetManifest,
     AssetManifestError,
     read_asset_manifest,
     read_asset_manifest_header,
@@ -17,12 +19,10 @@ from osm_polygon_image_tag.assets.schema import (
     ASSET_SCHEMA_VERSION,
     RESOLVER_CONTRACT_VERSION,
 )
-from osm_polygon_image_tag.assets.storage import AssetStorageError, validate_asset_parquet
 from osm_polygon_image_tag.core.errors import PublicationError
 from osm_polygon_image_tag.core.manifest import (
     DATASET_SCHEMA_VERSION,
     PROCESSING_CONTRACT_VERSION,
-    Manifest,
     file_sha256,
     read_manifest,
 )
@@ -59,22 +59,6 @@ def _validate_png(path: Path, label: str) -> None:
         signature = handle.read(8)
     if signature != b"\x89PNG\r\n\x1a\n":
         raise PublicationError(f"invalid {label}: {path}")
-
-
-def _verified_output_digests(
-    manifests: Iterable[tuple[Manifest, Path]],
-    asset_manifests: Iterable[tuple[AssetManifest, Path]],
-) -> dict[str, str]:
-    digests = {manifest.output.relative_path: manifest.output.sha256 for manifest, _ in manifests}
-    for manifest, output in asset_manifests:
-        try:
-            validate_asset_parquet(output, expected_rows=manifest.output.row_count)
-        except AssetStorageError as error:
-            raise PublicationError(f"invalid asset Parquet: {output}") from error
-        if file_sha256(output) != manifest.output.sha256:
-            raise PublicationError(f"asset digest mismatch: {manifest.output.relative_path}")
-        digests[manifest.output.relative_path] = manifest.output.sha256
-    return digests
 
 
 def _validated_png_digests(root: Path) -> dict[str, str]:
@@ -175,20 +159,18 @@ def publication_inventory(data_root: Path) -> tuple[PublicationFile, ...]:
     """Return the deterministic, validated set of files eligible for upload."""
     root = data_root.resolve()
     _reject_symlinks(root)
-    manifests = verified_manifests(root)
-    asset_manifests = verified_asset_manifests(root)
-    manifested_digests = _verified_output_digests(manifests, asset_manifests)
-    allowed = {"README.md", "statistics/dataset-statistics.json"}
-    allowed.update(manifest.output.relative_path for manifest, _ in manifests)
-    allowed.update(manifest.output.relative_path for manifest, _ in asset_manifests)
+    try:
+        manifested_digests = validate_public_dataset(root)
+    except ValueError as error:
+        raise PublicationError(str(error)) from error
+    allowed = {"README.md", "citation.cff", "statistics/dataset-statistics.json"}
+    allowed.update({PUBLIC_POLYGON_RELATIVE, PUBLIC_ASSET_RELATIVE, PUBLIC_MANIFEST_RELATIVE})
     png_digests = _validated_png_digests(root)
     allowed.update(png_digests)
     manifested_digests.update(png_digests)
-    polygon_managed, polygon_eligible = _managed_polygon_artifacts(root)
-    asset_managed, asset_eligible = _managed_asset_artifacts(root)
+    polygon_managed, _polygon_eligible = _managed_polygon_artifacts(root)
+    asset_managed, _asset_eligible = _managed_asset_artifacts(root)
     managed = polygon_managed | asset_managed
-    allowed.update(polygon_eligible)
-    allowed.update(asset_eligible)
     internal = {
         "catalog/catalog.sqlite",
         "catalog/catalog.sqlite-shm",

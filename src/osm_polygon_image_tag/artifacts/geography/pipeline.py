@@ -13,7 +13,7 @@ generator. It:
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from osm_polygon_image_tag.artifacts.manifest_inventory import verified_manifests
@@ -150,6 +150,7 @@ def _input_digest_and_meta(
 def build_geographic_map(
     data_root: Path,
     *,
+    manifests: Sequence[tuple[Manifest, Path]] | None = None,
     progress: Progress | None = None,
 ) -> MapResult:
     """Build, reuse, or refresh the geographic distribution map.
@@ -164,11 +165,11 @@ def build_geographic_map(
     emit({"event": "metadata_geography_started"})
 
     cache_dir = cache_root(data_root)
-    manifests = verified_manifests(data_root)
-    input_digest, _keys = _input_digest_and_meta(manifests)
+    selected_manifests = list(manifests) if manifests is not None else verified_manifests(data_root)
+    input_digest, _keys = _input_digest_and_meta(selected_manifests)
 
     per_shard, reused_shards, polygon_rows = _aggregate_per_shard(
-        manifests, data_root, progress=emit
+        selected_manifests, data_root, progress=emit
     )
 
     cells = _aggregate_cells(per_shard)
@@ -196,7 +197,7 @@ def build_geographic_map(
     cache_is_valid = (
         cached_stats is not None
         and cached_stats.get("input_digest") == input_digest
-        and cached_int("input_shard_count", len(manifests))
+        and cached_int("input_shard_count", len(selected_manifests))
         and cached_int("cell_count", cell_count)
         and cached_int("polygon_rows", polygon_rows)
         and cached_int("min_cell_count", min_cell_count)
@@ -229,7 +230,7 @@ def build_geographic_map(
     write_stats_cache(
         cache_dir,
         input_digest=input_digest,
-        input_shard_count=len(manifests),
+        input_shard_count=len(selected_manifests),
         h3_resolution=DEFAULT_H3_RESOLUTION,
         cell_count=cell_count,
         polygon_rows=polygon_rows,
@@ -243,7 +244,7 @@ def build_geographic_map(
         polygon_rows=polygon_rows,
         min_cell_count=min_cell_count,
         max_cell_count=max_cell_count,
-        input_shard_count=len(manifests),
+        input_shard_count=len(selected_manifests),
         input_digest=input_digest,
     )
 
@@ -257,7 +258,7 @@ def build_geographic_map(
             "max_cell_count": statistics.max_cell_count,
             "input_shard_count": statistics.input_shard_count,
             "reused_shard_count": len(reused_shards),
-            "rebuilt_shard_count": len(manifests) - len(reused_shards),
+            "rebuilt_shard_count": len(selected_manifests) - len(reused_shards),
         }
     )
 

@@ -39,6 +39,8 @@ data-root/
   assets/              # one image-asset shard per polygon shard
     geographic_polygon_density.png   # generated H3 dataset-card map
   asset-manifests/     # independent asset/resolver checkpoints
+  public/              # deduplicated Parquet release view + manifest
+  citation.cff         # copied machine-readable dataset citation
   cache/               # private resolution SQLite cache
     geographic-density/   # private H3 cache; never published
   statistics/          # dataset-statistics.json (deterministic)
@@ -69,12 +71,21 @@ publication planning. The pipeline never deletes files it does not own.
   and structurally re-reading the Parquet file. This is the deep
   verification path; the fast resume used by `run` and `run-and-publish`
   is cheaper.
-- `rebuild-metadata`: rebuilds the catalog, statistics, and dataset card
-  from the existing shards without rebuilding or publishing anything.
+- `rebuild-metadata`: rebuilds the catalog, deduplicated public view,
+  statistics, map, and dataset card from existing shards without reopening
+  source PBFs.
 - `publish`: publishes only the existing verified artifacts to the
   configured Hugging Face dataset.
 - `run-and-publish`: runs extraction and enrichment, then regenerates and
-  publishes both configurations when verified outputs changed.
+  publishes the deduplicated public configurations when verified outputs
+  changed. Per-PBF files remain private resume inputs.
+
+After metadata generation, refresh the optional Trackio metrics snapshot with:
+
+```bash
+uv run --with trackio python -m osm_polygon_image_tag.integrations.trackio \
+  "/path/to/osm-polygon-image-tag"
+```
 
 ## Publish the documentation site
 

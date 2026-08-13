@@ -10,6 +10,8 @@ that lives inside the managed data root.
 - Rebuildable polygon and asset catalogs and factual aggregate queries.
 - Deterministic metadata coordination (`reporting`) and card rendering
   (`dataset_card`).
+- A deterministic deduplicated release view (`public_dataset`) that keeps
+  per-PBF inputs private for resume while publishing `public/` Parquet files.
 - Publication types, inventory, planning, and receipt writing
   (`publication_types`, `publication_inventory`, `publication`).
 - The dataset-card geographic density map (`geography/`): typed models,

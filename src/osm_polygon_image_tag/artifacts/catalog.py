@@ -49,7 +49,13 @@ def sync_catalog(
     emit = progress or (lambda _event: None)
     catalog_path = data_root / "catalog" / "catalog.sqlite"
     selected = list(manifests) if manifests is not None else verified_manifests(data_root)
-    emit({"event": "metadata_catalog_sync_started", "active_shards": len(selected)})
+    emit(
+        {
+            "event": "metadata_catalog_sync_started",
+            "active_shards": len(selected),
+            "shard_count": len(selected),
+        }
+    )
     active = {manifest.output.relative_path: manifest.output.sha256 for manifest, _ in selected}
     reused = 0
     indexed = 0

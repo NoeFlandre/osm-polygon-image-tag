@@ -130,7 +130,7 @@ def test_dataset_card_includes_geography_section(tmp_path: Path) -> None:
     assert "finalized `polygons` rows" in body
     assert "geometry centroid" in body
     assert "H3 resolution" in body
-    assert "Overlapping Geofabrik" in body or "overlapping source-PBF" in body
+    assert "A duplicate is the same" in body
     assert "logarithmic" in body.lower()
     assert "image_assets" in body
 

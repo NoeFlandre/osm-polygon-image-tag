@@ -278,7 +278,7 @@ def test_secret_reference_shard_completes_and_publishes_on_resume(tmp_path: Path
         not in (data_root / "cache" / "resolutions.sqlite").read_bytes()
     )
     manifest_contents = [
-        content for path, content in hub.files.items() if path.endswith(".manifest.json")
+        content for path, content in hub.files.items() if path.endswith("public-manifest.json")
     ]
     assert manifest_contents
     assert all(b"redacted-test-secret-token" not in content for content in manifest_contents)

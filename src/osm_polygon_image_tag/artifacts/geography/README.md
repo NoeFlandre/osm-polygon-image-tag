@@ -32,7 +32,10 @@ Deterministic H3 polygon-density map for the Hugging Face dataset card.
 - H3 resolution is fixed at `DEFAULT_H3_RESOLUTION = 3`.
 - Each polygon row contributes exactly once via its Shapely geometry
   centroid in OGC:CRS84; bounding-box midpoints are not used.
-- Overlapping Geofabrik extracts are preserved as separate observations.
+- Metadata generation passes the deduplicated public view, so overlapping
+  extracts do not inflate the published map. Calling `build_geographic_map`
+  without an explicit manifest list still reports the supplied finalized
+  per-PBF observations.
 - The data root is never asked to read a PBF file.
 - The basemap asset is bundled with the package; no network call is
   performed during metadata generation.

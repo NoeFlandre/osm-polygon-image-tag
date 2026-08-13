@@ -50,6 +50,7 @@ packages = ["src/osm_polygon_image_tag"]
 include = [
     "src/osm_polygon_image_tag/README.md",
     "src/osm_polygon_image_tag/_data/*.json",
+    "src/osm_polygon_image_tag/_data/*.cff",
     "src/osm_polygon_image_tag/_data/*.md",
     "src/osm_polygon_image_tag/_data/*.geojson",
     "src/osm_polygon_image_tag/_data/*.png",

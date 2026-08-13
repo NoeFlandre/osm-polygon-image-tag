@@ -6,6 +6,7 @@ import pytest
 import yaml
 
 import osm_polygon_image_tag.artifacts.reporting as reporting
+from osm_polygon_image_tag.artifacts.dataset_card import dataset_card
 from osm_polygon_image_tag.artifacts.manifest_inventory import verified_manifests
 from osm_polygon_image_tag.artifacts.reporting import generate_metadata
 from osm_polygon_image_tag.artifacts.storage import write_geoparquet
@@ -57,13 +58,14 @@ def test_empty_metadata_is_deterministic_and_factual(tmp_path: Path) -> None:
     }
     assert b"Open Database License" in first_card
     assert b"does not establish image copyright" in first_card
-    assert b"finalized manifests and their size-checked GeoParquet and asset shards" in first_card
+    assert b"finalized, size-checked public" in first_card
     assert b"cryptographically verified" not in first_card
     assert statistics["assets"] == {
         "asset_schema_versions": {},
         "cache_hits": 0,
         "direct_urls": 0,
         "duplicate_assets": 0,
+        "duplicate_assets_removed": 0,
         "expiring_urls": 0,
         "licensed_assets": 0,
         "network_resolutions": 0,
@@ -83,15 +85,20 @@ def test_empty_metadata_is_deterministic_and_factual(tmp_path: Path) -> None:
         {
             "config_name": "polygons",
             "default": True,
-            "data_files": [{"split": "train", "path": "data/*.parquet"}],
+            "data_files": [{"split": "train", "path": "public/polygons.parquet"}],
         },
         {
             "config_name": "image_assets",
-            "data_files": [{"split": "train", "path": "assets/*.assets.parquet"}],
+            "data_files": [{"split": "train", "path": "public/image_assets.parquet"}],
         },
     ]
     assert b"category membership does not prove depiction" in first_card
     assert b"`osm_type`, `osm_id`, `osm_version`, and `source_pbf`" in first_card
+    assert b"## Duplicate policy" in first_card
+    assert b"No finalized row is available in this snapshot." in first_card
+    assert b"## Citation" in first_card
+    assert "Noé Flandre".encode() in first_card
+    assert b"citation.cff" in first_card
 
 
 def test_metadata_syncs_packaged_hero(tmp_path: Path) -> None:
@@ -109,6 +116,22 @@ def test_metadata_syncs_packaged_hero(tmp_path: Path) -> None:
     generate_metadata(tmp_path)
 
     assert file_sha256(hero) == "e36f4c54fe8c71f7df2574852b082a294ec66d3077aec2086451acd0f6a3a0bb"
+
+
+def test_metadata_syncs_packaged_citation(tmp_path: Path) -> None:
+    result = generate_metadata(tmp_path)
+    citation = tmp_path / "citation.cff"
+
+    assert citation.is_file()
+    first = citation.read_bytes()
+    assert first.startswith(b"cff-version: 1.2.0\n")
+    assert b"repository-code: https://github.com/NoeFlandre/osm-polygon-image-tag" in first
+    assert b"`citation.cff`](citation.cff)" in result.card_path.read_bytes()
+
+    citation.write_bytes(b"stale")
+    generate_metadata(tmp_path)
+
+    assert citation.read_bytes() == first
 
 
 def test_metadata_reports_detailed_progress_and_scans_manifests_once(
@@ -147,8 +170,6 @@ def test_metadata_reports_detailed_progress_and_scans_manifests_once(
     ]
     assert events[1]["manifest_count"] == 0
     assert events[3]["manifest_count"] == 0
-    assert events[5]["active_shards"] == 0
-    assert events[7]["active_shards"] == 0
 
 
 def test_metadata_reuses_manifest_digest_without_rehashing_parquet(
@@ -282,18 +303,55 @@ def test_metadata_derives_factual_asset_statistics(tmp_path: Path) -> None:
     result = generate_metadata(tmp_path)
     statistics = json.loads(result.statistics_path.read_bytes())
 
-    assert statistics["assets"]["shards"] == 1
-    assert statistics["assets"]["rows"] == 2
-    assert statistics["assets"]["provider_counts"] == {"panoramax": 2}
-    assert statistics["assets"]["status_counts"] == {
-        "resolved": 1,
-        "resolved_page_only": 1,
+    assert statistics["assets"]["shards"] == 0
+    assert statistics["assets"]["rows"] == 0
+    assert statistics["assets"]["provider_counts"] == {}
+    assert statistics["assets"]["status_counts"] == {}
+    assert statistics["assets"]["direct_urls"] == 0
+    assert statistics["assets"]["stable_direct_urls"] == 0
+    assert statistics["assets"]["page_urls"] == 0
+    assert statistics["assets"]["licensed_assets"] == 0
+    assert statistics["assets"]["cache_hits"] == 0
+    assert statistics["assets"]["network_resolutions"] == 0
+    assert b"Resolver results reused from cache: 0" in result.card_path.read_bytes()
+    assert b"Provider lookups performed: 0" in result.card_path.read_bytes()
+    assert b"Image-reference rows checked: 0" in result.card_path.read_bytes()
+
+
+def test_dataset_card_formats_counts_and_explains_examples() -> None:
+    statistics: dict[str, Any] = {
+        "provider_counts": {"image": 2_555_555},
+        "shards": 12_345,
+        "rows": 2_555_555,
+        "duplicate_observations": 123_456,
+        "assets": {
+            "rows": 2_555_555,
+            "direct_urls": 2_000_000,
+            "stable_direct_urls": 1_999_999,
+            "page_urls": 2_400_000,
+            "cache_hits": 8_888_888,
+            "network_resolutions": 7_777_777,
+        },
+        "geography": {
+            "h3_resolution": 3,
+            "cell_count": 123_456,
+            "min_cell_count": 1,
+            "max_cell_count": 2_555_555,
+            "input_shard_count": 12_345,
+        },
     }
-    assert statistics["assets"]["direct_urls"] == 1
-    assert statistics["assets"]["stable_direct_urls"] == 1
-    assert statistics["assets"]["page_urls"] == 2
-    assert statistics["assets"]["licensed_assets"] == 1
-    assert statistics["assets"]["cache_hits"] == 3
-    assert statistics["assets"]["network_resolutions"] == 4
-    assert b"Resolution cache hits: 3" in result.card_path.read_bytes()
-    assert b"Provider resolver requests: 4" in result.card_path.read_bytes()
+    card = dataset_card(
+        statistics,
+        examples={
+            "polygon": {"osm_id": 42},
+            "asset": {"image_url": "https://example.test/x?token=secret"},
+        },
+    ).decode()
+
+    assert "Unique OSM features published: 2,555,555" in card
+    assert "Provider lookups performed: 7,777,777" in card
+    assert "same `osm_type`, `osm_id`, and" in card
+    assert "`osm_version` found in more than one source PBF" in card
+    assert '"osm_id": 42' in card
+    assert '"image_url": "https://example.test/x?token=[redacted]"' in card
+    assert "token=secret" not in card

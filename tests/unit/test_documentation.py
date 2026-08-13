@@ -3,6 +3,8 @@
 import re
 from pathlib import Path
 
+from osm_polygon_image_tag.artifacts.citation import packaged_citation_path
+
 ROOT = Path(__file__).parents[2]
 
 
@@ -26,6 +28,19 @@ def test_repository_readme_is_a_public_landing_page() -> None:
     assert "--source-root" in readme
     assert "--data-root" in readme
     assert "just ci" in readme
+
+
+def test_repository_publishes_machine_readable_citation() -> None:
+    raw_readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    citation = (ROOT / "citation.cff").read_text(encoding="utf-8")
+
+    assert "## Citation" in raw_readme
+    assert "citation.cff" in raw_readme
+    assert "cff-version: 1.2.0" in citation
+    assert "title: OSM Polygon Image Tag" in citation
+    assert "family-names: Flandre" in citation
+    assert "repository-code: https://github.com/NoeFlandre/osm-polygon-image-tag" in citation
+    assert citation == packaged_citation_path().read_text(encoding="utf-8")
 
 
 def test_github_folder_has_no_competing_repository_readme() -> None:

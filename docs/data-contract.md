@@ -1,5 +1,10 @@
 # Data contract
 
+The managed root keeps lossless per-PBF inputs for resumability. Hugging Face
+publication uses a separate deterministic `public/` view: one polygon row per
+`osm_type` + `osm_id` + `osm_version`, with all contributing PBF names in
+`source_pbfs`, and image assets remapped to the selected source identity.
+
 The pipeline produces one GeoParquet shard per source PBF. Every row is one
 observation of one OSM object in one source PBF; overlapping Geofabrik
 extracts remain lossless and are accounted for in the global statistics.
@@ -55,6 +60,10 @@ shard; the next run rebuilds them deterministically under the new contract.
 | `flickr` | string | yes | Exact raw value |
 | `bubbleid` | string | yes | Exact raw value of `bubbleid` |
 
+The public polygon file also contains `source_pbfs` (`list<string>`), sorted
+source-PBF names for the feature. The canonical `source_pbf` is the
+lexicographically first source, which makes joins and releases deterministic.
+
 GeoParquet metadata:
 
 - version `1.1.0`
@@ -102,6 +111,10 @@ Asset schema version 1 is a separate, one-to-many Parquet configuration.
 Rows preserve the exact source reference and factual resolution result; no
 image body is downloaded. Join to polygons on `osm_type`, `osm_id`,
 `osm_version`, and `source_pbf`.
+
+Published asset rows use `source_polygon_shard = public/polygons.parquet` and
+the canonical polygon `source_pbf`. Duplicate asset rows are removed by
+feature identity, provider reference, asset index, and returned URL fields.
 
 | Columns | Type / meaning |
 | --- | --- |

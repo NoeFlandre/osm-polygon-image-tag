@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this software or dataset, please cite it as below."
+title: OSM Polygon Image Tag
+type: software
+version: "0.1.0"
+abstract: >-
+  Reproducible GeoParquet of OpenStreetMap polygons carrying image-reference
+  tags, with independently resumable extraction and asset-resolution artifacts.
+authors:
+  - family-names: Flandre
+    given-names: Noé
+license: Apache-2.0
+repository-code: https://github.com/NoeFlandre/osm-polygon-image-tag
+url: https://huggingface.co/datasets/NoeFlandre/osm-polygon-image-tag
+keywords:
+  - OpenStreetMap
+  - GeoParquet
+  - geospatial data
+  - image references
