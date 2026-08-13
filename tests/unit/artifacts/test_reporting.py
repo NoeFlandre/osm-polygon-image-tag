@@ -57,7 +57,7 @@ def test_empty_metadata_is_deterministic_and_factual(tmp_path: Path) -> None:
         "wikimedia_commons": 0,
     }
     assert b"Open Database License" in first_card
-    assert b"does not establish image copyright" in first_card
+    assert b"does not establish copyright" in first_card
     assert b"finalized, size-checked public" in first_card
     assert b"cryptographically verified" not in first_card
     assert statistics["assets"] == {
@@ -92,11 +92,11 @@ def test_empty_metadata_is_deterministic_and_factual(tmp_path: Path) -> None:
             "data_files": [{"split": "train", "path": "public/image_assets.parquet"}],
         },
     ]
-    assert b"category membership does not prove depiction" in first_card
-    assert b"`osm_type`, `osm_id`, `osm_version`, and `source_pbf`" in first_card
-    assert b"## Duplicate policy" in first_card
+    assert b"category can contain" in first_card
+    assert b"same OSM type, ID, and version" in first_card
+    assert b"### How repeated rows are removed" in first_card
     assert b"No finalized row is available in this snapshot." in first_card
-    assert b"## Citation" in first_card
+    assert b"## Source, license, and citation" in first_card
     assert "Noé Flandre".encode() in first_card
     assert b"citation.cff" in first_card
 
@@ -313,8 +313,8 @@ def test_metadata_derives_factual_asset_statistics(tmp_path: Path) -> None:
     assert statistics["assets"]["licensed_assets"] == 0
     assert statistics["assets"]["cache_hits"] == 0
     assert statistics["assets"]["network_resolutions"] == 0
-    assert b"Resolver results reused from cache: 0" in result.card_path.read_bytes()
-    assert b"Provider lookups performed: 0" in result.card_path.read_bytes()
+    assert b"Cached lookups reused: 0" in result.card_path.read_bytes()
+    assert b"New provider lookups: 0" in result.card_path.read_bytes()
     assert b"Image-reference rows checked: 0" in result.card_path.read_bytes()
 
 
@@ -348,10 +348,10 @@ def test_dataset_card_formats_counts_and_explains_examples() -> None:
         },
     ).decode()
 
-    assert "Unique OSM features published: 2,555,555" in card
-    assert "Provider lookups performed: 7,777,777" in card
-    assert "same `osm_type`, `osm_id`, and" in card
-    assert "`osm_version` found in more than one source PBF" in card
+    assert "Published OSM features: 2,555,555" in card
+    assert "New provider lookups: 7,777,777" in card
+    assert "same OSM type, ID, and version" in card
+    assert "We keep one copy" in card
     assert '"osm_id": 42' in card
     assert '"image_url": "https://example.test/x?token=[redacted]"' in card
     assert "token=secret" not in card

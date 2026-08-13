@@ -84,69 +84,80 @@ def dataset_card(
 
 # OSM Polygon Image Tag
 
-This dataset contains OpenStreetMap Polygon and MultiPolygon observations whose
-way or relation carries at least one raw image-reference tag.
+This dataset connects OpenStreetMap polygons to image references found in their
+tags. It contains closed ways and relations only. A polygon row is one unique
+OSM feature. An image-asset row describes one image reference or one lookup
+result for a feature.
 
-## Current verified contents
+## Snapshot summary
 
-- Source PBFs processed: {_count(statistics["shards"])}
-- Unique OSM features published: {_count(statistics["rows"])}
-- Duplicate rows removed from the public view:
-  {_count(statistics.get("duplicate_observations_removed", 0))}
+This snapshot contains:
+
+- Source PBF files processed: {_count(statistics["shards"])}
+- Published OSM features: {_count(statistics["rows"])}
+- Repeated feature rows removed: {_count(statistics.get("duplicate_observations_removed", 0))}
 - Image-reference rows checked: {_count(assets["rows"])}
-- Rows with a directly usable image URL: {_count(assets["direct_urls"])}
-- Rows with a non-expiring direct image URL: {_count(assets["stable_direct_urls"])}
-- Rows with a provider page URL (not necessarily an image): {_count(assets["page_urls"])}
-- Resolver results reused from cache: {_count(assets["cache_hits"])}
-- Provider lookups performed: {_count(assets["network_resolutions"])}
+- Rows with a usable image URL: {_count(assets["direct_urls"])}
+- Rows with a non-expiring image URL: {_count(assets["stable_direct_urls"])}
+- Rows with a provider page URL (a page, not necessarily an image): {_count(assets["page_urls"])}
+- Cached lookups reused: {_count(assets["cache_hits"])}
+- New provider lookups: {_count(assets["network_resolutions"])}
 
-Provider observations:
+The counts below show how many image references came from each source tag:
 {providers}
 
-## Geographic coverage
+## Where the features are
 
-### OSM polygon density
+### Polygon density map
 
 ![Geographic OSM Polygon Density]({GEOGRAPHIC_PNG_RELATIVE})
 
-Each colored H3 cell contains the raw count of finalized `polygons` rows
-whose geometry centroid falls inside the cell. Every polygon row
-contributes exactly once, computed from its Shapely geometry centroid
-in CRS84 (not its bounding-box midpoint). The map is built at H3 resolution
-{h3_resolution}. A duplicate is the same `osm_type`, `osm_id`, and
-`osm_version` found in more than one source PBF. The public view keeps one
-deterministic row (the lexicographically first source PBF) and records every
-source in `source_pbfs`; internal per-PBF shards remain private for resume and
-audit. The colour scale
-is logarithmic (`magma`); raw counts per-cell range from
-{_count(min_cell_count)} to {_count(max_cell_count)} across {_count(cell_count)} H3
-cells, with {_count(polygon_rows)} finalized polygon rows from
-{_count(input_shard_count)} source PBF(s). The `image_assets` configuration is
-not separately counted in this map.
+Each colored H3 cell shows the number of published polygon rows in that cell.
+We place a polygon in the cell containing its geometry's center, so every
+polygon is counted once. The map uses H3 resolution {h3_resolution}, a global
+grid system. Colors use a logarithmic scale (`magma`) so sparse and dense areas
+are both visible. Cell counts range from {_count(min_cell_count)} to
+{_count(max_cell_count)} across {_count(cell_count)} cells. The map contains
+{_count(polygon_rows)} published polygon rows from {_count(input_shard_count)}
+source PBF files. Image-asset rows are not counted separately.
 
-### Duplicate policy
+### How repeated rows are removed
 
-`Duplicate rows removed from the public view` counts the extra copies after
-grouping by `osm_type` + `osm_id` + `osm_version`; two copies count as one
-removed row. The selected row's `source_pbfs` list preserves all source-PBF
-provenance. `image_assets` rows are remapped to that selected source and
-deduplicated by feature, provider, reference, and asset index.
+The same OSM feature can appear in more than one source PBF file. We call rows
+duplicates when they have the same OSM type, ID, and version. For each group:
 
-## Schema
+1. We keep one copy, chosen by a fixed rule so the result is reproducible.
+2. We list every source file in `source_pbfs`, so the provenance is not lost.
+3. We point the feature's image rows to the kept copy and remove repeated image
+   rows with the same feature, source, reference, and asset index.
 
-Rows include OSM type/ID/version/changeset/timestamp, source PBF identity, full
-OGC:CRS84 WKB geometry, geodesic `area_m2`, bounds, every original OSM tag, and
-the exact raw `image`, `wikimedia_commons`, `mapillary`, `panoramax`,
-`panoramax_values`, `kartaview`, `flickr`, and `bubbleid` values.
-The map-like `tags` and `panoramax_values` fields are deterministic lists of
-`{{"key": ..., "value": ...}}` objects so the configuration is directly
-readable by the Hugging Face Dataset Viewer.
+The private per-PBF files remain available for resume and audit; the public files
+contain only this deduplicated view.
 
-The `image_assets` configuration is one-to-many. Join it to `polygons` with
-`osm_type`, `osm_id`, `osm_version`, and `source_pbf`. Asset rows preserve the
-exact source key/value, canonical provider reference, resolution status, page
-URL, direct image URL when returned, expiry, MIME type, dimensions, and
-structured license/author metadata when available.
+## What is in the files
+
+### `polygons`
+
+Each row contains the OSM type, ID, version, changeset, timestamp, source
+information, geometry, area in square metres, bounding box, every original OSM
+tag, and the raw image-reference values: `image`, `wikimedia_commons`,
+`mapillary`, `panoramax`, `kartaview`, `flickr`, and `bubbleid`.
+
+`geometry` is compact WKB geometry in CRS84. `tags` and `panoramax_values` are
+lists of `{{"key": ..., "value": ...}}` objects, which makes every original
+tag easy to read in the Dataset Viewer. `source_pbfs` lists all source PBF files
+that contained the feature.
+
+### `image_assets`
+
+This file can contain several rows for one polygon. Each row keeps the original
+tag and value, the source name, the provider's reference, the lookup status,
+the provider page URL, a direct image URL when one was found, expiration time,
+file type, dimensions, and license/author information when available.
+
+Join the two files with `osm_type`, `osm_id`, and `osm_version`. In the public
+view, `source_pbf` identifies the selected polygon copy; `source_pbfs` contains
+the complete source history.
 
 ```python
 from datasets import load_dataset
@@ -157,9 +168,9 @@ image_assets = load_dataset("NoeFlandre/osm-polygon-image-tag", "image_assets")
 
 ## Example rows
 
-These are real rows from this snapshot. They show every column exposed by the
-corresponding configuration. Geometry is encoded as lowercase WKB hex; any
-secret-like URL query value is redacted here for safe documentation.
+These are real rows from this snapshot and show every column in each file.
+Geometry is shown as WKB hex (a compact binary format). Secret-like URL query
+values are redacted in this documentation example.
 
 ### `polygons`
 
@@ -169,44 +180,38 @@ secret-like URL query value is redacted here for safe documentation.
 
 {_example_json(example_values.get("asset"))}
 
-## Code
+## Code and metrics
 
-The pipeline that builds this dataset is maintained in the
-[NoeFlandre/osm-polygon-image-tag GitHub repository](https://github.com/NoeFlandre/osm-polygon-image-tag).
+The pipeline is maintained in the
+[OSM Polygon Image Tag GitHub repository](https://github.com/NoeFlandre/osm-polygon-image-tag).
 
-## Dataset metrics
-
-The companion [Trackio metrics Space](https://huggingface.co/spaces/NoeFlandre/osm-polygon-image-tag-trackio)
-shows the current dataset counts, image-URL coverage, duplicate removal, and
-geographic summary. It records one data-derived snapshot per published update.
+The [Trackio metrics Space](https://huggingface.co/spaces/NoeFlandre/osm-polygon-image-tag-trackio)
+shows the current row counts, image-URL coverage, duplicate removal, and map
+summary. It stores one data-derived snapshot for each published update.
 
 This snapshot is versioned as [GitHub release v0.1.0](https://github.com/NoeFlandre/osm-polygon-image-tag/releases/tag/v0.1.0).
 
-## Provenance and license
+## Source, license, and citation
 
-Source extracts are provided by Geofabrik from OpenStreetMap. OpenStreetMap data
-is available under the Open Database License. Attribution: © OpenStreetMap
+The source extracts come from Geofabrik's OpenStreetMap extracts. OpenStreetMap
+data is available under the Open Database License. Attribution: © OpenStreetMap
 contributors.
 
-## Citation
+If you use this dataset, cite **Noé Flandre, OSM Polygon Image Tag, version
+0.1.0**. The machine-readable citation is in the [dataset's
+`citation.cff`](citation.cff) and the [project's `citation.cff`](https://github.com/NoeFlandre/osm-polygon-image-tag/blob/main/citation.cff).
 
-If you use this dataset, please cite **Noé Flandre, OSM Polygon Image Tag,
-version 0.1.0**. The machine-readable citation metadata is available in the
-[dataset's `citation.cff`](citation.cff) and the [project's `citation.cff`](https://github.com/NoeFlandre/osm-polygon-image-tag/blob/main/citation.cff).
+## Limitations
 
-## Limitations and intended use
+An image reference or URL can be stale, inaccessible, provider-specific, or
+unrelated to the mapped feature. A URL is not a guarantee that an image can be
+downloaded today. Inclusion does not establish copyright, license, safety, or
+that the image depicts the feature. A Wikimedia Commons category can contain
+many unrelated files; those rows are marked `category_membership`. The pipeline
+does not download image bodies.
 
-References and resolved URLs may be stale, inaccessible, provider-specific, or
-unrelated to the current feature. Inclusion does not establish image copyright,
-licensing, safety, availability, or correspondence to the mapped feature.
-Wikimedia Commons category membership does not prove depiction of the polygon;
-it is labeled as `category_membership`. No image body is downloaded.
-
-Internal per-PBF artifacts are retained privately for resumable processing and
-audit. The published configurations are the deduplicated `public/` view.
 Statistics in this card are generated only from finalized, size-checked public
 GeoParquet and asset shards. (See the generated statistics file for exact counts.)
-The geographic coverage map references Natural Earth 1:110m landmass data
-(public domain) for context only.
+The map uses Natural Earth 1:110m landmass data (public domain) for context.
 """
     return text.encode("utf-8")

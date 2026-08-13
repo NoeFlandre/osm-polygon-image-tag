@@ -124,13 +124,13 @@ def test_dataset_card_includes_geography_section(tmp_path: Path) -> None:
     result = generate_metadata(tmp_path)
     body = result.card_path.read_text()
 
-    assert "## Geographic coverage" in body
-    assert "### OSM polygon density" in body
+    assert "## Where the features are" in body
+    assert "### Polygon density map" in body
     assert "![Geographic OSM Polygon Density](assets/geographic_polygon_density.png)" in body
-    assert "finalized `polygons` rows" in body
-    assert "geometry centroid" in body
+    assert "published polygon rows" in body
+    assert "geometry's center" in body
     assert "H3 resolution" in body
-    assert "A duplicate is the same" in body
+    assert "same OSM type, ID, and version" in body
     assert "logarithmic" in body.lower()
     assert "image_assets" in body
 

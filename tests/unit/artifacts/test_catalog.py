@@ -19,6 +19,7 @@ def test_catalog_indexes_shard_cleanup_columns(tmp_path: Path) -> None:
 
     assert "observations_shard_idx" in polygon_indexes
     assert "asset_observations_shard_idx" in asset_indexes
+    assert "asset_observations_duplicate_idx" in asset_indexes
 
 
 def test_catalog_path_can_be_isolated_for_public_views(tmp_path: Path) -> None:

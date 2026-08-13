@@ -33,6 +33,10 @@ def _prepare(connection: sqlite3.Connection) -> None:
     connection.execute(
         "CREATE INDEX IF NOT EXISTS asset_observations_shard_idx ON asset_observations (shard)"
     )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS asset_observations_duplicate_idx "
+        "ON asset_observations (provider, canonical_reference, provider_asset_id, image_url)"
+    )
 
 
 def sync_asset_catalog(

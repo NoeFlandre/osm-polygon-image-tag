@@ -93,7 +93,11 @@ def generate_metadata(data_root: Path, *, progress: Progress | None = None) -> M
     statistics["source_bytes"] = sum(manifest.source.size_bytes for manifest, _ in manifests)
     statistics["duplicate_observations"] = 0
     statistics["duplicate_observations_removed"] = public.duplicate_polygon_rows
-    statistics["assets"] = asset_statistics(catalog_path, public_asset_manifests)
+    statistics["assets"] = asset_statistics(
+        catalog_path,
+        public_asset_manifests,
+        duplicate_assets=public.duplicate_asset_rows,
+    )
     statistics["assets"]["duplicate_assets_removed"] = public.duplicate_asset_rows
     emit(
         {

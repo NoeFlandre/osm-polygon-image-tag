@@ -64,10 +64,14 @@ def test_publish_trackio_logs_one_statistics_snapshot(
     def finish() -> None:
         calls["finished"] = True
 
+    def sync(**kwargs: object) -> str:
+        calls["sync"] = kwargs
+        return str(kwargs["space_id"])
+
     monkeypatch.setitem(
         sys.modules,
         "trackio",
-        SimpleNamespace(init=init, log=log, finish=finish),
+        SimpleNamespace(init=init, log=log, finish=finish, sync=sync),
     )
     result = publish_trackio(tmp_path)
 
@@ -77,7 +81,12 @@ def test_publish_trackio_logs_one_statistics_snapshot(
     assert result.metric_count == len(logged_metrics)
     assert calls["step"] == 0
     assert calls["finished"] is True
-    assert init_kwargs["dataset_id"] == "NoeFlandre/osm-polygon-image-tag"
+    assert "space_id" not in init_kwargs
+    sync_kwargs = cast(dict[str, object], calls["sync"])
+    assert sync_kwargs["space_id"] == DEFAULT_SPACE_ID
+    assert sync_kwargs["sdk"] == "static"
+    assert sync_kwargs["dataset_id"] == "NoeFlandre/osm-polygon-image-tag-trackio-data"
+    assert sync_kwargs["force"] is True
 
 
 def test_publish_trackio_requires_optional_dependency(

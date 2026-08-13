@@ -18,7 +18,7 @@ from typing import Any, cast
 
 DEFAULT_PROJECT = "osm-polygon-image-tag"
 DEFAULT_SPACE_ID = "NoeFlandre/osm-polygon-image-tag-trackio"
-DEFAULT_DATASET_ID = "NoeFlandre/osm-polygon-image-tag"
+DEFAULT_DATASET_ID = "NoeFlandre/osm-polygon-image-tag-trackio-data"
 STATISTICS_RELATIVE_PATH = Path("statistics/dataset-statistics.json")
 
 
@@ -160,8 +160,6 @@ def publish_trackio(
     init_kwargs: dict[str, Any] = {
         "project": project,
         "name": f"dataset-{digest[:12]}",
-        "space_id": space_id,
-        "dataset_id": dataset_id,
         "config": config,
     }
     if token is not None:
@@ -171,6 +169,13 @@ def publish_trackio(
         trackio.log(metrics, step=0)
     finally:
         trackio.finish()
+    trackio.sync(
+        project=project,
+        space_id=space_id,
+        sdk="static",
+        dataset_id=dataset_id,
+        force=True,
+    )
     return TrackioPublication(project, space_id, digest, len(metrics))
 
 

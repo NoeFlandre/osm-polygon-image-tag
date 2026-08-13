@@ -6,19 +6,11 @@ from typing import Any
 from osm_polygon_image_tag.assets.manifest import AssetManifest
 
 
-def _counts(connection: sqlite3.Connection, column: str) -> dict[str, int]:
-    return {
-        str(key): int(value)
-        for key, value in connection.execute(
-            f"SELECT {column}, COUNT(*) FROM asset_observations "  # noqa: S608
-            f"GROUP BY {column} ORDER BY {column}"
-        )
-    }
-
-
 def asset_statistics(
     catalog_path: Path,
     manifests: list[tuple[AssetManifest, Path]],
+    *,
+    duplicate_assets: int | None = None,
 ) -> dict[str, Any]:
     schema_versions: Counter[int] = Counter()
     resolver_versions: Counter[int] = Counter()
@@ -26,12 +18,16 @@ def asset_statistics(
         schema_versions[manifest.asset_schema_version] += 1
         resolver_versions[manifest.resolver_contract_version] += 1
     with sqlite3.connect(catalog_path) as connection:
-        rows = int(connection.execute("SELECT COUNT(*) FROM asset_observations").fetchone()[0])
-        provider_counts = _counts(connection, "provider")
-        status_counts = _counts(connection, "status")
-        aggregates = connection.execute(
+        provider_counts: Counter[str] = Counter()
+        status_counts: Counter[str] = Counter()
+        aggregates = [0] * 6
+        rows = 0
+        grouped = connection.execute(
             """
             SELECT
+                provider,
+                status,
+                COUNT(*),
                 SUM(image_url IS NOT NULL),
                 SUM(page_url IS NOT NULL),
                 SUM(expires_at IS NOT NULL),
@@ -39,17 +35,29 @@ def asset_statistics(
                 SUM(category_truncated),
                 SUM(retry_after IS NOT NULL)
             FROM asset_observations
+            GROUP BY provider, status
+            ORDER BY provider, status
             """
-        ).fetchone()
-        duplicate = connection.execute(
-            """
-            SELECT COALESCE(SUM(count - 1), 0) FROM (
-                SELECT COUNT(*) AS count FROM asset_observations
-                GROUP BY provider, canonical_reference, provider_asset_id, image_url
+        )
+        for row in grouped:
+            provider, status, count, *values = row
+            provider_counts[str(provider)] += int(count)
+            status_counts[str(status)] += int(count)
+            rows += int(count)
+            for index, value in enumerate(values):
+                aggregates[index] += int(value or 0)
+        if duplicate_assets is None:
+            duplicate_assets = int(
+                connection.execute(
+                    """
+                    SELECT COALESCE(SUM(count - 1), 0) FROM (
+                        SELECT COUNT(*) AS count FROM asset_observations
+                        GROUP BY provider, canonical_reference, provider_asset_id, image_url
+                    )
+                    """
+                ).fetchone()[0]
             )
-            """
-        ).fetchone()[0]
-    values = [int(value or 0) for value in aggregates]
+    values = aggregates
     return {
         "shards": len(manifests),
         "rows": rows,
@@ -63,7 +71,7 @@ def asset_statistics(
         "licensed_assets": values[3],
         "truncated_categories": values[4],
         "pending_retries": values[5],
-        "duplicate_assets": int(duplicate),
+        "duplicate_assets": duplicate_assets,
         "cache_hits": sum(manifest.counts.cache_hits for manifest, _ in manifests),
         "network_resolutions": sum(manifest.counts.resolver_requests for manifest, _ in manifests),
         "asset_schema_versions": {
