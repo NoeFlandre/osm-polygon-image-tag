@@ -175,6 +175,9 @@ def publication_inventory(data_root: Path) -> tuple[PublicationFile, ...]:
         "catalog/catalog.sqlite",
         "catalog/catalog.sqlite-shm",
         "catalog/catalog.sqlite-wal",
+        "catalog/public.sqlite",
+        "catalog/public.sqlite-shm",
+        "catalog/public.sqlite-wal",
         "receipts/publication.json",
         *(managed - allowed),
     }

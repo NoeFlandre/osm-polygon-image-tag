@@ -31,8 +31,7 @@ def _prepare(connection: sqlite3.Connection) -> None:
         """
     )
     connection.execute(
-        "CREATE INDEX IF NOT EXISTS asset_observations_shard_idx "
-        "ON asset_observations (shard)"
+        "CREATE INDEX IF NOT EXISTS asset_observations_shard_idx ON asset_observations (shard)"
     )
 
 

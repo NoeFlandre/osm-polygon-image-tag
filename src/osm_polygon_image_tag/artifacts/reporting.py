@@ -19,6 +19,8 @@ from osm_polygon_image_tag.artifacts.statistics import dataset_statistics
 from osm_polygon_image_tag.core.atomic import atomic_write_bytes
 from osm_polygon_image_tag.core.progress import Progress
 
+PUBLIC_CATALOG_RELATIVE = "catalog/public.sqlite"
+
 
 @dataclass(frozen=True, slots=True)
 class MetadataResult:
@@ -78,7 +80,12 @@ def generate_metadata(data_root: Path, *, progress: Progress | None = None) -> M
     public_asset_manifests = (
         [(public.asset_manifest, public.asset_path)] if public.asset_rows else []
     )
-    catalog_path = sync_catalog(data_root, manifests=public_manifests, progress=emit)
+    catalog_path = sync_catalog(
+        data_root,
+        manifests=public_manifests,
+        catalog_path=data_root / PUBLIC_CATALOG_RELATIVE,
+        progress=emit,
+    )
     sync_asset_catalog(catalog_path, public_asset_manifests, progress=emit)
     emit({"event": "metadata_statistics_started"})
     statistics = dataset_statistics(catalog_path, public_manifests)

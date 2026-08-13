@@ -12,12 +12,17 @@ def test_catalog_indexes_shard_cleanup_columns(tmp_path: Path) -> None:
     sync_asset_catalog(catalog, [])
 
     with sqlite3.connect(catalog) as connection:
-        polygon_indexes = {
-            row[1] for row in connection.execute("PRAGMA index_list(observations)")
-        }
+        polygon_indexes = {row[1] for row in connection.execute("PRAGMA index_list(observations)")}
         asset_indexes = {
             row[1] for row in connection.execute("PRAGMA index_list(asset_observations)")
         }
 
     assert "observations_shard_idx" in polygon_indexes
     assert "asset_observations_shard_idx" in asset_indexes
+
+
+def test_catalog_path_can_be_isolated_for_public_views(tmp_path: Path) -> None:
+    custom = tmp_path / "catalog" / "public.sqlite"
+
+    assert sync_catalog(tmp_path, manifests=[], catalog_path=custom) == custom
+    assert custom.is_file()

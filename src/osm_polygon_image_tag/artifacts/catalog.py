@@ -44,11 +44,12 @@ def sync_catalog(
     data_root: Path,
     *,
     manifests: Sequence[tuple[Manifest, Path]] | None = None,
+    catalog_path: Path | None = None,
     batch_size: int = 8192,
     progress: Progress | None = None,
 ) -> Path:
     emit = progress or (lambda _event: None)
-    catalog_path = data_root / "catalog" / "catalog.sqlite"
+    catalog_path = catalog_path or data_root / "catalog" / "catalog.sqlite"
     selected = list(manifests) if manifests is not None else verified_manifests(data_root)
     emit(
         {
