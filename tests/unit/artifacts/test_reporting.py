@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -6,6 +7,7 @@ import pytest
 import yaml
 
 import osm_polygon_image_tag.artifacts.reporting as reporting
+from osm_polygon_image_tag.artifacts.asset_statistics import asset_statistics
 from osm_polygon_image_tag.artifacts.dataset_card import dataset_card
 from osm_polygon_image_tag.artifacts.manifest_inventory import verified_manifests
 from osm_polygon_image_tag.artifacts.reporting import generate_metadata
@@ -67,6 +69,10 @@ def test_empty_metadata_is_deterministic_and_factual(tmp_path: Path) -> None:
         "duplicate_assets": 0,
         "duplicate_assets_removed": 0,
         "expiring_urls": 0,
+        "image_relation_counts": {
+            "category_membership": 0,
+            "direct_reference": 0,
+        },
         "licensed_assets": 0,
         "network_resolutions": 0,
         "output_bytes": 0,
@@ -271,6 +277,78 @@ def _asset_row(status: str, *, image_url: str | None) -> dict[str, object]:
     }
 
 
+def test_asset_statistics_separates_direct_and_indirect_image_rows(tmp_path: Path) -> None:
+    rows = [
+        _asset_row("resolved", image_url="https://cdn.test/direct.jpg"),
+        _asset_row("resolved", image_url="https://cdn.test/category.jpg"),
+        _asset_row("resolved_page_only", image_url=None),
+    ]
+    rows[1]["relation_kind"] = "category_membership"
+    rows[1]["source_tag_value"] = "Category:Example"
+    output = tmp_path / "assets" / "region.assets.parquet"
+    write = write_asset_parquet(rows, output)
+    manifest = AssetManifest(
+        ASSET_MANIFEST_SCHEMA_VERSION,
+        ASSET_SCHEMA_VERSION,
+        RESOLVER_CONTRACT_VERSION,
+        AssetSourceIdentity("data/region.parquet", 1, "a" * 64, 1),
+        ResolutionSnapshotIdentity(1, "b" * 64),
+        OutputIdentity(
+            "assets/region.assets.parquet",
+            write.size_bytes,
+            file_sha256(output),
+            write.row_count,
+        ),
+        AssetRunCounts(3, {"resolved": 2, "resolved_page_only": 1}, {"image": 3}, 0, 0, 2),
+    )
+    with sqlite3.connect(tmp_path / "catalog.sqlite") as connection:
+        connection.execute(
+            """
+            CREATE TABLE asset_observations (
+                shard TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                status TEXT NOT NULL,
+                canonical_reference TEXT NOT NULL,
+                provider_asset_id TEXT,
+                image_url TEXT,
+                page_url TEXT,
+                expires_at TEXT,
+                license_id TEXT,
+                category_truncated INTEGER NOT NULL,
+                retry_after TEXT,
+                resolver_contract_version INTEGER NOT NULL
+            )
+            """
+        )
+        connection.executemany(
+            "INSERT INTO asset_observations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    "public/image_assets.parquet",
+                    row["provider"],
+                    row["status"],
+                    row["canonical_reference"],
+                    row["provider_asset_id"],
+                    row["image_url"],
+                    row["page_url"],
+                    None,
+                    row["license_id"],
+                    int(row["category_truncated"] is True),
+                    None,
+                    row["resolver_contract_version"],
+                )
+                for row in rows
+            ],
+        )
+    statistics = asset_statistics(tmp_path / "catalog.sqlite", [(manifest, output)])
+
+    assert statistics["direct_urls"] == 2
+    assert statistics["image_relation_counts"] == {
+        "category_membership": 1,
+        "direct_reference": 1,
+    }
+
+
 def test_metadata_derives_factual_asset_statistics(tmp_path: Path) -> None:
     output = tmp_path / "assets" / "region.assets.parquet"
     write = write_asset_parquet(
@@ -334,7 +412,11 @@ def test_dataset_card_formats_counts_and_explains_examples() -> None:
         "duplicate_observations": 123_456,
         "assets": {
             "rows": 2_555_555,
-            "direct_urls": 2_000_000,
+            "direct_urls": 2_555_555,
+            "image_relation_counts": {
+                "category_membership": 555_555,
+                "direct_reference": 2_000_000,
+            },
             "stable_direct_urls": 1_999_999,
             "page_urls": 2_400_000,
             "cache_hits": 8_888_888,
@@ -358,6 +440,9 @@ def test_dataset_card_formats_counts_and_explains_examples() -> None:
 
     assert "Published OSM features: 2,555,555" in card
     assert "New provider lookups: 7,777,777" in card
+    assert "Among those usable image rows:" in card
+    assert "Directly linked from an OSM tag: 2,000,000 (78.3%)" in card
+    assert "Indirectly reached through a Wikimedia Commons category: 555,555 (21.7%)" in card
     assert "same OSM type, ID, and version" in card
     assert "We keep one copy" in card
     assert '"osm_id": 42' in card

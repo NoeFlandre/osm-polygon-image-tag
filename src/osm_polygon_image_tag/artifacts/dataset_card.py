@@ -20,6 +20,14 @@ def _count(value: Any) -> str:
     return f"{int(value):,}"
 
 
+def _percentage(part: Any, total: Any) -> str:
+    """Format a count as a one-decimal percentage of a total."""
+    denominator = int(total)
+    if denominator <= 0:
+        return "0.0%"
+    return f"{int(part) / denominator * 100:.1f}%"
+
+
 def _safe_example_value(value: object) -> object:
     """Make an example JSON-safe while redacting secret-like query values."""
     if isinstance(value, bytes):
@@ -71,6 +79,19 @@ def dataset_card(
     }
     frontmatter = yaml.safe_dump(metadata, sort_keys=False, allow_unicode=True)
     assets = statistics["assets"]
+    image_relation_counts = assets.get("image_relation_counts", {})
+    direct_image_rows = int(image_relation_counts.get("direct_reference", 0))
+    indirect_image_rows = int(image_relation_counts.get("category_membership", 0))
+    usable_image_rows = int(assets.get("direct_urls", 0))
+    direct_image_summary = (
+        f"- Directly linked from an OSM tag: {_count(direct_image_rows)} "
+        f"({_percentage(direct_image_rows, usable_image_rows)})"
+    )
+    indirect_image_summary = (
+        "- Indirectly reached through a Wikimedia Commons category: "
+        f"{_count(indirect_image_rows)} "
+        f"({_percentage(indirect_image_rows, usable_image_rows)})"
+    )
     geography = statistics.get("geography") or {}
     polygon_rows = statistics["rows"]
     h3_resolution = int(geography.get("h3_resolution") or 3)
@@ -104,6 +125,9 @@ This snapshot contains:
 - Repeated feature rows removed: {_count(statistics.get("duplicate_observations_removed", 0))}
 - Image-reference rows checked: {_count(assets["rows"])}
 - Rows with a usable image URL: {_count(assets["direct_urls"])}
+Among those usable image rows:
+{direct_image_summary}
+{indirect_image_summary}
 - Rows with a non-expiring image URL: {_count(assets["stable_direct_urls"])}
 - Rows with a provider page URL (a page, not necessarily an image): {_count(assets["page_urls"])}
 - Cached lookups reused: {_count(assets["cache_hits"])}

@@ -3,7 +3,28 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+import pyarrow.parquet as pq
+
 from osm_polygon_image_tag.assets.manifest import AssetManifest
+
+
+def _usable_image_relation_counts(
+    manifests: list[tuple[AssetManifest, Path]],
+) -> Counter[str]:
+    """Count usable image rows by their direct or indirect relation kind."""
+    counts: Counter[str] = Counter({"direct_reference": 0, "category_membership": 0})
+    for _manifest, output in manifests:
+        parquet = pq.ParquetFile(output)
+        for batch in parquet.iter_batches(
+            columns=["relation_kind", "image_url"],
+            batch_size=65_536,
+        ):
+            relation_kinds = batch.column("relation_kind").to_pylist()
+            image_urls = batch.column("image_url").to_pylist()
+            for relation_kind, image_url in zip(relation_kinds, image_urls, strict=True):
+                if image_url is not None:
+                    counts[str(relation_kind)] += 1
+    return counts
 
 
 def asset_statistics(
@@ -17,6 +38,7 @@ def asset_statistics(
     for manifest, _output in manifests:
         schema_versions[manifest.asset_schema_version] += 1
         resolver_versions[manifest.resolver_contract_version] += 1
+    image_relation_counts = _usable_image_relation_counts(manifests)
     with sqlite3.connect(catalog_path) as connection:
         provider_counts: Counter[str] = Counter()
         status_counts: Counter[str] = Counter()
@@ -66,6 +88,7 @@ def asset_statistics(
         "status_counts": status_counts,
         "direct_urls": values[0],
         "stable_direct_urls": max(0, values[0] - values[2]),
+        "image_relation_counts": dict(sorted(image_relation_counts.items())),
         "page_urls": values[1],
         "expiring_urls": values[2],
         "licensed_assets": values[3],
