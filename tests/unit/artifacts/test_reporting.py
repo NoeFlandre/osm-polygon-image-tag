@@ -441,6 +441,8 @@ def test_dataset_card_formats_counts_and_explains_examples() -> None:
     assert "Published OSM features: 2,555,555" in card
     assert "New provider lookups: 7,777,777" in card
     assert "Among those usable image rows:" in card
+    assert "The source-tag counts below are polygon counts, not resolved image counts." in card
+    assert "The percentages below use usable image rows as their denominator." in card
     assert "Directly linked from an OSM tag: 2,000,000 (78.3%)" in card
     assert "Indirectly reached through a Wikimedia Commons category: 555,555 (21.7%)" in card
     assert "same OSM type, ID, and version" in card

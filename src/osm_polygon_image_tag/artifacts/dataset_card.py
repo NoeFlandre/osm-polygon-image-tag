@@ -125,6 +125,7 @@ This snapshot contains:
 - Repeated feature rows removed: {_count(statistics.get("duplicate_observations_removed", 0))}
 - Image-reference rows checked: {_count(assets["rows"])}
 - Rows with a usable image URL: {_count(assets["direct_urls"])}
+The percentages below use usable image rows as their denominator.
 Among those usable image rows:
 {direct_image_summary}
 {indirect_image_summary}
@@ -133,7 +134,7 @@ Among those usable image rows:
 - Cached lookups reused: {_count(assets["cache_hits"])}
 - New provider lookups: {_count(assets["network_resolutions"])}
 
-The counts below show how many image references came from each source tag:
+The source-tag counts below are polygon counts, not resolved image counts.
 {providers}
 
 ## Where the features are
