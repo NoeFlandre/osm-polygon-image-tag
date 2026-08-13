@@ -36,6 +36,7 @@ def _connect(path: Path) -> sqlite3.Connection:
     connection.execute(
         "CREATE INDEX IF NOT EXISTS identity_idx ON observations (osm_type, osm_id, osm_version)"
     )
+    connection.execute("CREATE INDEX IF NOT EXISTS observations_shard_idx ON observations (shard)")
     return connection
 
 
