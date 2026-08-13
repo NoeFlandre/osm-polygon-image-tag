@@ -17,7 +17,7 @@ from osm_polygon_image_tag.core.manifest import (
 
 
 def test_compatibility_versions_invalidate_old_shards() -> None:
-    assert DATASET_SCHEMA_VERSION == 2
+    assert DATASET_SCHEMA_VERSION == 3
     assert PROCESSING_CONTRACT_VERSION == 2
 
 

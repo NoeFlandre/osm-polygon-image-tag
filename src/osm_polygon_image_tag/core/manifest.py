@@ -9,7 +9,7 @@ from osm_polygon_image_tag.core.errors import ImageTagPipelineError
 
 MANIFEST_SCHEMA_VERSION = 1
 PROCESSING_CONTRACT_VERSION = 2
-DATASET_SCHEMA_VERSION = 2
+DATASET_SCHEMA_VERSION = 3
 
 
 class ManifestError(ImageTagPipelineError):

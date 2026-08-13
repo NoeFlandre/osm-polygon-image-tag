@@ -75,7 +75,7 @@ def test_real_osmium_builds_exact_lossless_geoparquet_shard(tmp_path: Path) -> N
     assert set(table.column("geometry_type").to_pylist()) == {"Polygon", "MultiPolygon"}
     rows = table.to_pylist()
     relation = next(row for row in rows if row["osm_type"] == "relation" and row["osm_id"] == 2000)
-    assert dict(relation["tags"]) == {
+    assert {pair["key"]: pair["value"] for pair in relation["tags"]} == {
         "name": "Relation area",
         "type": "multipolygon",
         "wikimedia_commons": "Category:Relation",
@@ -83,7 +83,7 @@ def test_real_osmium_builds_exact_lossless_geoparquet_shard(tmp_path: Path) -> N
     assert relation["wikimedia_commons"] == "Category:Relation"
     indexed = next(row for row in rows if row["osm_type"] == "way" and row["osm_id"] == 1001)
     assert indexed["bubbleid"] == "bing-streetside-id"
-    assert dict(indexed["panoramax_values"]) == {
+    assert {pair["key"]: pair["value"] for pair in indexed["panoramax_values"]} == {
         "panoramax:0": "panoramax-first",
         "panoramax:2": "panoramax-third",
     }

@@ -5,7 +5,7 @@ from pyproj import CRS
 
 from osm_polygon_image_tag.core.contracts import PANORAMAX_VALUES_COLUMN, REFERENCE_COLUMNS
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 GEOPARQUET_VERSION = "1.1.0"
 
 
@@ -31,7 +31,14 @@ def _reference_fields() -> list[pa.Field]:
             fields.append(
                 pa.field(
                     name,
-                    pa.map_(pa.string(), pa.string(), keys_sorted=True),
+                    pa.list_(
+                        pa.struct(
+                            [
+                                pa.field("key", pa.string(), nullable=False),
+                                pa.field("value", pa.string(), nullable=False),
+                            ]
+                        )
+                    ),
                     nullable=False,
                 )
             )
@@ -56,7 +63,18 @@ def dataset_schema() -> pa.Schema:
         pa.field("bbox_min_lat", pa.float64(), nullable=False),
         pa.field("bbox_max_lon", pa.float64(), nullable=False),
         pa.field("bbox_max_lat", pa.float64(), nullable=False),
-        pa.field("tags", pa.map_(pa.string(), pa.string(), keys_sorted=True), nullable=False),
+        pa.field(
+            "tags",
+            pa.list_(
+                pa.struct(
+                    [
+                        pa.field("key", pa.string(), nullable=False),
+                        pa.field("value", pa.string(), nullable=False),
+                    ]
+                )
+            ),
+            nullable=False,
+        ),
     ]
     fields.extend(_reference_fields())
     return pa.schema(

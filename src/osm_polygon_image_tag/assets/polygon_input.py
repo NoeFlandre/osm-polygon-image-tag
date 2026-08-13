@@ -39,9 +39,13 @@ def _panoramax_count(value: object, fallback: object) -> int:
         pairs = tuple(value.items())
     elif isinstance(value, list):
         pairs = tuple(
-            (pair[0], pair[1])
+            (
+                (pair.get("key"), pair.get("value"))
+                if isinstance(pair, Mapping)
+                else (pair[0], pair[1])
+            )
             for pair in value
-            if isinstance(pair, tuple | list) and len(pair) == 2 and pair[0] is not None
+            if (isinstance(pair, Mapping) or (isinstance(pair, tuple | list) and len(pair) == 2))
         )
     else:
         pairs = ()

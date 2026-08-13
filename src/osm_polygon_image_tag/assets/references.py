@@ -29,12 +29,17 @@ def _string_mapping(value: object) -> dict[str, str]:
             if key is not None and item is not None
         }
     if isinstance(value, list):
-        return {
-            str(key): str(item)
-            for pair in value
-            if isinstance(pair, tuple | list) and len(pair) == 2
-            for key, item in (pair,)
-        }
+        result: dict[str, str] = {}
+        for pair in value:
+            if isinstance(pair, Mapping):
+                key, item = pair.get("key"), pair.get("value")
+            elif isinstance(pair, tuple | list) and len(pair) == 2:
+                key, item = pair
+            else:
+                continue
+            if key is not None and item is not None:
+                result[str(key)] = str(item)
+        return result
     return {}
 
 

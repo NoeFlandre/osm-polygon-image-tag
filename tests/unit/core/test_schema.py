@@ -59,10 +59,16 @@ def test_dataset_schema_has_exact_columns_and_nullability() -> None:
         "flickr": True,
         "bubbleid": True,
     }
-    assert schema.field("tags").type == pa.map_(pa.string(), pa.string(), keys_sorted=True)
-    assert schema.field("panoramax_values").type == pa.map_(
-        pa.string(), pa.string(), keys_sorted=True
+    viewer_pairs = pa.list_(
+        pa.struct(
+            [
+                pa.field("key", pa.string(), nullable=False),
+                pa.field("value", pa.string(), nullable=False),
+            ]
+        )
     )
+    assert schema.field("tags").type == viewer_pairs
+    assert schema.field("panoramax_values").type == viewer_pairs
 
 
 def test_schema_contains_geoparquet_1_1_crs84_wkb_metadata() -> None:

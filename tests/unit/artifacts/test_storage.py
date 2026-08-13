@@ -48,9 +48,24 @@ def test_writes_bounded_zstd_row_groups_and_preserves_schema(tmp_path: Path) -> 
     validate_geoparquet(final_path)
     table = pq.read_table(final_path)
     assert table.column("osm_id").to_pylist() == [0, 1, 2]
-    assert dict(table.column("tags").to_pylist()[0]) == {"image": "0.jpg", "name": "Place 0"}
+    assert table.column("tags").to_pylist()[0] == [
+        {"key": "image", "value": "0.jpg"},
+        {"key": "name", "value": "Place 0"},
+    ]
     assert table.schema.metadata is not None
     assert b"geo" in table.schema.metadata
+
+
+def test_normalizes_mapping_tags_for_viewer_compatible_schema(tmp_path: Path) -> None:
+    final_path = tmp_path / "data" / "mapping.parquet"
+
+    write_geoparquet([_row(1)], final_path)
+
+    row = pq.read_table(final_path).to_pylist()[0]
+    assert row["tags"] == [
+        {"key": "image", "value": "1.jpg"},
+        {"key": "name", "value": "Place 1"},
+    ]
 
 
 def test_writes_a_valid_empty_shard(tmp_path: Path) -> None:

@@ -30,14 +30,7 @@ def _schema_matches(actual: pa.Schema, expected: pa.Schema) -> bool:
     for actual_field, expected_field in zip(actual, expected, strict=True):
         if actual_field.nullable != expected_field.nullable:
             return False
-        if expected_field.name in {"tags", PANORAMAX_VALUES_COLUMN}:
-            if not (
-                pa.types.is_map(actual_field.type)
-                and actual_field.type.key_type == pa.string()
-                and actual_field.type.item_type == pa.string()
-            ):
-                return False
-        elif actual_field.type != expected_field.type:
+        if actual_field.type != expected_field.type:
             return False
     return True
 
@@ -88,7 +81,15 @@ def _write_batches(
         write_statistics=True,
     ) as writer:
         for row in rows:
-            batch.append(row)
+            normalized = dict(row)
+            for name in ("tags", PANORAMAX_VALUES_COLUMN):
+                value = normalized.get(name)
+                if isinstance(value, Mapping):
+                    normalized[name] = [
+                        {"key": str(key), "value": str(item)}
+                        for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+                    ]
+            batch.append(normalized)
             if len(batch) == batch_size:
                 writer.write_table(pa.Table.from_pylist(batch, schema=schema))
                 row_count += len(batch)

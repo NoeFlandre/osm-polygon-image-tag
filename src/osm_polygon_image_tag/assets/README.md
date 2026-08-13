@@ -27,7 +27,7 @@ single pure refresh-policy boundary, so those paths cannot drift apart; the
 separate expiry checks retain their input-specific timestamp handling.
 
 The progress-count pass reads only the normalized provider columns and
-`panoramax_values`; the full `tags` map is read once by the actual asset build
+`panoramax_values`; the full `tags` key/value list is read once by the actual asset build
 pass. `builder.py` owns shard reuse, iteration, atomic output, and manifest
 finalization; `batch.py` owns bounded reference resolution, cache interaction,
 and per-shard accounting. Within a shard, cacheable resolutions are loaded in

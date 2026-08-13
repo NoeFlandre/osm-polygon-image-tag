@@ -64,7 +64,10 @@ def test_indexed_panoramax_preserves_provenance_for_one_canonical_request() -> N
     references = references_from_row(
         {
             "tags": {"panoramax": uuid, "panoramax:0": uuid},
-            "panoramax_values": [("panoramax", uuid), ("panoramax:0", uuid)],
+            "panoramax_values": [
+                {"key": "panoramax", "value": uuid},
+                {"key": "panoramax:0", "value": uuid},
+            ],
         }
     )
 

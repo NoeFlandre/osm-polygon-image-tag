@@ -34,6 +34,9 @@ in this package may import from `ingest`, `artifacts`, `runtime`, or
 - `MANIFEST_SCHEMA_VERSION`, `PROCESSING_CONTRACT_VERSION`,
   `DATASET_SCHEMA_VERSION`: stable version integers. Bumping them
   deterministically invalidates older shards.
+- The polygon `tags` and `panoramax_values` columns use deterministic
+  key/value lists rather than Arrow maps. This preserves every original tag
+  while remaining readable by the Hugging Face Dataset Viewer.
 - `dataset_schema()`: the single source of truth for the GeoParquet schema.
 - `IMAGE_REFERENCE_KEYS`, `REFERENCE_COLUMNS`, and
   `SCALAR_REFERENCE_COLUMNS`: the single source of truth for image-provider

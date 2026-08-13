@@ -85,6 +85,9 @@ Rows include OSM type/ID/version/changeset/timestamp, source PBF identity, full
 OGC:CRS84 WKB geometry, geodesic `area_m2`, bounds, every original OSM tag, and
 the exact raw `image`, `wikimedia_commons`, `mapillary`, `panoramax`,
 `panoramax_values`, `kartaview`, `flickr`, and `bubbleid` values.
+The map-like `tags` and `panoramax_values` fields are deterministic lists of
+`{{"key": ..., "value": ...}}` objects so the configuration is directly
+readable by the Hugging Face Dataset Viewer.
 
 The `image_assets` configuration is one-to-many. Join it to `polygons` with
 `osm_type`, `osm_id`, `osm_version`, and `source_pbf`. Asset rows preserve the

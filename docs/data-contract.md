@@ -25,7 +25,7 @@ Keys that look similar but are not selected include `panoramax:left`,
 
 ## GeoParquet schema
 
-Schema version 2 (current). Bumping the schema or processing contract
+Schema version 3 (current). Bumping the schema or processing contract
 in `osm_polygon_image_tag.core.manifest` invalidates every previously built
 shard; the next run rebuilds them deterministically under the new contract.
 
@@ -45,12 +45,12 @@ shard; the next run rebuilds them deterministically under the new contract.
 | `bbox_min_lat` | float64 | no | Southern bound |
 | `bbox_max_lon` | float64 | no | Eastern bound |
 | `bbox_max_lat` | float64 | no | Northern bound |
-| `tags` | map<string,string> | no | Every original OSM tag |
+| `tags` | list<struct<key:string,value:string>> | no | Every original OSM tag, sorted by key |
 | `image` | string | yes | Exact raw value of `image` |
 | `wikimedia_commons` | string | yes | Exact raw value |
 | `mapillary` | string | yes | Exact raw value |
 | `panoramax` | string | yes | Exact raw value of `panoramax` |
-| `panoramax_values` | map<string,string> | no | Exact `panoramax` plus indexed entries |
+| `panoramax_values` | list<struct<key:string,value:string>> | no | Exact `panoramax` plus indexed entries, sorted by key |
 | `kartaview` | string | yes | Exact raw value |
 | `flickr` | string | yes | Exact raw value |
 | `bubbleid` | string | yes | Exact raw value of `bubbleid` |
@@ -71,7 +71,7 @@ Every shard has a sibling `*.manifest.json` with the following shape:
 {
   "manifest_schema_version": 1,
   "processing_contract_version": 2,
-  "dataset_schema_version": 2,
+  "dataset_schema_version": 3,
   "source": {
     "relative_path": "europe/france.osm.pbf",
     "size_bytes": 1234567890,
