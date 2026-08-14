@@ -8,6 +8,11 @@ view to a Hugging Face dataset. The per-PBF shards remain private inputs for
 resume and audit. The codebase is a `uv`-managed Python 3.12 project
 organized into responsibility-based subpackages.
 
+The public view has three tables: `polygons` keeps one current row per OSM
+object, `images` keeps one row per unique provider image, and `polygon_images`
+keeps the many-to-many links between them. This separates image identity from
+the relationships that explain where each image reference came from.
+
 ## Layered structure
 
 ```

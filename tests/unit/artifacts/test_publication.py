@@ -113,7 +113,8 @@ def test_inventory_contains_only_verified_public_artifacts(tmp_path: Path) -> No
         "assets/geographic_polygon_density.png",
         "assets/hero.png",
         "citation.cff",
-        "public/image_assets.parquet",
+        "public/images.parquet",
+        "public/polygon_images.parquet",
         "public/polygons.parquet",
         "public/public-manifest.json",
         "statistics/dataset-statistics.json",
@@ -151,23 +152,23 @@ def test_inventory_rejects_noncanonical_hero_png(tmp_path: Path) -> None:
 def test_inventory_rejects_same_size_asset_corruption(tmp_path: Path) -> None:
     _dataset(tmp_path)
     _asset_dataset(tmp_path)
-    output = tmp_path / "public" / "image_assets.parquet"
+    output = tmp_path / "public" / "images.parquet"
     content = bytearray(output.read_bytes())
     content[len(content) // 2] ^= 1
     output.write_bytes(content)
 
-    with pytest.raises(PublicationError, match="asset digest"):
+    with pytest.raises(PublicationError, match="public image digest"):
         publication_inventory(tmp_path)
 
 
 def test_inventory_rejects_self_consistent_non_parquet_asset(tmp_path: Path) -> None:
     _dataset(tmp_path)
     _asset_dataset(tmp_path)
-    output = tmp_path / "public" / "image_assets.parquet"
+    output = tmp_path / "public" / "images.parquet"
     output.write_bytes(b"not a parquet file")
     manifest_path = tmp_path / "public" / "public-manifest.json"
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-    payload["asset_output"].update(
+    payload["image_output"].update(
         {
             "size_bytes": output.stat().st_size,
             "sha256": file_sha256(output),
@@ -176,7 +177,7 @@ def test_inventory_rejects_self_consistent_non_parquet_asset(tmp_path: Path) -> 
     )
     manifest_path.write_text(json.dumps(payload), encoding="utf-8")
 
-    with pytest.raises(PublicationError, match="asset Parquet"):
+    with pytest.raises(PublicationError, match="public image Parquet"):
         publication_inventory(tmp_path)
 
 

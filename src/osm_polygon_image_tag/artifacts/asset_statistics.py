@@ -1,5 +1,6 @@
 import sqlite3
 from collections import Counter
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -97,6 +98,126 @@ def asset_statistics(
         "duplicate_assets": duplicate_assets,
         "cache_hits": sum(manifest.counts.cache_hits for manifest, _ in manifests),
         "network_resolutions": sum(manifest.counts.resolver_requests for manifest, _ in manifests),
+        "asset_schema_versions": {
+            str(key): value for key, value in sorted(schema_versions.items())
+        },
+        "resolver_contract_versions": {
+            str(key): value for key, value in sorted(resolver_versions.items())
+        },
+    }
+
+
+def public_asset_statistics(
+    image_path: Path,
+    link_path: Path,
+    manifests: Iterable[tuple[AssetManifest, Path]],
+    *,
+    duplicate_images: int = 0,
+    duplicate_links: int = 0,
+    orphan_rows: int = 0,
+) -> dict[str, Any]:
+    """Summarize the public one-image and polygon/image tables.
+
+    The private asset catalog describes observations before deduplication. This
+    function reads the files that are actually published, so card statistics
+    cannot accidentally describe rows that are not in the public release.
+    """
+    source_manifests = list(manifests)
+    schema_versions: Counter[int] = Counter()
+    resolver_versions: Counter[int] = Counter()
+    for manifest, _output in source_manifests:
+        schema_versions[manifest.asset_schema_version] += 1
+        resolver_versions[manifest.resolver_contract_version] += 1
+
+    provider_counts: Counter[str] = Counter()
+    status_counts: Counter[str] = Counter()
+    usable_image_ids: set[str] = set()
+    direct_urls = stable_direct_urls = page_urls = expiring_urls = 0
+    licensed_assets = truncated_categories = pending_retries = 0
+    image_rows = 0
+    for batch in pq.ParquetFile(image_path).iter_batches(
+        columns=[
+            "image_id",
+            "provider",
+            "status",
+            "image_url",
+            "image_url_expires_at",
+            "page_url",
+            "license_id",
+            "category_truncated",
+            "retry_after",
+        ],
+        batch_size=65_536,
+    ):
+        image_rows += batch.num_rows
+        columns = {name: batch.column(name).to_pylist() for name in batch.schema.names}
+        for values in zip(*columns.values(), strict=True):
+            (
+                image_id_value,
+                provider,
+                status,
+                image_url,
+                expires_at,
+                page_url,
+                license_id,
+                category_truncated,
+                retry_after,
+            ) = values
+            provider_counts[str(provider)] += 1
+            status_counts[str(status)] += 1
+            if image_url is not None:
+                direct_urls += 1
+                usable_image_ids.add(str(image_id_value))
+                if expires_at is None:
+                    stable_direct_urls += 1
+                else:
+                    expiring_urls += 1
+            if page_url is not None:
+                page_urls += 1
+            if license_id is not None:
+                licensed_assets += 1
+            if category_truncated:
+                truncated_categories += 1
+            if retry_after is not None:
+                pending_retries += 1
+
+    image_relation_counts: Counter[str] = Counter({"category_membership": 0, "direct_reference": 0})
+    relationship_rows = 0
+    for batch in pq.ParquetFile(link_path).iter_batches(
+        columns=["image_id", "relation_kind"], batch_size=65_536
+    ):
+        image_ids = batch.column("image_id").to_pylist()
+        relation_kinds = batch.column("relation_kind").to_pylist()
+        relationship_rows += batch.num_rows
+        for image_id_value, relation_kind in zip(image_ids, relation_kinds, strict=True):
+            if str(image_id_value) in usable_image_ids:
+                image_relation_counts[str(relation_kind)] += 1
+
+    return {
+        "shards": len(source_manifests),
+        "rows": image_rows,
+        "relationship_rows": relationship_rows,
+        "output_bytes": image_path.stat().st_size + link_path.stat().st_size,
+        "provider_counts": provider_counts,
+        "status_counts": status_counts,
+        "direct_urls": direct_urls,
+        "stable_direct_urls": stable_direct_urls,
+        "image_relation_counts": dict(sorted(image_relation_counts.items())),
+        "usable_relationship_rows": sum(image_relation_counts.values()),
+        "page_urls": page_urls,
+        "expiring_urls": expiring_urls,
+        "licensed_assets": licensed_assets,
+        "truncated_categories": truncated_categories,
+        "pending_retries": pending_retries,
+        "duplicate_assets": duplicate_images,
+        "duplicate_assets_removed": duplicate_images,
+        "duplicate_images_removed": duplicate_images,
+        "duplicate_links_removed": duplicate_links,
+        "orphan_rows": orphan_rows,
+        "cache_hits": sum(manifest.counts.cache_hits for manifest, _ in source_manifests),
+        "network_resolutions": sum(
+            manifest.counts.resolver_requests for manifest, _ in source_manifests
+        ),
         "asset_schema_versions": {
             str(key): value for key, value in sorted(schema_versions.items())
         },

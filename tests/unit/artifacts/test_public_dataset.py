@@ -6,7 +6,14 @@ from pathlib import Path
 from shapely import to_wkb
 from shapely.geometry import Polygon
 
-from osm_polygon_image_tag.artifacts.public_dataset import build_public_dataset
+from osm_polygon_image_tag.artifacts.asset_inventory import verified_asset_manifests
+from osm_polygon_image_tag.artifacts.asset_statistics import public_asset_statistics
+from osm_polygon_image_tag.artifacts.public_dataset import (
+    LEGACY_PUBLIC_ASSET_RELATIVE,
+    PUBLIC_IMAGE_RELATIVE,
+    PUBLIC_LINK_RELATIVE,
+    build_public_dataset,
+)
 from osm_polygon_image_tag.artifacts.storage import write_geoparquet
 from osm_polygon_image_tag.assets.manifest import (
     ASSET_MANIFEST_SCHEMA_VERSION,
@@ -31,17 +38,21 @@ from osm_polygon_image_tag.core.manifest import (
 
 
 def _polygon_row(
-    source: str, *, osm_id: int = 1, image: str = "https://example.test/a.jpg"
+    source: str,
+    *,
+    osm_id: int = 1,
+    osm_version: int = 1,
+    image: str = "https://example.test/a.jpg",
 ) -> dict[str, object]:
     polygon = Polygon([(4, 50), (4.01, 50), (4.01, 50.01), (4, 50.01)])
     return {
         "osm_type": "way",
         "osm_id": osm_id,
-        "osm_version": 1,
+        "osm_version": osm_version,
         "osm_changeset": 1,
         "osm_timestamp": None,
         "source_pbf": source,
-        "source_feature_id": f"{source}|way|{osm_id}|1",
+        "source_feature_id": f"{source}|way|{osm_id}|{osm_version}",
         "geometry": to_wkb(polygon),
         "geometry_type": "Polygon",
         "area_m2": 1.0,
@@ -61,22 +72,34 @@ def _polygon_row(
     }
 
 
-def _asset_row(source: str, *, source_shard: str = "data/source.parquet") -> dict[str, object]:
+def _asset_row(
+    source: str,
+    *,
+    source_shard: str = "data/source.parquet",
+    osm_id: int = 1,
+    osm_version: int = 1,
+    source_tag_key: str = "image",
+    source_tag_value: str = "https://example.test/a.jpg",
+    canonical_reference: str = "https://example.test/a.jpg",
+    provider_asset_id: str = "a",
+    relation_kind: str = "direct_reference",
+    image_url: str | None = "https://example.test/a.jpg",
+) -> dict[str, object]:
     return {
         "source_pbf": source,
         "source_polygon_shard": source_shard,
         "osm_type": "way",
-        "osm_id": 1,
-        "osm_version": 1,
+        "osm_id": osm_id,
+        "osm_version": osm_version,
         "provider": "image",
-        "source_tag_key": "image",
-        "source_tag_value": "https://example.test/a.jpg",
-        "canonical_reference": "https://example.test/a.jpg",
-        "provider_asset_id": "a",
+        "source_tag_key": source_tag_key,
+        "source_tag_value": source_tag_value,
+        "canonical_reference": canonical_reference,
+        "provider_asset_id": provider_asset_id,
         "asset_index": 0,
-        "relation_kind": "direct_reference",
+        "relation_kind": relation_kind,
         "page_url": "https://example.test/a.jpg",
-        "image_url": "https://example.test/a.jpg",
+        "image_url": image_url,
         "thumbnail_url": None,
         "image_url_expires_at": None,
         "mime_type": "image/jpeg",
@@ -161,21 +184,26 @@ def test_public_dataset_deduplicates_identity_and_preserves_provenance(tmp_path:
     result = build_public_dataset(tmp_path)
     assert result.polygon_rows == 1
     assert result.duplicate_polygon_rows == 1
-    assert result.asset_rows == 1
-    assert result.duplicate_asset_rows == 1
+    assert result.image_rows == 1
+    assert result.link_rows == 1
+    assert result.duplicate_image_rows == 1
+    assert result.duplicate_link_rows == 1
 
     import pyarrow.parquet as pq
 
     polygon = pq.read_table(result.polygon_path).to_pylist()[0]
-    asset = pq.read_table(result.asset_path).to_pylist()[0]
+    image = pq.read_table(result.image_path).to_pylist()[0]
+    link = pq.read_table(result.link_path).to_pylist()[0]
     assert polygon["source_pbf"] == "a-region.osm.pbf"
     assert polygon["source_pbfs"] == ["a-region.osm.pbf", "z-region.osm.pbf"]
-    assert asset["source_pbf"] == "a-region.osm.pbf"
-    assert asset["source_polygon_shard"] == "public/polygons.parquet"
+    assert image["source_pbfs"] == ["a-region.osm.pbf", "z-region.osm.pbf"]
+    assert link["source_pbfs"] == ["a-region.osm.pbf", "z-region.osm.pbf"]
 
     manifest = json.loads(result.manifest_path.read_text())
     assert manifest["polygon_rows"] == 1
     assert manifest["duplicate_polygon_rows"] == 1
+    assert manifest["image_rows"] == 1
+    assert manifest["link_rows"] == 1
 
 
 def test_public_dataset_is_reused_when_inputs_are_unchanged(tmp_path: Path) -> None:
@@ -186,3 +214,123 @@ def test_public_dataset_is_reused_when_inputs_are_unchanged(tmp_path: Path) -> N
 
     assert second.reused is True
     assert second.polygon_path.read_bytes() == polygon_before
+
+
+def test_public_dataset_removes_obsolete_image_asset_after_materialization(
+    tmp_path: Path,
+) -> None:
+    _write_polygon_manifest(tmp_path, "region.osm.pbf", [_polygon_row("region.osm.pbf")])
+    legacy = tmp_path / LEGACY_PUBLIC_ASSET_RELATIVE
+    legacy.parent.mkdir(parents=True)
+    legacy.write_bytes(b"obsolete")
+
+    build_public_dataset(tmp_path)
+    assert not legacy.exists()
+
+    legacy.write_bytes(b"obsolete")
+    reused = build_public_dataset(tmp_path)
+    assert reused.reused is True
+    assert not legacy.exists()
+
+
+def test_public_dataset_keeps_latest_object_and_unique_images_with_links(tmp_path: Path) -> None:
+    _write_polygon_manifest(
+        tmp_path,
+        "old-region.osm.pbf",
+        [_polygon_row("old-region.osm.pbf", osm_version=1)],
+    )
+    _write_polygon_manifest(
+        tmp_path,
+        "new-region.osm.pbf",
+        [
+            _polygon_row("new-region.osm.pbf", osm_version=2),
+            _polygon_row("new-region.osm.pbf", osm_id=2),
+        ],
+    )
+    shared = "https://cdn.example.test/same.jpg"
+    _write_asset_manifest(
+        tmp_path,
+        "old-region.osm.pbf",
+        "data/old-region.parquet",
+        [
+            _asset_row(
+                "old-region.osm.pbf",
+                osm_version=1,
+                source_tag_value=shared,
+                canonical_reference=shared,
+                image_url=shared,
+            )
+        ],
+    )
+    _write_asset_manifest(
+        tmp_path,
+        "new-region.osm.pbf",
+        "data/new-region.parquet",
+        [
+            _asset_row(
+                "new-region.osm.pbf",
+                osm_version=2,
+                source_tag_value=shared,
+                canonical_reference=shared,
+                image_url=shared,
+            ),
+            _asset_row(
+                "new-region.osm.pbf",
+                osm_id=2,
+                source_tag_key="wikimedia_commons",
+                source_tag_value="File:Same.jpg",
+                canonical_reference="File:Same.jpg",
+                provider_asset_id="same-file",
+                relation_kind="category_membership",
+                image_url=shared,
+            ),
+        ],
+    )
+
+    result = build_public_dataset(tmp_path)
+
+    assert result.polygon_rows == 2
+    assert result.duplicate_polygon_rows == 1
+    assert result.image_rows == 1
+    assert result.link_rows == 2
+    assert result.duplicate_image_rows == 2
+    assert result.duplicate_link_rows == 1
+    assert result.image_path.relative_to(tmp_path).as_posix() == PUBLIC_IMAGE_RELATIVE
+    assert result.link_path.relative_to(tmp_path).as_posix() == PUBLIC_LINK_RELATIVE
+
+    import pyarrow.parquet as pq
+
+    polygons = pq.read_table(result.polygon_path).to_pylist()
+    images = pq.read_table(result.image_path).to_pylist()
+    links = pq.read_table(result.link_path).to_pylist()
+    current = next(row for row in polygons if row["osm_id"] == 1)
+    assert current["osm_version"] == 2
+    assert current["source_pbfs"] == ["new-region.osm.pbf", "old-region.osm.pbf"]
+    assert images[0]["image_url"] == shared
+    assert {row["osm_id"] for row in links} == {1, 2}
+    assert next(row for row in links if row["osm_id"] == 1)["source_pbfs"] == [
+        "new-region.osm.pbf",
+        "old-region.osm.pbf",
+    ]
+    assert next(row for row in links if row["osm_id"] == 1)["observed_osm_versions"] == [1, 2]
+
+    reused = build_public_dataset(tmp_path)
+    assert reused.reused is True
+    assert reused.image_path.read_bytes() == result.image_path.read_bytes()
+    assert reused.link_path.read_bytes() == result.link_path.read_bytes()
+
+    statistics = public_asset_statistics(
+        result.image_path,
+        result.link_path,
+        verified_asset_manifests(tmp_path),
+        duplicate_images=result.duplicate_image_rows,
+        duplicate_links=result.duplicate_link_rows,
+    )
+    assert statistics["rows"] == 1
+    assert statistics["relationship_rows"] == 2
+    assert statistics["direct_urls"] == 1
+    assert statistics["usable_relationship_rows"] == 2
+    assert statistics["image_relation_counts"] == {
+        "category_membership": 1,
+        "direct_reference": 1,
+    }

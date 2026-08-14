@@ -22,7 +22,7 @@ def test_repository_readme_is_a_public_landing_page() -> None:
     assert "https://noeflandre.github.io/osm-polygon-image-tag/" in readme
     assert "https://huggingface.co/datasets/NoeFlandre/osm-polygon-image-tag" in readme
     assert "polygons" in readme
-    assert "image_assets" in readme
+    assert "polygon_images" in readme
     assert "uv sync --locked --dev" in readme
     assert "run-and-publish" in readme
     assert "--source-root" in readme

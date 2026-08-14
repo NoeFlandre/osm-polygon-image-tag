@@ -4,7 +4,8 @@ from pathlib import Path
 
 from osm_polygon_image_tag.artifacts.hero import HERO_PNG_RELATIVE, packaged_hero_path
 from osm_polygon_image_tag.artifacts.public_dataset import (
-    PUBLIC_ASSET_RELATIVE,
+    PUBLIC_IMAGE_RELATIVE,
+    PUBLIC_LINK_RELATIVE,
     PUBLIC_MANIFEST_RELATIVE,
     PUBLIC_POLYGON_RELATIVE,
     validate_public_dataset,
@@ -164,7 +165,14 @@ def publication_inventory(data_root: Path) -> tuple[PublicationFile, ...]:
     except ValueError as error:
         raise PublicationError(str(error)) from error
     allowed = {"README.md", "citation.cff", "statistics/dataset-statistics.json"}
-    allowed.update({PUBLIC_POLYGON_RELATIVE, PUBLIC_ASSET_RELATIVE, PUBLIC_MANIFEST_RELATIVE})
+    allowed.update(
+        {
+            PUBLIC_POLYGON_RELATIVE,
+            PUBLIC_IMAGE_RELATIVE,
+            PUBLIC_LINK_RELATIVE,
+            PUBLIC_MANIFEST_RELATIVE,
+        }
+    )
     png_digests = _validated_png_digests(root)
     allowed.update(png_digests)
     manifested_digests.update(png_digests)

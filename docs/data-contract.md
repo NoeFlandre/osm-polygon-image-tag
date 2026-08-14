@@ -1,16 +1,17 @@
 # Data contract
 
 The managed root keeps lossless per-PBF inputs for resumability. Hugging Face
-publication uses a separate deterministic `public/` view: one polygon row per
-`osm_type` + `osm_id` + `osm_version`, with all contributing PBF names in
-`source_pbfs`, and image assets remapped to the selected source identity.
+publication uses a separate deterministic `public/` view: one current polygon
+row per `osm_type` + `osm_id`, one row per unique provider image, and a link
+table that keeps every distinct polygon-to-image relationship.
 
 The pipeline produces one GeoParquet shard per source PBF. Every private row is
 one observation of one OSM object in one source PBF. Overlapping Geofabrik
 extracts are kept in those private shards for audit and resume, then collapsed
-to one feature row in the published `polygons` file. The `source_pbfs` column
-keeps the complete list of source files, so deduplication does not discard
-provenance.
+to one current feature row in the published `polygons` file. The `source_pbfs`
+column keeps the complete list of source files, so deduplication does not
+discard provenance. The selected polygon is the newest OSM version (or newest
+timestamp when no version is available).
 
 ## Selected tag set
 
@@ -64,8 +65,8 @@ shard; the next run rebuilds them deterministically under the new contract.
 | `bubbleid` | string | yes | Exact raw value of `bubbleid` |
 
 The public polygon file also contains `source_pbfs` (`list<string>`), sorted
-source-PBF names for the feature. The canonical `source_pbf` is the
-lexicographically first source, which makes joins and releases deterministic.
+source-PBF names for the feature. The canonical `source_pbf` is the source of
+the selected newest row; ties use a fixed lexical rule for reproducibility.
 
 GeoParquet metadata:
 
@@ -108,31 +109,38 @@ Every shard has a sibling `*.manifest.json` with the following shape:
 current constants in `core.manifest` for the manifest to be reused during
 fast resume.
 
-## Image asset configuration
+## Public image configurations
 
-Asset schema version 1 is a separate, one-to-many Parquet configuration.
-Rows preserve the exact source reference and factual resolution result; no
-image body is downloaded. Join to polygons on `osm_type`, `osm_id`,
-`osm_version`, and `source_pbf`.
+The public release has two image-related Parquet files. No image body is
+downloaded.
 
-Published asset rows use `source_polygon_shard = public/polygons.parquet` and
-the canonical polygon `source_pbf`. Duplicate asset rows are removed by the
-feature identity, source tag, provider/reference identity, asset index, and
-relation kind.
+### `images`
+
+This is one row per unique provider image. A usable `image_url` is the preferred
+identity. If none exists, the provider asset ID, canonical reference, or page
+URL is used. The row keeps the best available metadata and all source PBF names.
 
 | Columns | Type / meaning |
 | --- | --- |
-| `source_pbf`, `source_polygon_shard` | non-null string provenance |
-| `osm_type`, `osm_id`, `osm_version` | object identity |
-| `provider`, `source_tag_key`, `source_tag_value` | exact source reference |
-| `canonical_reference`, `provider_asset_id`, `asset_index` | provider identity and stable one-to-many index |
-| `relation_kind` | direct reference or Commons category membership |
+| `image_id`, `provider` | stable public ID and provider |
+| `canonical_reference`, `provider_asset_id` | provider reference and ID |
 | `page_url`, `image_url`, `thumbnail_url` | factual resolved URLs |
 | `image_url_expires_at` | nullable UTC expiry |
 | `mime_type`, `width`, `height` | nullable returned/probed metadata |
 | `license_id`, `license_url`, `author` | nullable metadata; absence makes no licensing claim |
 | `status`, `reason`, `category_truncated`, `retry_after` | outcome and retry state |
-| `resolver_contract_version`, `response_sha256` | resolver/cache provenance |
+| `resolver_contract_version`, `response_sha256`, `source_pbfs` | resolver and source provenance |
+
+### `polygon_images`
+
+This is the many-to-many link table. A row records one distinct feature-to-image
+relationship and retains the original tag key/value, reference, asset index,
+relation kind, source PBF names, and observed OSM versions. Join to `polygons`
+with `osm_type` + `osm_id`, and to `images` with `image_id`.
+
+Repeated links from the same feature, provider reference, and tag relationship
+are merged; no distinct relationship is dropped. This is why `images` and
+`polygon_images` are separate files: one physical image can serve many features.
 
 Statuses are `resolved`, `resolved_page_only`, `not_direct_image`,
 `category_empty`, `category_truncated`, `not_found`, `private`,
@@ -201,7 +209,8 @@ previously interrupted shard rebuilds deterministically on the next run.
 ## Global statistics
 
 `generate_metadata` produces `statistics/dataset-statistics.json` and
-`README.md` in the data root. Statistics include polygon and asset shard/row counts,
+`README.md` in the data root. Statistics include polygon, unique-image, and
+polygon-image-link row counts,
 `osm_types` and `geometry_types` counts, per-provider counts, exact
 provider combinations, minimum/maximum feature timestamps, sum/min/max/mean
 `area_m2`, exact rejection counts by reason, exact duplicate-observation
@@ -226,7 +235,7 @@ during metadata generation.
   removed before this map is built, so one OSM feature is counted once.
 - The colour scale is logarithmic (`magma`); raw counts per cell range
   from the minimum to the maximum published polygon row count.
-- `image_assets` rows are not separately counted in this map.
+- `images` and `polygon_images` rows are not separately counted in this map.
 - The basemap is a bundled Natural Earth 1:110m landmass reference
   (public domain) shipped with the package; no network call is performed
   during map generation.
@@ -252,8 +261,8 @@ exposes:
 - `statistics/dataset-statistics.json`
 - `assets/hero.png` (the packaged dataset-card image).
 - `assets/geographic_polygon_density.png` (the dataset-card map).
-- `public/polygons.parquet`, `public/image_assets.parquet`, and
-  `public/public-manifest.json`.
+- `public/polygons.parquet`, `public/images.parquet`,
+  `public/polygon_images.parquet`, and `public/public-manifest.json`.
 
 The per-PBF GeoParquet shards, their manifests, per-PBF asset shards, and
 their manifests stay in the data root as private resume and audit inputs.

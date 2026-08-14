@@ -5,9 +5,8 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 
-from osm_polygon_image_tag.artifacts.asset_catalog import sync_asset_catalog
 from osm_polygon_image_tag.artifacts.asset_inventory import verified_asset_manifests
-from osm_polygon_image_tag.artifacts.asset_statistics import asset_statistics
+from osm_polygon_image_tag.artifacts.asset_statistics import public_asset_statistics
 from osm_polygon_image_tag.artifacts.catalog import sync_catalog
 from osm_polygon_image_tag.artifacts.citation import packaged_citation_path
 from osm_polygon_image_tag.artifacts.dataset_card import dataset_card
@@ -77,28 +76,26 @@ def generate_metadata(data_root: Path, *, progress: Progress | None = None) -> M
     public_manifests = (
         [(public.polygon_manifest, public.polygon_path)] if public.polygon_rows else []
     )
-    public_asset_manifests = (
-        [(public.asset_manifest, public.asset_path)] if public.asset_rows else []
-    )
     catalog_path = sync_catalog(
         data_root,
         manifests=public_manifests,
         catalog_path=data_root / PUBLIC_CATALOG_RELATIVE,
         progress=emit,
     )
-    sync_asset_catalog(catalog_path, public_asset_manifests, progress=emit)
     emit({"event": "metadata_statistics_started"})
     statistics = dataset_statistics(catalog_path, public_manifests)
     statistics["shards"] = len(manifests)
     statistics["source_bytes"] = sum(manifest.source.size_bytes for manifest, _ in manifests)
     statistics["duplicate_observations"] = 0
     statistics["duplicate_observations_removed"] = public.duplicate_polygon_rows
-    statistics["assets"] = asset_statistics(
-        catalog_path,
-        public_asset_manifests,
-        duplicate_assets=public.duplicate_asset_rows,
+    statistics["assets"] = public_asset_statistics(
+        public.image_path,
+        public.link_path,
+        asset_manifests,
+        duplicate_images=public.duplicate_image_rows,
+        duplicate_links=public.duplicate_link_rows,
+        orphan_rows=public.orphan_asset_rows,
     )
-    statistics["assets"]["duplicate_assets_removed"] = public.duplicate_asset_rows
     emit(
         {
             "event": "metadata_statistics_completed",
@@ -114,7 +111,8 @@ def generate_metadata(data_root: Path, *, progress: Progress | None = None) -> M
     statistics["geography"] = map_result.statistics.to_dict()
     examples = {
         "polygon": _first_row(public_manifests),
-        "asset": _first_row(public_asset_manifests),
+        "image": _first_row([(None, public.image_path)]),
+        "polygon_image": _first_row([(None, public.link_path)]),
     }
     _sync_hero(data_root)
     _sync_citation(data_root)

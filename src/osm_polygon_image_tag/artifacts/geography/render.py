@@ -96,9 +96,8 @@ def _build_caption(
         "Geographic OSM Polygon Density. Each H3 cell contains the raw count of "
         f"finalized `polygons` rows whose geometry centroid falls into the cell. "
         f"Polygons are assigned by their geometry centroid at H3 resolution "
-        f"{h3_resolution}; overlapping Geofabrik extracts are preserved as "
-        f"separate observations. {total_polygons:,} finalized polygon rows "
-        f"across {len(cells):,} H3 cells. `image_assets` rows are not separately "
+        f"{h3_resolution}. {total_polygons:,} supplied polygon rows across "
+        f"{len(cells):,} H3 cells. Image rows and polygon-image links are not "
         "counted in this map. Colour uses a logarithmic scale."
     )
 
@@ -235,7 +234,7 @@ def _render_empty_world(output_path: Path, *, h3_resolution: int) -> RenderResul
         "is logarithmic for populated cells; an empty dataset renders the world "
         f"extent [-180, 180] x [-90, 90] at H3 resolution {h3_resolution} without "
         "any H3 cells. Polygons are assigned by their geometry centroid; "
-        "overlapping Geofabrik extracts are preserved as separate observations."
+        "The supplied polygon table is empty, so no H3 cells are shown."
     )
     fig, ax = plt.subplots(figsize=RENDER_FIGSIZE, dpi=RENDER_DPI)
     try:

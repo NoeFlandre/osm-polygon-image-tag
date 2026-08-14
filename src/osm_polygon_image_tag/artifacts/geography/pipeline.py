@@ -216,10 +216,9 @@ def build_geographic_map(
             "Geographic OSM Polygon Density. Each H3 cell contains the raw count of "
             "finalized `polygons` rows whose geometry centroid falls into the cell. "
             f"Polygons are assigned by their geometry centroid at H3 resolution "
-            f"{DEFAULT_H3_RESOLUTION}; overlapping Geofabrik extracts are preserved "
-            f"as separate observations. {polygon_rows:,} finalized polygon rows "
-            f"across {cell_count:,} H3 cells. `image_assets` rows are not separately "
-            "counted in this map. Colour uses a logarithmic scale."
+            f"{DEFAULT_H3_RESOLUTION}. {polygon_rows:,} supplied polygon rows "
+            f"across {cell_count:,} H3 cells. Image rows and polygon-image links "
+            "are not counted in this map. Colour uses a logarithmic scale."
         )
         render = RenderResult(output_path=png_path, caption=caption)
     else:

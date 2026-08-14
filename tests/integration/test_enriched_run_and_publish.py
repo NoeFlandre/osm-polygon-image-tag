@@ -191,7 +191,8 @@ def test_resume_backfills_only_missing_asset_and_republishes_once(tmp_path: Path
     )
     assert [config["config_name"] for config in frontmatter["configs"]] == [
         "polygons",
-        "image_assets",
+        "images",
+        "polygon_images",
     ]
 
 

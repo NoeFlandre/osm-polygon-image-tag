@@ -130,9 +130,9 @@ def test_dataset_card_includes_geography_section(tmp_path: Path) -> None:
     assert "published polygon rows" in body
     assert "geometry's center" in body
     assert "H3 resolution" in body
-    assert "same OSM type, ID, and version" in body
+    assert "one row per OSM type and ID" in body
     assert "logarithmic" in body.lower()
-    assert "image_assets" in body
+    assert "polygon_images" in body
 
 
 def test_generate_metadata_progress_events_include_geography_phase(tmp_path: Path) -> None:

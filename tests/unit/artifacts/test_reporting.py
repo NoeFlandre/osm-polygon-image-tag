@@ -68,6 +68,8 @@ def test_empty_metadata_is_deterministic_and_factual(tmp_path: Path) -> None:
         "direct_urls": 0,
         "duplicate_assets": 0,
         "duplicate_assets_removed": 0,
+        "duplicate_images_removed": 0,
+        "duplicate_links_removed": 0,
         "expiring_urls": 0,
         "image_relation_counts": {
             "category_membership": 0,
@@ -75,16 +77,22 @@ def test_empty_metadata_is_deterministic_and_factual(tmp_path: Path) -> None:
         },
         "licensed_assets": 0,
         "network_resolutions": 0,
-        "output_bytes": 0,
+        "orphan_rows": 0,
+        "output_bytes": (
+            (tmp_path / "public/images.parquet").stat().st_size
+            + (tmp_path / "public/polygon_images.parquet").stat().st_size
+        ),
         "page_urls": 0,
         "pending_retries": 0,
         "provider_counts": {},
+        "relationship_rows": 0,
         "resolver_contract_versions": {},
         "rows": 0,
         "shards": 0,
         "status_counts": {},
         "stable_direct_urls": 0,
         "truncated_categories": 0,
+        "usable_relationship_rows": 0,
     }
     frontmatter = yaml.safe_load(first_card.split(b"---", maxsplit=2)[1])
     assert frontmatter["configs"] == [
@@ -94,8 +102,12 @@ def test_empty_metadata_is_deterministic_and_factual(tmp_path: Path) -> None:
             "data_files": [{"split": "train", "path": "public/polygons.parquet"}],
         },
         {
-            "config_name": "image_assets",
-            "data_files": [{"split": "train", "path": "public/image_assets.parquet"}],
+            "config_name": "images",
+            "data_files": [{"split": "train", "path": "public/images.parquet"}],
+        },
+        {
+            "config_name": "polygon_images",
+            "data_files": [{"split": "train", "path": "public/polygon_images.parquet"}],
         },
     ]
     assert b"category can contain" in first_card
@@ -112,7 +124,7 @@ def test_empty_metadata_is_deterministic_and_factual(tmp_path: Path) -> None:
     assert b"A tag value is the original reference." in first_card
     assert b"it is not always an image URL." in first_card
     assert b"Use `polygons` for the original OSM tags" in first_card
-    assert b"A polygon can have zero, one, or many image-asset rows." in first_card
+    assert b"one feature can have many images" in first_card
 
 
 def test_metadata_syncs_packaged_hero(tmp_path: Path) -> None:
@@ -173,8 +185,6 @@ def test_metadata_reports_detailed_progress_and_scans_manifests_once(
         "metadata_asset_manifest_scan_completed",
         "metadata_catalog_sync_started",
         "metadata_catalog_sync_completed",
-        "metadata_asset_catalog_sync_started",
-        "metadata_asset_catalog_sync_completed",
         "metadata_statistics_started",
         "metadata_statistics_completed",
         "metadata_geography_started",
@@ -324,7 +334,7 @@ def test_asset_statistics_separates_direct_and_indirect_image_rows(tmp_path: Pat
             "INSERT INTO asset_observations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 (
-                    "public/image_assets.parquet",
+                    "public/images.parquet",
                     row["provider"],
                     row["status"],
                     row["canonical_reference"],
@@ -389,7 +399,7 @@ def test_metadata_derives_factual_asset_statistics(tmp_path: Path) -> None:
     result = generate_metadata(tmp_path)
     statistics = json.loads(result.statistics_path.read_bytes())
 
-    assert statistics["assets"]["shards"] == 0
+    assert statistics["assets"]["shards"] == 1
     assert statistics["assets"]["rows"] == 0
     assert statistics["assets"]["provider_counts"] == {}
     assert statistics["assets"]["status_counts"] == {}
@@ -397,11 +407,12 @@ def test_metadata_derives_factual_asset_statistics(tmp_path: Path) -> None:
     assert statistics["assets"]["stable_direct_urls"] == 0
     assert statistics["assets"]["page_urls"] == 0
     assert statistics["assets"]["licensed_assets"] == 0
-    assert statistics["assets"]["cache_hits"] == 0
-    assert statistics["assets"]["network_resolutions"] == 0
-    assert b"Cached lookups reused: 0" in result.card_path.read_bytes()
-    assert b"New provider lookups: 0" in result.card_path.read_bytes()
-    assert b"Image-reference rows checked: 0" in result.card_path.read_bytes()
+    assert statistics["assets"]["cache_hits"] == 3
+    assert statistics["assets"]["network_resolutions"] == 4
+    assert statistics["assets"]["orphan_rows"] == 2
+    assert b"Cached lookups reused: 3" in result.card_path.read_bytes()
+    assert b"New provider lookups: 4" in result.card_path.read_bytes()
+    assert b"Unique image records: 0" in result.card_path.read_bytes()
 
 
 def test_dataset_card_formats_counts_and_explains_examples() -> None:
@@ -417,6 +428,7 @@ def test_dataset_card_formats_counts_and_explains_examples() -> None:
                 "category_membership": 555_555,
                 "direct_reference": 2_000_000,
             },
+            "usable_relationship_rows": 2_555_555,
             "stable_direct_urls": 1_999_999,
             "page_urls": 2_400_000,
             "cache_hits": 8_888_888,
@@ -434,18 +446,19 @@ def test_dataset_card_formats_counts_and_explains_examples() -> None:
         statistics,
         examples={
             "polygon": {"osm_id": 42},
-            "asset": {"image_url": "https://example.test/x?token=secret"},
+            "image": {"image_url": "https://example.test/x?token=secret"},
+            "polygon_image": {"image_id": "img_42"},
         },
     ).decode()
 
     assert "Published OSM features: 2,555,555" in card
     assert "New provider lookups: 7,777,777" in card
-    assert "Among those usable image rows:" in card
-    assert "The source-tag counts below are polygon counts, not resolved image counts." in card
-    assert "The percentages below use usable image rows as their denominator." in card
+    assert "Among those usable links:" in card
+    assert "The source-tag counts below are counts of polygons carrying each tag, not image" in card
+    assert "The percentages below use links whose image record has a usable image URL." in card
     assert "Directly linked from an OSM tag: 2,000,000 (78.3%)" in card
     assert "Indirectly reached through a Wikimedia Commons category: 555,555 (21.7%)" in card
-    assert "same OSM type, ID, and version" in card
+    assert "one row per OSM type and ID" in card
     assert "We keep one copy" in card
     assert '"osm_id": 42' in card
     assert '"image_url": "https://example.test/x?token=[redacted]"' in card

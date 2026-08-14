@@ -11,7 +11,8 @@ that lives inside the managed data root.
 - Deterministic metadata coordination (`reporting`) and card rendering
   (`dataset_card`).
 - A deterministic deduplicated release view (`public_dataset`) that keeps
-  per-PBF inputs private for resume while publishing `public/` Parquet files.
+  per-PBF inputs private for resume while publishing canonical polygons,
+  unique images, and the `polygon_images` link table under `public/`.
 - Publication types, inventory, planning, and receipt writing
   (`publication_types`, `publication_inventory`, `publication`).
 - The dataset-card geographic density map (`geography/`): typed models,
