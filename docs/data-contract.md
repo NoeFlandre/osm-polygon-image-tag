@@ -5,9 +5,12 @@ publication uses a separate deterministic `public/` view: one polygon row per
 `osm_type` + `osm_id` + `osm_version`, with all contributing PBF names in
 `source_pbfs`, and image assets remapped to the selected source identity.
 
-The pipeline produces one GeoParquet shard per source PBF. Every row is one
-observation of one OSM object in one source PBF; overlapping Geofabrik
-extracts remain lossless and are accounted for in the global statistics.
+The pipeline produces one GeoParquet shard per source PBF. Every private row is
+one observation of one OSM object in one source PBF. Overlapping Geofabrik
+extracts are kept in those private shards for audit and resume, then collapsed
+to one feature row in the published `polygons` file. The `source_pbfs` column
+keeps the complete list of source files, so deduplication does not discard
+provenance.
 
 ## Selected tag set
 
@@ -113,8 +116,9 @@ image body is downloaded. Join to polygons on `osm_type`, `osm_id`,
 `osm_version`, and `source_pbf`.
 
 Published asset rows use `source_polygon_shard = public/polygons.parquet` and
-the canonical polygon `source_pbf`. Duplicate asset rows are removed by
-feature identity, provider reference, asset index, and returned URL fields.
+the canonical polygon `source_pbf`. Duplicate asset rows are removed by the
+feature identity, source tag, provider/reference identity, asset index, and
+relation kind.
 
 | Columns | Type / meaning |
 | --- | --- |
@@ -209,44 +213,51 @@ licensing.
 ## Geographic coverage map
 
 `generate_metadata` also renders a static PNG `assets/geographic_polygon_density.png`
-that visualizes the raw count of finalized `polygons` rows per H3 cell. The
-map is built exclusively from finalized polygon GeoParquet shards; the raw
-PBF tree is never opened during metadata generation.
+that visualizes the count of published, deduplicated `polygons` rows per H3
+cell. The map is built from the materialized public polygon file (which was
+itself built from finalized private shards); the raw PBF tree is never opened
+during metadata generation.
 
-- Each polygon row contributes exactly once, computed from its Shapely
-  geometry centroid in `OGC:CRS84`. The bounding-box midpoint is not used.
+- Each published polygon row contributes exactly once, computed from its
+  Shapely geometry centroid in `OGC:CRS84`. The bounding-box midpoint is not
+  used.
 - H3 resolution is fixed at `3` (the dataset-card artifact contract).
-- Overlapping Geofabrik extracts are preserved as separate observations,
-  so two shards covering the same OSM feature count it twice.
+- Repeated observations from overlapping Geofabrik extracts are already
+  removed before this map is built, so one OSM feature is counted once.
 - The colour scale is logarithmic (`magma`); raw counts per cell range
-  from the minimum to the maximum finalized polygon row count.
+  from the minimum to the maximum published polygon row count.
 - `image_assets` rows are not separately counted in this map.
 - The basemap is a bundled Natural Earth 1:110m landmass reference
   (public domain) shipped with the package; no network call is performed
   during map generation.
-- The map is omitted as a separate PNG from the GeoParquet schema: centroids
-  are recomputed transiently from each finalized shard's `geometry` column.
+- The map is a separate PNG; centroids are recomputed transiently from the
+  public file's `geometry` column and are not added to the GeoParquet schema.
 
 The generated `geography` block in `statistics/dataset-statistics.json`
 exposes:
 
 - `h3_resolution`, `cell_count`, `polygon_rows`,
-  `min_cell_count`, `max_cell_count`, `input_shard_count`,
-  `input_digest` (a deterministic SHA-256 over the finalized shard
-  identities used to compute the map).
+  `min_cell_count`, `max_cell_count`, `input_shard_count`, and
+  `input_digest` (a deterministic SHA-256 over the public polygon artifact
+  identity used to compute the map). `input_shard_count` counts the finalized
+  artifact(s) supplied to the map builder; it is not the number of source PBF
+  files. The overall source-PBF count is reported separately in `shards`.
 
 ## Publication inventory
 
 `publication_inventory` enumerates exactly:
 
 - `README.md`
+- `citation.cff`
 - `statistics/dataset-statistics.json`
+- `assets/hero.png` (the packaged dataset-card image).
 - `assets/geographic_polygon_density.png` (the dataset-card map).
-- Every GeoParquet shard whose manifest matches the current contract, plus
-  the matching manifest.
-- Every asset shard whose manifest matches the current asset/resolver
-  contracts, plus its matching manifest.
-- `cache/`, `catalog/`, and `receipts/` are internal and never uploaded.
+- `public/polygons.parquet`, `public/image_assets.parquet`, and
+  `public/public-manifest.json`.
+
+The per-PBF GeoParquet shards, their manifests, per-PBF asset shards, and
+their manifests stay in the data root as private resume and audit inputs.
+`cache/`, `catalog/`, and `receipts/` are also internal and never uploaded.
 
 The geographic PNG is treated as a required, validated publication
 artifact: it must be a non-empty regular PNG file inside the data root,
@@ -260,3 +271,17 @@ included in the publication inventory.
 
 Symlinks, top-level escapes, and unexpected files fail closed with a
 `PublicationError`.
+
+## Licensing and citation
+
+The pipeline source code is Apache-2.0 licensed. The OSM-derived geometry,
+tags, and feature metadata are distributed under the Open Database License
+(ODbL), with attribution to OpenStreetMap contributors and Geofabrik. Image
+URLs do not transfer image rights: each provider and image may have separate
+terms. Use `license_id` and `license_url` when present, and check the original
+provider page before downloading or reusing an image. No image bytes are
+included in this dataset.
+
+The generated data root and Hugging Face release include a machine-readable
+`citation.cff`; the repository copy is available at
+[`citation.cff`](https://github.com/NoeFlandre/osm-polygon-image-tag/blob/main/citation.cff).

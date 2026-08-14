@@ -3,8 +3,9 @@
 `osm-polygon-image-tag` is a single-purpose pipeline that reads immutable
 Geofabrik PBF files, extracts OpenStreetMap polygon and multipolygon
 observations carrying image-reference tags, writes one deterministic
-GeoParquet shard per source PBF, and publishes the verified shards to a
-Hugging Face dataset. The codebase is a `uv`-managed Python 3.12 project
+GeoParquet shard per source PBF, and publishes a verified, deduplicated public
+view to a Hugging Face dataset. The per-PBF shards remain private inputs for
+resume and audit. The codebase is a `uv`-managed Python 3.12 project
 organized into responsibility-based subpackages.
 
 ## Layered structure

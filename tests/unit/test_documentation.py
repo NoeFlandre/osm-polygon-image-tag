@@ -63,6 +63,9 @@ def test_mkdocs_site_contract() -> None:
         "development.md",
     ):
         assert page in config
+    assert "exclude_docs:" in config
+    assert "README.md" in config
+    assert "superpowers/**" in config
 
 
 def test_pages_workflow_contract() -> None:

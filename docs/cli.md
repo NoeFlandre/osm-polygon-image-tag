@@ -4,6 +4,33 @@ The installed command is `osm-polygon-image-tag`. Every command accepts a
 source PBF root, a managed data root, and an optional `--log-format` of
 `auto`, `json`, or `human`.
 
+## Shared options
+
+These options have the same meaning on every command:
+
+| Option | Meaning |
+| --- | --- |
+| `--source-root PATH` | Directory containing the read-only Geofabrik `.osm.pbf` files. |
+| `--data-root PATH` | Writable directory for resumable shards, caches, metadata, and receipts. |
+| `--log-format auto\|json\|human` | `auto` uses a readable TTY display; `json` emits machine-readable progress; `human` forces the readable display. |
+
+Both paths are required. The source root must be a real directory, and the
+source and data roots may not overlap. Publication also rejects symlinks or
+unexpected entries inside the managed data root. `--confirm-repo` is required
+by `publish` and `run-and-publish` and must be exactly
+`NoeFlandre/osm-polygon-image-tag`.
+
+## Choose a command
+
+| Goal | Command |
+| --- | --- |
+| Check paths and prerequisites without writing | `preflight` |
+| Build or resume local artifacts without publishing | `run` |
+| Recheck every finalized artifact deeply | `verify` |
+| Rebuild the card, map, catalog, and statistics without PBF extraction | `rebuild-metadata` |
+| Publish the existing verified release | `publish` |
+| Build/resume and publish changed verified artifacts | `run-and-publish` |
+
 ## `preflight`
 
 ```bash
@@ -40,8 +67,10 @@ osm-polygon-image-tag rebuild-metadata \
   --source-root PATH --data-root PATH [--log-format FORMAT]
 ```
 
-Rebuilds the catalog, deterministic statistics, and dataset card from existing
-finalized artifacts. It does not reopen PBF files.
+Rebuilds the catalog, deterministic statistics, map, and dataset card from
+existing finalized artifacts. It does not reopen PBF files. The
+`--source-root` argument is still required for the common path-safety check,
+but the command does not read that directory.
 
 ## `publish`
 
