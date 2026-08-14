@@ -74,8 +74,9 @@ Authenticate with `hf auth login` before publishing. Mapillary direct URLs need
 `MAPILLARY_ACCESS_TOKEN`; Flickr keys are optional and unavailable to free
 accounts. Without provider credentials, the pipeline preserves factual
 page-only results and revisits improvable rows when credentials are later
-provided. See [operations](docs/operations.md) for credential setup and
-progress events.
+provided. For a reproducible container run with `/raw` read-only and `/data`
+persistent, see [the Docker instructions](docs/getting-started.md#run-the-pinned-docker-image).
+See [operations](docs/operations.md) for credential setup and progress events.
 
 ## Output layout
 

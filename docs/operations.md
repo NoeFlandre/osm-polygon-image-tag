@@ -13,6 +13,13 @@ stderr, and how the pipeline responds to control signals.
 - A read-only Geofabrik `.osm.pbf` tree and a writable data root on a
   filesystem with enough free space.
 
+The pinned Docker image is an alternative to installing Python, uv, and
+`osmium-tool` on the host. It expects the same two roots at `/raw` (read-only)
+and `/data` (writable); see [Getting started](getting-started.md#run-the-pinned-docker-image)
+for complete build and run commands. Mount the whole data root rather than
+individual subdirectories so SQLite databases, atomic renames, checkpoints,
+and resumable artifacts remain on one filesystem.
+
 ## Real-world path examples (not portable defaults)
 
 These are the paths used by the live production pipeline on this machine.
@@ -156,6 +163,10 @@ descriptive HTTP `User-Agent` required by Wikimedia. Panoramax, KartaView,
 Bing Streetside, and generic image URLs need no token.
 
 Avoid putting secrets directly in shell commands or checked-in `.env` files.
+For containers, pass `HF_TOKEN`, `MAPILLARY_ACCESS_TOKEN`, and `FLICKR_API_KEY`
+as runtime environment variables or platform-managed secrets. Never copy them
+into the image or mount a credential file into `/data`; the data root is a
+persistent artifact volume.
 For an interactive zsh session, read the Mapillary token without echoing it:
 
 ```bash

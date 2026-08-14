@@ -55,6 +55,21 @@ just docs
 The GitHub Pages workflow runs the same locked `mkdocs build --strict` command
 on every push to `main` and can also be started manually from Actions.
 
+## Docker image smoke test
+
+The production Dockerfile uses the pinned Python 3.12 slim Bookworm image,
+`uv sync --locked --no-dev`, and Debian's pinned `osmium-tool` package. Build
+and smoke-test it locally with:
+
+```bash
+docker build --tag osm-polygon-image-tag:0.1.0 .
+docker run --rm --read-only --tmpfs /tmp osm-polygon-image-tag:0.1.0 --help
+```
+
+The Docker CI job performs the same build and `--help` check without mounting
+PBFs, a data root, or Hugging Face credentials. The image contract is covered
+by deterministic unit tests in `tests/unit/test_docker_contract.py`.
+
 ## Smoke-testing the installed wheel
 
 ```bash

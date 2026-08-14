@@ -8,7 +8,7 @@ gates documented in [`docs/development.md`](../../docs/development.md).
 
 - `ci.yml`: the required quality workflow. It runs on every push to `main` and
   on every pull request targeting `main`, and on pushes to any `codex/**`
-  branch.
+  branch. It includes a separate Docker build and direct `--help` smoke test.
 - `docs.yml`: the GitHub Pages workflow. It runs on pushes to `main` and on
   manual dispatch, builds the strict MkDocs Material site, and deploys it to
   the `github-pages` environment.
@@ -30,6 +30,10 @@ The single `quality-gate` job, on `ubuntu-latest`:
 10. Run `uv run pytest -q`.
 11. Build the wheel and sdist (`uv build`).
 12. Verify no whitespace errors (`git diff --check`).
+
+The `docker-smoke` job separately builds the pinned production image and runs
+its direct CLI entrypoint with `--help`. It does not mount PBFs or a data root
+and does not receive Hugging Face credentials.
 
 The documentation workflow uses the same locked `uv` environment, runs
 `uv run mkdocs build --strict --site-dir site`, uploads the Pages artifact, and

@@ -39,6 +39,77 @@ builds GeoParquet and asset shards, regenerates factual metadata, and publishes
 only verified changes. If it stops, run the same command again: completed PBF
 and asset shards are reused.
 
+## Run the pinned Docker image
+
+The repository also ships a production image with Python 3.12, the locked
+Python dependencies, and the external `osmium-tool` executable. Build it from
+the repository root:
+
+```bash
+docker build --tag osm-polygon-image-tag:0.1.0 .
+```
+
+The image has no source data or credentials. Keep the PBF tree on a read-only
+bind mount and keep the entire resumable data root on one persistent writable
+bind mount. The separate mount points also enforce the pipeline's rule that
+source and output roots do not overlap:
+
+```bash
+export OSM_SOURCE_ROOT="/path/to/geofabrik-pbf"
+export OSM_DATA_ROOT="/path/to/osm-polygon-image-tag"
+mkdir -p "$OSM_DATA_ROOT"
+
+docker run --rm --read-only --tmpfs /tmp \
+  --mount "type=bind,src=${OSM_SOURCE_ROOT},dst=/raw,readonly" \
+  --mount "type=bind,src=${OSM_DATA_ROOT},dst=/data" \
+  osm-polygon-image-tag:0.1.0 \
+  preflight --source-root /raw --data-root /data --log-format json
+```
+
+Start a resumable run with the same mounts. Re-run the same command after a
+stop or crash; finalized shards and enrichment checkpoints remain in `/data`:
+
+```bash
+docker run --rm --read-only --tmpfs /tmp \
+  --mount "type=bind,src=${OSM_SOURCE_ROOT},dst=/raw,readonly" \
+  --mount "type=bind,src=${OSM_DATA_ROOT},dst=/data" \
+  osm-polygon-image-tag:0.1.0 \
+  run --source-root /raw --data-root /data --log-format json
+```
+
+Verify before a separate publication, then pass credentials only to the
+publishing invocation. The variables below are forwarded from the calling
+environment; their values are never written into the image:
+
+```bash
+docker run --rm --read-only --tmpfs /tmp \
+  --mount "type=bind,src=${OSM_SOURCE_ROOT},dst=/raw,readonly" \
+  --mount "type=bind,src=${OSM_DATA_ROOT},dst=/data" \
+  osm-polygon-image-tag:0.1.0 \
+  verify --source-root /raw --data-root /data --log-format json
+
+docker run --rm --read-only --tmpfs /tmp \
+  --mount "type=bind,src=${OSM_SOURCE_ROOT},dst=/raw,readonly" \
+  --mount "type=bind,src=${OSM_DATA_ROOT},dst=/data" \
+  --env HF_TOKEN --env MAPILLARY_ACCESS_TOKEN --env FLICKR_API_KEY \
+  osm-polygon-image-tag:0.1.0 \
+  publish --source-root /raw --data-root /data \
+  --confirm-repo NoeFlandre/osm-polygon-image-tag --log-format json
+```
+
+`HF_TOKEN` is needed only for Hugging Face publication. `MAPILLARY_ACCESS_TOKEN`
+and `FLICKR_API_KEY` are optional enrichment credentials; when omitted, those
+providers retain factual page-only results. Do not put secrets in a checked-in
+`.env` file or bake them into a Docker layer. For an intentional combined run,
+replace `run` with `run-and-publish` and pass the same `--confirm-repo` value.
+
+The image uses a direct CLI entrypoint, so Ctrl-C and `SIGTERM` reach the
+orchestrator. `--read-only` protects the image filesystem; `/tmp` is a tmpfs for
+short-lived resolver and renderer files, while all durable outputs stay under
+the mounted data root. If the host data directory is not writable by the
+container's selected UID, create it with matching ownership or pass
+`--user "$(id -u):$(id -g)"`.
+
 ## Production paths used on this machine
 
 These are examples, not defaults:
