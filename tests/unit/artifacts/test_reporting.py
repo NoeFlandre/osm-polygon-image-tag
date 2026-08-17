@@ -439,7 +439,7 @@ def test_dataset_card_formats_counts_and_explains_examples() -> None:
             "cell_count": 123_456,
             "min_cell_count": 1,
             "max_cell_count": 2_555_555,
-            "input_shard_count": 12_345,
+            "input_shard_count": 1,
         },
     }
     card = dataset_card(
@@ -453,13 +453,24 @@ def test_dataset_card_formats_counts_and_explains_examples() -> None:
 
     assert "Published OSM features: 2,555,555" in card
     assert "New provider lookups: 7,777,777" in card
-    assert "Among those usable links:" in card
+    assert (
+        "Among 2,555,555 polygon-to-image links whose image record has a usable "
+        "direct image URL:" in card
+    )
+    assert "These percentages count polygon-to-image links, not unique images." in card
     assert "The source-tag counts below are counts of polygons carrying each tag, not image" in card
-    assert "The percentages below use links whose image record has a usable image URL." in card
+    assert "Unique images with a usable direct image URL: 2,555,555" in card
     assert "Directly linked from an OSM tag: 2,000,000 (78.3%)" in card
     assert "Indirectly reached through a Wikimedia Commons category: 555,555 (21.7%)" in card
+    assert "The map contains 2,555,555 published polygon rows from 12,345 source PBF files." in card
     assert "one row per OSM type and ID" in card
     assert "We keep one copy" in card
     assert '"osm_id": 42' in card
     assert '"image_url": "https://example.test/x?token=[redacted]"' in card
     assert "token=secret" not in card
+
+    single_source_card = dataset_card({**statistics, "shards": 1}).decode()
+    assert (
+        "The map contains 2,555,555 published polygon rows from 1 source PBF file."
+        in single_source_card
+    )

@@ -96,16 +96,26 @@ def dataset_card(
         f"{_count(indirect_image_rows)} "
         f"({_percentage(indirect_image_rows, usable_relationship_rows)})"
     )
+    usable_link_summary = (
+        f"Among {_count(usable_relationship_rows)} polygon-to-image links whose "
+        "image record has a usable direct image URL:"
+    )
     page_url_summary = (
         "- Unique images with a provider page URL (a page, not necessarily an image): "
         f"{_count(assets['page_urls'])}"
     )
     geography = statistics.get("geography") or {}
     polygon_rows = statistics["rows"]
+    source_pbf_count = int(statistics["shards"])
+    source_pbf_label = "source PBF file" if source_pbf_count == 1 else "source PBF files"
     h3_resolution = int(geography.get("h3_resolution") or 3)
     cell_count = int(geography.get("cell_count") or 0)
     min_cell_count = int(geography.get("min_cell_count") or 0)
     max_cell_count = int(geography.get("max_cell_count") or 0)
+    map_summary = (
+        f"The map contains {_count(polygon_rows)} published polygon rows from "
+        f"{_count(source_pbf_count)} {source_pbf_label}."
+    )
     example_values = examples if examples is not None else {}
     text = f"""---\n{frontmatter}---
 ![OSM Polygon Image Tag hero]({HERO_PNG_RELATIVE})
@@ -138,11 +148,12 @@ This snapshot contains:
 - Duplicate polygon rows removed: {_count(statistics.get("duplicate_observations_removed", 0))}
 - Unique image records: {_count(assets["rows"])}
 - Polygon-to-image links: {_count(assets.get("relationship_rows", 0))}
-- Unique images with a usable image URL: {_count(assets["direct_urls"])}
+- Unique images with a usable direct image URL: {_count(assets["direct_urls"])}
 - Duplicate image records removed: {_count(assets.get("duplicate_images_removed", 0))}
 - Duplicate polygon-to-image links removed: {_count(assets.get("duplicate_links_removed", 0))}
-The percentages below use links whose image record has a usable image URL.
-Among those usable links:
+These percentages count polygon-to-image links, not unique images. A single
+image can be linked to more than one polygon.
+{usable_link_summary}
 {direct_image_summary}
 {indirect_image_summary}
 - Unique images with a non-expiring image URL: {_count(assets["stable_direct_urls"])}
@@ -165,9 +176,8 @@ We place a polygon in the cell containing its geometry's center, so every
 polygon is counted once. The map uses H3 resolution {h3_resolution}, a global
 grid system. Colors use a logarithmic scale (`magma`) so sparse and dense areas
 are both visible. Cell counts range from {_count(min_cell_count)} to
-{_count(max_cell_count)} across {_count(cell_count)} cells. The map contains
-{_count(polygon_rows)} published polygon rows. Image rows and links are not
-counted on this map.
+{_count(max_cell_count)} across {_count(cell_count)} cells. {map_summary} Image
+rows and links are not counted on this map.
 
 ### How repeated rows are removed
 
