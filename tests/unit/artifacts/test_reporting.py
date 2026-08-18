@@ -463,8 +463,7 @@ def test_dataset_card_formats_counts_and_explains_examples() -> None:
     assert "The next two percentages use" not in card
     assert (
         "- Indirectly reached through a Wikimedia Commons category:"
-        " 555,555 (21.7%)\n\n- Unique images with a non-expiring image URL:"
-        in card
+        " 555,555 (21.7%)\n\n- Unique images with a non-expiring image URL:" in card
     )
     assert (
         "The map contains 2,555,555 published polygon rows from all 12,345 "
