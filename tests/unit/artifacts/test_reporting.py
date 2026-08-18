@@ -456,7 +456,14 @@ def test_dataset_card_formats_counts_and_explains_examples() -> None:
     assert "New provider lookups: 7,777,777" in card
     assert "Image-reference links checked: 2,555,555" in card
     assert "Links with a usable direct image URL: 2,555,555" in card
-    assert "These percentages use 2,555,555 usable links as the denominator:" in card
+    assert (
+        "- Duplicate polygon-to-image links removed: 0\n\n"
+        "These percentages count polygon-to-image links, not unique images. A single\n"
+        "image can be linked to more than one polygon.\n\n"
+        "The next two percentages use 2,555,555 links with a usable direct image URL "
+        "as the denominator.\n\n"
+        "- Directly linked from an OSM tag:" in card
+    )
     assert (
         "The map contains 2,555,555 published polygon rows from all 12,345 "
         "processed source PBF files." in card

@@ -97,7 +97,8 @@ def dataset_card(
         f"({_percentage(indirect_image_rows, usable_relationship_rows)})"
     )
     usable_link_summary = (
-        f"These percentages use {_count(usable_relationship_rows)} usable links as the denominator:"
+        f"The next two percentages use {_count(usable_relationship_rows)} links "
+        "with a usable direct image URL as the denominator."
     )
     page_url_summary = (
         "- Unique images with a provider page URL (a page, not necessarily an image): "
@@ -154,8 +155,10 @@ This snapshot contains:
 - Links with a usable direct image URL: {_count(usable_relationship_rows)}
 - Duplicate image records removed: {_count(assets.get("duplicate_images_removed", 0))}
 - Duplicate polygon-to-image links removed: {_count(assets.get("duplicate_links_removed", 0))}
+
 These percentages count polygon-to-image links, not unique images. A single
 image can be linked to more than one polygon.
+
 {usable_link_summary}
 
 {direct_image_summary}
