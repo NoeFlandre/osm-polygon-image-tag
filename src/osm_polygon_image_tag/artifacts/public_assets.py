@@ -413,15 +413,14 @@ class _Accumulator:
         rows: Iterable[tuple[Mapping[str, object], Mapping[str, object] | None]],
     ) -> None:
         """Insert one Parquet batch with bulk SQLite operations."""
-        materialized = list(rows)
-        self.input_rows += len(materialized)
-        self._transaction_input_rows += len(materialized)
         image_values: list[tuple[object, ...]] = []
         image_source_values: list[tuple[bytes, str]] = []
         link_values: list[tuple[bytes, object]] = []
         link_source_values: list[tuple[bytes, str]] = []
         link_version_values: list[tuple[bytes, int]] = []
-        for row, polygon in materialized:
+        for row, polygon in rows:
+            self.input_rows += 1
+            self._transaction_input_rows += 1
             if polygon is None:
                 self.orphan_rows += 1
                 self._transaction_orphan_rows += 1

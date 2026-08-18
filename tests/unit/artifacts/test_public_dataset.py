@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -550,6 +550,26 @@ def test_asset_accumulator_deduplicates_repeated_batch_keys(tmp_path: Path) -> N
             "link_sources": 1,
             "link_versions": 1,
         }
+    finally:
+        accumulator.close()
+
+
+def test_asset_accumulator_streams_rows_without_length_hint(tmp_path: Path) -> None:
+    accumulator = public_assets_module._Accumulator(tmp_path / "assets.sqlite")
+    row = _asset_row("region.osm.pbf")
+    polygon: dict[str, object] = {"osm_type": "way", "osm_id": 1, "osm_version": 1}
+
+    class StreamingRows:
+        def __iter__(self) -> Iterator[tuple[dict[str, object], dict[str, object]]]:
+            yield row, polygon
+
+        def __len__(self) -> int:
+            raise AssertionError("add_many must not materialize the input iterable")
+
+    try:
+        accumulator.add_many(StreamingRows())
+        assert accumulator.input_rows == 1
+        assert accumulator.counts() == (1, 1)
     finally:
         accumulator.close()
 
