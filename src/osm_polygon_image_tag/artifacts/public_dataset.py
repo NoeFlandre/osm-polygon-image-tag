@@ -738,7 +738,9 @@ def build_public_dataset(
                         root, polygon_path, recorded_digest
                     )
                 if polygon_rows_count is None:
-                    polygon_rows_count = accumulator.unique_count()
+                    # The Parquet footer is authoritative and avoids scanning
+                    # the much larger SQLite checkpoint table.
+                    polygon_rows_count = int(pq.ParquetFile(polygon_path).metadata.num_rows)
                 _validate_public_polygon(polygon_path, expected_rows=polygon_rows_count)
                 reuse_polygon = file_sha256(polygon_path) == recorded_digest
             except (OSError, ValueError, pa.ArrowException):
