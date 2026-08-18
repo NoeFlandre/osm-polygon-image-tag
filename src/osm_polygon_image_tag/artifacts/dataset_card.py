@@ -97,8 +97,7 @@ def dataset_card(
         f"({_percentage(indirect_image_rows, usable_relationship_rows)})"
     )
     usable_link_summary = (
-        f"The next two percentages use {_count(usable_relationship_rows)} links "
-        "with a usable direct image URL as the denominator."
+        f"**Among {_count(usable_relationship_rows)} links with a usable direct image URL:**"
     )
     page_url_summary = (
         "- Unique images with a provider page URL (a page, not necessarily an image): "
@@ -163,6 +162,7 @@ image can be linked to more than one polygon.
 
 {direct_image_summary}
 {indirect_image_summary}
+
 - Unique images with a non-expiring image URL: {_count(assets["stable_direct_urls"])}
 {page_url_summary}
 - Cached lookups reused: {_count(assets["cache_hits"])}
