@@ -12,7 +12,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -194,6 +194,22 @@ def _image_payload(row: Mapping[str, object], public_id: str) -> dict[str, objec
         "resolver_contract_version": row["resolver_contract_version"],
         "response_sha256": row.get("response_sha256"),
     }
+
+
+def _deduplicate_values[ValueTuple: tuple[Any, ...]](
+    values: Sequence[ValueTuple], *, key_columns: tuple[int, ...]
+) -> list[ValueTuple]:
+    """Keep the first value for each bounded-batch index key."""
+    seen: set[tuple[object, ...]] = set()
+    unique: list[ValueTuple] = []
+    for value in values:
+        key = tuple(
+            cast(bytes, value[index]) if index == 0 else value[index] for index in key_columns
+        )
+        if key not in seen:
+            seen.add(key)
+            unique.append(value)
+    return unique
 
 
 def _iter_batches(output: Path, *, batch_size: int = 8192) -> Iterator[list[dict[str, Any]]]:
@@ -453,6 +469,37 @@ class _Accumulator:
             version = row.get("osm_version")
             if version is not None:
                 link_version_values.append((link_key, int(str(version))))
+
+        best_images: dict[bytes, tuple[object, ...]] = {}
+        for value in image_values:
+            key = cast(bytes, value[0])
+            previous = best_images.get(key)
+            if (
+                previous is None
+                or cast(int, value[2]) > cast(int, previous[2])
+                or (
+                    cast(int, value[2]) == cast(int, previous[2])
+                    and cast(str, value[3]) < cast(str, previous[3])
+                )
+            ):
+                best_images[key] = value
+        image_values = list(best_images.values())
+        image_source_values = _deduplicate_values(image_source_values, key_columns=(0, 1))
+        link_values = _deduplicate_values(link_values, key_columns=(0,))
+        link_source_values = _deduplicate_values(link_source_values, key_columns=(0, 1))
+        link_version_values = _deduplicate_values(link_version_values, key_columns=(0, 1))
+
+        # Hash-derived keys arrive in source order, which is effectively random
+        # for these B-trees.  Sorting each bounded batch makes writes mostly
+        # sequential without changing any winner or provenance semantics.
+        for values in (
+            image_values,
+            image_source_values,
+            link_values,
+            link_source_values,
+            link_version_values,
+        ):
+            values.sort(key=lambda value: value[0])
 
         self.connection.executemany(
             """

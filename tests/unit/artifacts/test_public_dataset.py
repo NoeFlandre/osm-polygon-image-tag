@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+from collections.abc import Iterable
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 from shapely import to_wkb
@@ -430,6 +434,138 @@ def test_asset_checkpoint_uses_bounded_page_cache(tmp_path: Path) -> None:
     try:
         cache_size = accumulator.connection.execute("PRAGMA cache_size").fetchone()[0]
         assert cache_size == -public_assets_module.PUBLIC_ASSET_SQLITE_CACHE_KIB
+    finally:
+        accumulator.close()
+
+
+def test_asset_stable_json_serializes_nested_binary_and_timestamps() -> None:
+    assert (
+        public_assets_module._stable_json(
+            {"bytes": b"\x01", "when": datetime(2024, 1, 2), "items": [b"\x02"]}
+        )
+        == '{"bytes":{"__bytes__":"01"},"items":[{"__bytes__":"02"}],"when":"2024-01-02T00:00:00"}'
+    )
+
+
+def test_asset_accumulator_orders_index_writes_by_key(tmp_path: Path) -> None:
+    accumulator = public_assets_module._Accumulator(tmp_path / "assets.sqlite")
+
+    class RecordingConnection:
+        def __init__(self, connection: sqlite3.Connection) -> None:
+            self.connection = connection
+            self.calls: list[tuple[str, list[tuple[object, ...]]]] = []
+
+        def executemany(self, sql: str, values: Iterable[tuple[object, ...]]) -> sqlite3.Cursor:
+            materialized = list(values)
+            self.calls.append((sql, materialized))
+            return self.connection.executemany(sql, materialized)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self.connection, name)
+
+    recording = RecordingConnection(accumulator.connection)
+    setattr(accumulator, "connection", recording)  # noqa: B010
+    polygon = {"osm_type": "way", "osm_id": 1, "osm_version": 1}
+    rows = [
+        _asset_row(
+            "region.osm.pbf",
+            provider_asset_id=value,
+            source_tag_value=f"https://example.test/{value}.jpg",
+            canonical_reference=f"https://example.test/{value}.jpg",
+            image_url=f"https://example.test/{value}.jpg",
+        )
+        for value in ("a", "b", "c")
+    ]
+    rows.sort(
+        key=lambda row: public_assets_module._digest(public_assets_module.image_identity(row)),
+        reverse=True,
+    )
+    try:
+        accumulator.add_many([(row, polygon) for row in rows])
+        writes = {
+            "images": next(
+                values for sql, values in recording.calls if "INSERT INTO images" in sql
+            ),
+            "links": next(
+                values for sql, values in recording.calls if "INSERT OR IGNORE INTO links" in sql
+            ),
+        }
+        assert writes["images"] == sorted(writes["images"], key=lambda values: values[0])
+        assert writes["links"] == sorted(writes["links"], key=lambda values: values[0])
+    finally:
+        accumulator.close()
+
+
+def test_asset_accumulator_deduplicates_repeated_batch_keys(tmp_path: Path) -> None:
+    accumulator = public_assets_module._Accumulator(tmp_path / "assets.sqlite")
+
+    class RecordingConnection:
+        def __init__(self, connection: sqlite3.Connection) -> None:
+            self.connection = connection
+            self.calls: list[tuple[str, list[tuple[object, ...]]]] = []
+
+        def executemany(self, sql: str, values: Iterable[tuple[object, ...]]) -> sqlite3.Cursor:
+            materialized = list(values)
+            self.calls.append((sql, materialized))
+            return self.connection.executemany(sql, materialized)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self.connection, name)
+
+    recording = RecordingConnection(accumulator.connection)
+    setattr(accumulator, "connection", recording)  # noqa: B010
+    row = _asset_row("region.osm.pbf")
+    polygon = {"osm_type": "way", "osm_id": 1, "osm_version": 1}
+    try:
+        accumulator.add_many([(row, polygon), (row, polygon)])
+        counts = {
+            "images": next(
+                len(values) for sql, values in recording.calls if "INSERT INTO images" in sql
+            ),
+            "image_sources": next(
+                len(values)
+                for sql, values in recording.calls
+                if "INSERT OR IGNORE INTO image_sources" in sql
+            ),
+            "links": next(
+                len(values)
+                for sql, values in recording.calls
+                if "INSERT OR IGNORE INTO links" in sql
+            ),
+            "link_sources": next(
+                len(values)
+                for sql, values in recording.calls
+                if "INSERT OR IGNORE INTO link_sources" in sql
+            ),
+            "link_versions": next(
+                len(values)
+                for sql, values in recording.calls
+                if "INSERT OR IGNORE INTO link_versions" in sql
+            ),
+        }
+        assert counts == {
+            "images": 1,
+            "image_sources": 1,
+            "links": 1,
+            "link_sources": 1,
+            "link_versions": 1,
+        }
+    finally:
+        accumulator.close()
+
+
+def test_asset_accumulator_keeps_best_duplicate_image_row(tmp_path: Path) -> None:
+    accumulator = public_assets_module._Accumulator(tmp_path / "assets.sqlite")
+    base = _asset_row("region.osm.pbf")
+    weak = base | {"status": "temporary_failure", "author": "z"}
+    strong = base | {"author": "z"}
+    tie_break = base | {"author": "a"}
+    polygon = {"osm_type": "way", "osm_id": 1, "osm_version": 1}
+    try:
+        accumulator.add_many([(weak, polygon), (strong, polygon), (tie_break, polygon)])
+        images = list(accumulator.images())
+        assert len(images) == 1
+        assert images[0]["author"] == "a"
     finally:
         accumulator.close()
 
