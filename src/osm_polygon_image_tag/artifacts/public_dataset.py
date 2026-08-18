@@ -17,6 +17,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from osm_polygon_image_tag.artifacts.asset_inventory import verified_asset_manifests
+from osm_polygon_image_tag.artifacts.checkpoints import remove_checkpoint_files
 from osm_polygon_image_tag.artifacts.manifest_inventory import verified_manifests
 from osm_polygon_image_tag.artifacts.public_assets import (
     PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE,
@@ -113,11 +114,6 @@ def _stable_row_key(row: dict[str, Any]) -> str:
     return json.dumps(_jsonable(row), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-def _remove_checkpoint_files(path: Path) -> None:
-    for suffix in ("", "-journal", "-wal", "-shm"):
-        Path(f"{path}{suffix}").unlink(missing_ok=True)
-
-
 class _PolygonAccumulator:
     """Keep polygon selection and provenance on disk instead of in RAM."""
 
@@ -130,7 +126,7 @@ class _PolygonAccumulator:
             and path.is_file()
             and not self._is_compatible_checkpoint(path, self.input_hashes)
         ):
-            _remove_checkpoint_files(path)
+            remove_checkpoint_files(path)
         self.connection = sqlite3.connect(path)
         self.connection.execute("PRAGMA journal_mode=DELETE")
         self.connection.execute("PRAGMA synchronous=NORMAL")
@@ -664,8 +660,8 @@ def build_public_dataset(
     )
     reused = _try_reuse(root, polygon_manifests, source_assets)
     if reused is not None:
-        _remove_checkpoint_files(root / PUBLIC_DEDUP_CHECKPOINT_RELATIVE)
-        _remove_checkpoint_files(root / PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE)
+        remove_checkpoint_files(root / PUBLIC_DEDUP_CHECKPOINT_RELATIVE)
+        remove_checkpoint_files(root / PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE)
         _remove_legacy_public_asset(root)
         return reused
 
@@ -742,7 +738,7 @@ def build_public_dataset(
         sync_directory=True,
     )
     _remove_legacy_public_asset(root)
-    _remove_checkpoint_files(database_path)
+    remove_checkpoint_files(database_path)
     if created_temporary_root and not any(temporary_root.iterdir()):
         temporary_root.rmdir()
     return PublicDatasetResult(

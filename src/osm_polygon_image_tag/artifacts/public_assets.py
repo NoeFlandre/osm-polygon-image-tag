@@ -17,6 +17,7 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from osm_polygon_image_tag.artifacts.checkpoints import remove_checkpoint_files
 from osm_polygon_image_tag.assets.manifest import AssetManifest
 
 PUBLIC_IMAGE_SCHEMA_VERSION = 1
@@ -198,11 +199,6 @@ def _iter_batches(output: Path, *, batch_size: int = 8192) -> Iterator[list[dict
         yield batch.to_pylist()
 
 
-def _remove_checkpoint_files(path: Path) -> None:
-    for suffix in ("", "-journal", "-wal", "-shm"):
-        Path(f"{path}{suffix}").unlink(missing_ok=True)
-
-
 def _remove_legacy_checkpoints(temporary_root: Path, current: Path) -> None:
     for path in temporary_root.glob(".public-assets.*.sqlite*"):
         if path != current:
@@ -231,7 +227,7 @@ class _Accumulator:
                 path, self.input_hashes, self.polygon_fingerprint
             )
         ):
-            _remove_checkpoint_files(path)
+            remove_checkpoint_files(path)
         self.connection = sqlite3.connect(path)
         self.connection.execute("PRAGMA journal_mode=DELETE")
         self.connection.execute("PRAGMA synchronous=NORMAL")
@@ -656,7 +652,7 @@ def build_public_asset_tables(
     image_path = root / "public/images.parquet"
     link_path = root / "public/polygon_images.parquet"
     if not manifests:
-        _remove_checkpoint_files(root / PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE)
+        remove_checkpoint_files(root / PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE)
         _write_parquet([], image_path, public_image_schema())
         _write_parquet([], link_path, public_link_schema())
         return PublicAssetsResult(image_path, link_path, 0, 0, 0, 0, 0)
@@ -708,7 +704,7 @@ def build_public_asset_tables(
     finally:
         accumulator.close()
         if succeeded:
-            _remove_checkpoint_files(database_path)
+            remove_checkpoint_files(database_path)
     return PublicAssetsResult(
         image_path=image_path,
         link_path=link_path,
