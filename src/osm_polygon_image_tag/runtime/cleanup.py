@@ -5,6 +5,9 @@ from pathlib import Path
 
 _ATOMIC_TEMP = re.compile(r"^\.(?P<target>.+)\.[A-Za-z0-9_]{8}\.tmp$")
 _ASSET_SORT_TEMP = re.compile(r"^\.asset-sort\.[A-Za-z0-9_]{8}\.sqlite(?:-journal)?$")
+_PUBLIC_ASSET_LEGACY_TEMP = re.compile(
+    r"^\.public-assets\.[A-Za-z0-9_]{8}\.sqlite(?:-(?:journal|wal|shm))?$"
+)
 _TAG_STORE_TEMP = re.compile(r"^tag-store-[A-Za-z0-9_]{8}\.sqlite(?:-(?:wal|shm))?$")
 
 _ATOMIC_LOCATIONS = {
@@ -13,6 +16,7 @@ _ATOMIC_LOCATIONS = {
     "assets": {".parquet"},
     "manifests": {".manifest.json"},
     "asset-manifests": {".assets.manifest.json"},
+    "public": {".parquet", "public-manifest"},
     "statistics": {".json"},
 }
 
@@ -53,7 +57,10 @@ def cleanup_stale_temps(data_root: Path) -> tuple[Path, ...]:
             if (
                 candidate.is_file()
                 and not candidate.is_symlink()
-                and _TAG_STORE_TEMP.fullmatch(candidate.name)
+                and (
+                    _TAG_STORE_TEMP.fullmatch(candidate.name)
+                    or _PUBLIC_ASSET_LEGACY_TEMP.fullmatch(candidate.name)
+                )
             ):
                 candidate.unlink()
                 removed.append(candidate)

@@ -105,26 +105,36 @@ def test_run_all_removes_abandoned_pipeline_temps_before_resuming(tmp_path: Path
     data_dir = data_root / "data"
     assets_dir = data_root / "assets"
     manifests_dir = data_root / "manifests"
+    public_dir = data_root / "public"
     temporary_dir = data_root / "tmp"
     data_dir.mkdir(parents=True)
     assets_dir.mkdir()
     manifests_dir.mkdir()
+    public_dir.mkdir()
     temporary_dir.mkdir()
     data_temp = data_dir / ".region.parquet.k_wyod3b.tmp"
     manifest_temp = manifests_dir / ".region.manifest.json.k_wyod3b.tmp"
     tag_store_temp = temporary_dir / "tag-store-ziwk538k.sqlite"
+    legacy_public_asset_temp = temporary_dir / ".public-assets.ziwk538k.sqlite"
+    public_asset_checkpoint = temporary_dir / ".public-assets.sqlite"
     asset_sort_temp = assets_dir / ".asset-sort.4lhdb7ue.sqlite"
     asset_sort_journal = assets_dir / ".asset-sort.4lhdb7ue.sqlite-journal"
+    public_polygon_temp = public_dir / ".polygons.parquet.abc12345.tmp"
+    public_manifest_temp = public_dir / ".public-manifest.abc12345.tmp"
     for path in (
         data_temp,
         manifest_temp,
         tag_store_temp,
+        legacy_public_asset_temp,
         asset_sort_temp,
         asset_sort_journal,
+        public_polygon_temp,
+        public_manifest_temp,
     ):
         path.write_bytes(b"abandoned")
     unknown = temporary_dir / "keep-me.tmp"
     unknown.write_bytes(b"unknown")
+    public_asset_checkpoint.write_bytes(b"resume")
     unknown_asset = assets_dir / ".asset-sort.not-owned.sqlite"
     unknown_asset.write_bytes(b"unknown")
     paths = PipelinePaths.build(source_root=source, data_root=data_root)
@@ -134,8 +144,12 @@ def test_run_all_removes_abandoned_pipeline_temps_before_resuming(tmp_path: Path
         assert not data_temp.exists()
         assert not manifest_temp.exists()
         assert not tag_store_temp.exists()
+        assert not legacy_public_asset_temp.exists()
         assert not asset_sort_temp.exists()
         assert not asset_sort_journal.exists()
+        assert not public_polygon_temp.exists()
+        assert not public_manifest_temp.exists()
+        assert public_asset_checkpoint.exists()
         assert unknown.exists()
         assert unknown_asset.exists()
         return _result("a.osm.pbf")

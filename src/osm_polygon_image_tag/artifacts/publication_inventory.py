@@ -3,7 +3,9 @@
 from pathlib import Path
 
 from osm_polygon_image_tag.artifacts.hero import HERO_PNG_RELATIVE, packaged_hero_path
+from osm_polygon_image_tag.artifacts.public_assets import PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE
 from osm_polygon_image_tag.artifacts.public_dataset import (
+    PUBLIC_DEDUP_CHECKPOINT_RELATIVE,
     PUBLIC_IMAGE_RELATIVE,
     PUBLIC_LINK_RELATIVE,
     PUBLIC_MANIFEST_RELATIVE,
@@ -189,6 +191,13 @@ def publication_inventory(data_root: Path) -> tuple[PublicationFile, ...]:
         "receipts/publication.json",
         *(managed - allowed),
     }
+    for checkpoint in (
+        PUBLIC_DEDUP_CHECKPOINT_RELATIVE,
+        PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE,
+    ):
+        internal.update(
+            {checkpoint, f"{checkpoint}-journal", f"{checkpoint}-wal", f"{checkpoint}-shm"}
+        )
     actual = _actual_files(root)
     private = {relative for relative in actual if relative.startswith("cache/")}
     unexpected = actual - allowed - internal - private

@@ -87,6 +87,22 @@ publication planning. The pipeline never deletes files it does not own.
   publishes the deduplicated public Parquet files and metadata when verified
   outputs changed. Per-PBF files remain private resume inputs.
 
+### Resumable public deduplication
+
+`rebuild-metadata` also checkpoints the public polygon deduplication pass in
+`tmp/.public-polygons.sqlite`. After each source-PBF file finishes, its
+deduplicated rows and completion marker are committed together. If the command
+is stopped, the next run reuses those completed files and starts at the first
+unfinished source PBF. The checkpoint is private, never published, and is
+removed after the public Parquet files and manifest are written successfully.
+The raw PBF tree is read-only throughout.
+
+The image and polygon-link deduplication pass follows the same rule with
+`tmp/.public-assets.sqlite`: each finalized asset shard is committed before
+the next one starts, so stopping the command preserves completed asset work.
+The checkpoint is removed only after both public asset Parquet files and the
+public manifest are written successfully.
+
 After metadata generation, refresh the optional Trackio metrics snapshot with:
 
 ```bash

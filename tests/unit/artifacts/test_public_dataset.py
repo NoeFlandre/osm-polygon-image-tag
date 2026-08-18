@@ -3,15 +3,19 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from shapely import to_wkb
 from shapely.geometry import Polygon
 
+import osm_polygon_image_tag.artifacts.public_assets as public_assets_module
+import osm_polygon_image_tag.artifacts.public_dataset as public_dataset_module
 from osm_polygon_image_tag.artifacts.asset_inventory import verified_asset_manifests
 from osm_polygon_image_tag.artifacts.asset_statistics import public_asset_statistics
 from osm_polygon_image_tag.artifacts.public_dataset import (
     LEGACY_PUBLIC_ASSET_RELATIVE,
     PUBLIC_IMAGE_RELATIVE,
     PUBLIC_LINK_RELATIVE,
+    _PolygonAccumulator,
     build_public_dataset,
 )
 from osm_polygon_image_tag.artifacts.storage import write_geoparquet
@@ -204,6 +208,157 @@ def test_public_dataset_deduplicates_identity_and_preserves_provenance(tmp_path:
     assert manifest["duplicate_polygon_rows"] == 1
     assert manifest["image_rows"] == 1
     assert manifest["link_rows"] == 1
+
+
+def test_public_dataset_resumes_after_source_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_polygon_manifest(tmp_path, "a-region.osm.pbf", [_polygon_row("a-region.osm.pbf")])
+    _write_polygon_manifest(
+        tmp_path,
+        "b-region.osm.pbf",
+        [_polygon_row("b-region.osm.pbf", osm_id=2)],
+    )
+
+    def batches(output: Path):
+        import pyarrow.parquet as pq
+
+        for batch in pq.ParquetFile(output).iter_batches(batch_size=8192):
+            yield batch.to_pylist()
+
+    calls: list[str] = []
+
+    def interrupted(output: Path):
+        calls.append(output.name)
+        if len(calls) == 2:
+            raise RuntimeError("stop after first source")
+        yield from batches(output)
+
+    monkeypatch.setattr(public_dataset_module, "_iter_source_batches", interrupted, raising=False)
+    with pytest.raises(RuntimeError, match="stop after first source"):
+        build_public_dataset(tmp_path)
+
+    checkpoint = tmp_path / "tmp" / ".public-polygons.sqlite"
+    assert checkpoint.is_file()
+
+    calls.clear()
+
+    def resumed(output: Path):
+        calls.append(output.name)
+        yield from batches(output)
+
+    monkeypatch.setattr(public_dataset_module, "_iter_source_batches", resumed, raising=False)
+    result = build_public_dataset(tmp_path)
+
+    assert calls == ["b-region.osm.parquet"]
+    assert result.polygon_rows == 2
+    assert result.duplicate_polygon_rows == 0
+    assert not checkpoint.exists()
+
+
+def test_public_dataset_resumes_after_asset_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_polygon_manifest(tmp_path, "a-region.osm.pbf", [_polygon_row("a-region.osm.pbf")])
+    _write_polygon_manifest(
+        tmp_path,
+        "b-region.osm.pbf",
+        [_polygon_row("b-region.osm.pbf", osm_id=2)],
+    )
+    _write_asset_manifest(
+        tmp_path,
+        "a-region.osm.pbf",
+        "data/a-region.parquet",
+        [_asset_row("a-region.osm.pbf")],
+    )
+    _write_asset_manifest(
+        tmp_path,
+        "b-region.osm.pbf",
+        "data/b-region.parquet",
+        [_asset_row("b-region.osm.pbf", osm_id=2)],
+    )
+
+    original = public_assets_module._iter_batches
+    calls: list[str] = []
+
+    def interrupted(output: Path):
+        calls.append(output.name)
+        if len(calls) == 2:
+            raise RuntimeError("stop after first asset source")
+        yield from original(output)
+
+    monkeypatch.setattr(public_assets_module, "_iter_batches", interrupted, raising=False)
+    with pytest.raises(RuntimeError, match="stop after first asset source"):
+        build_public_dataset(tmp_path)
+
+    checkpoint = tmp_path / "tmp" / ".public-assets.sqlite"
+    assert checkpoint.is_file()
+
+    calls.clear()
+    monkeypatch.setattr(
+        public_dataset_module,
+        "_write_polygon_rows",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("completed polygon output should be reused")
+        ),
+    )
+
+    def resumed(output: Path):
+        calls.append(output.name)
+        yield from original(output)
+
+    monkeypatch.setattr(public_assets_module, "_iter_batches", resumed, raising=False)
+    result = build_public_dataset(tmp_path)
+
+    assert calls == ["b-region.osm.assets.parquet"]
+    assert result.image_rows == 1
+    assert result.link_rows == 2
+    assert not checkpoint.exists()
+
+
+def test_polygon_accumulator_keeps_latest_row_and_sources_on_disk(tmp_path: Path) -> None:
+    accumulator = _PolygonAccumulator(tmp_path / "polygons.sqlite")
+    try:
+        accumulator.add_many(
+            [
+                _polygon_row("old-region.osm.pbf", osm_version=1),
+                _polygon_row("new-region.osm.pbf", osm_version=2),
+            ]
+        )
+
+        rows = list(accumulator.rows())
+
+        assert accumulator.input_rows == 2
+        assert len(rows) == 1
+        assert rows[0]["osm_version"] == 2
+        assert rows[0]["source_pbf"] == "new-region.osm.pbf"
+        assert rows[0]["source_pbfs"] == [
+            "new-region.osm.pbf",
+            "old-region.osm.pbf",
+        ]
+    finally:
+        accumulator.close()
+
+
+def test_public_dataset_builds_asset_lookup_from_public_polygons(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_polygon_manifest(tmp_path, "region.osm.pbf", [_polygon_row("region.osm.pbf")])
+    _write_asset_manifest(
+        tmp_path,
+        "region.osm.pbf",
+        "data/region.parquet",
+        [_asset_row("region.osm.pbf")],
+    )
+
+    def no_sqlite_scan(_accumulator: object) -> dict[tuple[str, int], dict[str, object]]:
+        raise AssertionError("asset lookup must not rescan the SQLite payload table")
+
+    monkeypatch.setattr(_PolygonAccumulator, "canonical_index", no_sqlite_scan)
+    result = build_public_dataset(tmp_path)
+
+    assert result.image_rows == 1
+    assert result.link_rows == 1
 
 
 def test_public_dataset_is_reused_when_inputs_are_unchanged(tmp_path: Path) -> None:

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import pickle
+import sqlite3
 import tempfile
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
@@ -17,6 +19,7 @@ import pyarrow.parquet as pq
 from osm_polygon_image_tag.artifacts.asset_inventory import verified_asset_manifests
 from osm_polygon_image_tag.artifacts.manifest_inventory import verified_manifests
 from osm_polygon_image_tag.artifacts.public_assets import (
+    PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE,
     PublicAssetsResult,
     build_public_asset_tables,
     validate_public_image_parquet,
@@ -40,9 +43,11 @@ PUBLIC_POLYGON_RELATIVE = "public/polygons.parquet"
 LEGACY_PUBLIC_ASSET_RELATIVE = "public/image_assets.parquet"
 PUBLIC_IMAGE_RELATIVE = "public/images.parquet"
 PUBLIC_LINK_RELATIVE = "public/polygon_images.parquet"
+PUBLIC_DEDUP_CHECKPOINT_RELATIVE = "tmp/.public-polygons.sqlite"
 # Kept as an import-compatible alias for callers that only need the image file.
 PUBLIC_ASSET_RELATIVE = PUBLIC_IMAGE_RELATIVE
 PUBLIC_MANIFEST_RELATIVE = "public/public-manifest.json"
+PUBLIC_DEDUP_CHECKPOINT_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,10 +82,6 @@ def _identity(row: Mapping[str, Any]) -> tuple[str, int]:
     return (str(row["osm_type"]), int(row["osm_id"]))
 
 
-def _identity_sort(key: tuple[str, int]) -> tuple[str, int]:
-    return key
-
-
 def _polygon_rank(row: Mapping[str, Any]) -> tuple[int, int, int, str]:
     version = row.get("osm_version")
     timestamp = row.get("osm_timestamp")
@@ -90,24 +91,6 @@ def _polygon_rank(row: Mapping[str, Any]) -> tuple[int, int, int, str]:
         int(version) if version is not None else -1,
         1 if timestamp is not None else 0,
         timestamp_value,
-    )
-
-
-def _polygon_is_newer(
-    source: str,
-    row: Mapping[str, Any],
-    source_feature: str,
-    current: tuple[str, dict[str, Any], set[str], str],
-) -> bool:
-    current_source, current_row, _sources, current_feature = current
-    candidate_rank = _polygon_rank(row)
-    current_rank = _polygon_rank(current_row)
-    if candidate_rank != current_rank:
-        return candidate_rank > current_rank
-    return (source, source_feature, _stable_row_key(dict(row))) < (
-        current_source,
-        current_feature,
-        _stable_row_key(current_row),
     )
 
 
@@ -130,12 +113,330 @@ def _stable_row_key(row: dict[str, Any]) -> str:
     return json.dumps(_jsonable(row), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-def _iter_rows(
-    manifests: Sequence[tuple[Any, Path]], *, batch_size: int = 8192
-) -> Iterator[dict[str, Any]]:
-    for _manifest, output in manifests:
-        for batch in pq.ParquetFile(output).iter_batches(batch_size=batch_size):
-            yield from batch.to_pylist()
+def _remove_checkpoint_files(path: Path) -> None:
+    for suffix in ("", "-journal", "-wal", "-shm"):
+        Path(f"{path}{suffix}").unlink(missing_ok=True)
+
+
+class _PolygonAccumulator:
+    """Keep polygon selection and provenance on disk instead of in RAM."""
+
+    def __init__(self, path: Path, *, input_hashes: Sequence[str] | None = None) -> None:
+        self.path = path
+        self.input_hashes = tuple(input_hashes) if input_hashes is not None else None
+        self._transaction_input_rows = 0
+        if (
+            self.input_hashes is not None
+            and path.is_file()
+            and not self._is_compatible_checkpoint(path, self.input_hashes)
+        ):
+            _remove_checkpoint_files(path)
+        self.connection = sqlite3.connect(path)
+        self.connection.execute("PRAGMA journal_mode=DELETE")
+        self.connection.execute("PRAGMA synchronous=NORMAL")
+        self.connection.execute("PRAGMA temp_store=FILE")
+        self.connection.execute("PRAGMA cache_size=-32768")
+        self.connection.execute("PRAGMA locking_mode=EXCLUSIVE")
+        self.connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS polygons (
+                osm_type TEXT NOT NULL,
+                osm_id INTEGER NOT NULL,
+                source_pbf TEXT NOT NULL,
+                source_feature_id TEXT NOT NULL,
+                rank_version_present INTEGER NOT NULL,
+                rank_version INTEGER NOT NULL,
+                rank_timestamp_present INTEGER NOT NULL,
+                rank_timestamp TEXT NOT NULL,
+                sort_key TEXT NOT NULL,
+                payload BLOB NOT NULL,
+                PRIMARY KEY (osm_type, osm_id)
+            ) WITHOUT ROWID;
+            CREATE TABLE IF NOT EXISTS polygon_sources (
+                osm_type TEXT NOT NULL,
+                osm_id INTEGER NOT NULL,
+                source_pbf TEXT NOT NULL,
+                PRIMARY KEY (osm_type, osm_id, source_pbf)
+            ) WITHOUT ROWID;
+            CREATE TABLE IF NOT EXISTS checkpoint_metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            ) WITHOUT ROWID;
+            CREATE TABLE IF NOT EXISTS checkpoint_sources (
+                source_index INTEGER PRIMARY KEY,
+                source_sha256 TEXT NOT NULL,
+                row_count INTEGER NOT NULL
+            ) WITHOUT ROWID;
+            """
+        )
+        if self.input_hashes is None:
+            self.input_rows = 0
+        else:
+            self.connection.execute(
+                "INSERT OR IGNORE INTO checkpoint_metadata(key, value) VALUES (?, ?)",
+                (
+                    "schema_version",
+                    str(PUBLIC_DEDUP_CHECKPOINT_SCHEMA_VERSION),
+                ),
+            )
+            self.connection.execute(
+                "INSERT OR IGNORE INTO checkpoint_metadata(key, value) VALUES (?, ?)",
+                ("input_hashes", json.dumps(self.input_hashes, separators=(",", ":"))),
+            )
+            self.connection.commit()
+            self.input_rows = self._completed_input_rows()
+
+    @staticmethod
+    def _is_compatible_checkpoint(path: Path, input_hashes: Sequence[str]) -> bool:
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = sqlite3.connect(path)
+            rows = dict(connection.execute("SELECT key, value FROM checkpoint_metadata").fetchall())
+            if rows.get("schema_version") != str(PUBLIC_DEDUP_CHECKPOINT_SCHEMA_VERSION):
+                return False
+            if json.loads(rows["input_hashes"]) != list(input_hashes):
+                return False
+            for source_index, source_sha256, row_count in connection.execute(
+                "SELECT source_index, source_sha256, row_count FROM checkpoint_sources"
+            ):
+                if (
+                    source_index < 0
+                    or source_index >= len(input_hashes)
+                    or input_hashes[source_index] != source_sha256
+                    or row_count < 0
+                ):
+                    return False
+            return True
+        except (
+            OSError,
+            sqlite3.DatabaseError,
+            KeyError,
+            TypeError,
+            ValueError,
+            json.JSONDecodeError,
+        ):
+            return False
+        finally:
+            if connection is not None:
+                connection.close()
+
+    def _completed_input_rows(self) -> int:
+        result = self.connection.execute(
+            "SELECT COALESCE(SUM(row_count), 0) FROM checkpoint_sources"
+        ).fetchone()
+        return int(result[0]) if result is not None else 0
+
+    def source_completed(self, source_index: int, source_sha256: str) -> bool:
+        if self.input_hashes is None:
+            return False
+        row = self.connection.execute(
+            "SELECT source_sha256 FROM checkpoint_sources WHERE source_index = ?",
+            (source_index,),
+        ).fetchone()
+        return row is not None and row[0] == source_sha256
+
+    def all_sources_completed(self) -> bool:
+        """Return whether every input shard has a committed checkpoint marker."""
+        if self.input_hashes is None:
+            return False
+        completed = self.connection.execute(
+            "SELECT source_index, source_sha256 FROM checkpoint_sources ORDER BY source_index"
+        ).fetchall()
+        return len(completed) == len(self.input_hashes) and all(
+            source_index == expected_index and source_sha256 == self.input_hashes[expected_index]
+            for expected_index, (source_index, source_sha256) in enumerate(completed)
+        )
+
+    def unique_count(self) -> int:
+        """Return the number of canonical polygon rows recorded in SQLite."""
+        row = self.connection.execute("SELECT COUNT(*) FROM polygons").fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def public_output_sha256(self) -> str | None:
+        """Return the digest recorded for the finalized public polygon file."""
+        row = self.connection.execute(
+            "SELECT value FROM checkpoint_metadata WHERE key = 'public_output_sha256'"
+        ).fetchone()
+        return str(row[0]) if row is not None else None
+
+    def record_public_output(self, sha256: str) -> None:
+        """Record a validated public polygon digest for safe output reuse."""
+        self.connection.execute(
+            "INSERT OR REPLACE INTO checkpoint_metadata(key, value) VALUES (?, ?)",
+            ("public_output_sha256", sha256),
+        )
+        self.connection.commit()
+
+    def begin_source(self) -> None:
+        if self.input_hashes is None:
+            return
+        self.connection.execute("BEGIN")
+        self._transaction_input_rows = 0
+
+    def complete_source(self, source_index: int, source_sha256: str, row_count: int) -> None:
+        if self.input_hashes is None:
+            return
+        self.connection.execute(
+            "INSERT OR REPLACE INTO checkpoint_sources(source_index, source_sha256, row_count) "
+            "VALUES (?, ?, ?)",
+            (source_index, source_sha256, row_count),
+        )
+        self.connection.commit()
+        self._transaction_input_rows = 0
+
+    def rollback_source(self) -> None:
+        if self.input_hashes is None:
+            return
+        self.connection.rollback()
+        self.input_rows -= self._transaction_input_rows
+        self._transaction_input_rows = 0
+
+    def add(self, row: Mapping[str, Any]) -> None:
+        self.add_many([row])
+
+    def add_many(self, rows: Iterable[Mapping[str, Any]]) -> None:
+        """Ingest a batch with bulk SQLite calls and SQL-side winner selection."""
+        materialized = [dict(row) for row in rows]
+        self.input_rows += len(materialized)
+        self._transaction_input_rows += len(materialized)
+        if not materialized:
+            return
+        source_values: list[tuple[str, int, str]] = []
+        polygon_values: list[tuple[object, ...]] = []
+        for row in materialized:
+            osm_type, osm_id = _identity(row)
+            source = str(row["source_pbf"])
+            source_feature = str(row.get("source_feature_id") or "")
+            source_values.append((osm_type, osm_id, source))
+            rank_version_present, rank_version, rank_timestamp_present, rank_timestamp = (
+                _polygon_rank(row)
+            )
+            polygon_values.append(
+                (
+                    osm_type,
+                    osm_id,
+                    source,
+                    source_feature,
+                    rank_version_present,
+                    rank_version,
+                    rank_timestamp_present,
+                    rank_timestamp,
+                    _stable_row_key(row),
+                    sqlite3.Binary(pickle.dumps(row, protocol=5)),
+                )
+            )
+        self.connection.executemany(
+            "INSERT OR IGNORE INTO polygon_sources VALUES (?, ?, ?)",
+            source_values,
+        )
+        self.connection.executemany(
+            """
+            INSERT INTO polygons(
+                osm_type, osm_id, source_pbf, source_feature_id,
+                rank_version_present, rank_version, rank_timestamp_present,
+                rank_timestamp, sort_key, payload
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(osm_type, osm_id) DO UPDATE SET
+                source_pbf = excluded.source_pbf,
+                source_feature_id = excluded.source_feature_id,
+                rank_version_present = excluded.rank_version_present,
+                rank_version = excluded.rank_version,
+                rank_timestamp_present = excluded.rank_timestamp_present,
+                rank_timestamp = excluded.rank_timestamp,
+                sort_key = excluded.sort_key,
+                payload = excluded.payload
+            WHERE excluded.rank_version_present > polygons.rank_version_present
+               OR (
+                    excluded.rank_version_present = polygons.rank_version_present
+                AND excluded.rank_version > polygons.rank_version
+               )
+               OR (
+                    excluded.rank_version_present = polygons.rank_version_present
+                AND excluded.rank_version = polygons.rank_version
+                AND excluded.rank_timestamp_present > polygons.rank_timestamp_present
+               )
+               OR (
+                    excluded.rank_version_present = polygons.rank_version_present
+                AND excluded.rank_version = polygons.rank_version
+                AND excluded.rank_timestamp_present = polygons.rank_timestamp_present
+                AND excluded.rank_timestamp > polygons.rank_timestamp
+               )
+               OR (
+                    excluded.rank_version_present = polygons.rank_version_present
+                AND excluded.rank_version = polygons.rank_version
+                AND excluded.rank_timestamp_present = polygons.rank_timestamp_present
+                AND excluded.rank_timestamp = polygons.rank_timestamp
+                AND (
+                    excluded.source_pbf,
+                    excluded.source_feature_id,
+                    excluded.sort_key
+                ) < (
+                    polygons.source_pbf,
+                    polygons.source_feature_id,
+                    polygons.sort_key
+                )
+               )
+            """,
+            polygon_values,
+        )
+
+    def rows(self) -> Iterator[dict[str, Any]]:
+        separator = "\x1f"
+        source_groups = self.connection.execute(
+            """
+            SELECT osm_type, osm_id, GROUP_CONCAT(source_pbf, ?)
+            FROM (
+                SELECT osm_type, osm_id, source_pbf
+                FROM polygon_sources
+                ORDER BY osm_type, osm_id, source_pbf
+            )
+            GROUP BY osm_type, osm_id
+            ORDER BY osm_type, osm_id
+            """,
+            (separator,),
+        )
+        group = next(source_groups, None)
+        for osm_type, osm_id, payload in self.connection.execute(
+            "SELECT osm_type, osm_id, payload FROM polygons ORDER BY osm_type, osm_id"
+        ):
+            while group is not None and (group[0], group[1]) < (osm_type, osm_id):
+                group = next(source_groups, None)
+            if group is None or (group[0], group[1]) != (osm_type, osm_id):
+                raise ValueError("polygon accumulator provenance is incomplete")
+            row = pickle.loads(payload)  # noqa: S301 - database is created above
+            if not isinstance(row, dict):
+                raise TypeError("invalid polygon accumulator payload")
+            row["source_pbfs"] = str(group[2]).split(separator)
+            group = next(source_groups, None)
+            yield row
+
+    def canonical_index(self) -> dict[tuple[str, int], dict[str, object]]:
+        index: dict[tuple[str, int], dict[str, object]] = {}
+        for osm_type, osm_id, payload in self.connection.execute(
+            "SELECT osm_type, osm_id, payload FROM polygons"
+        ):
+            row = pickle.loads(payload)  # noqa: S301 - database is created above
+            if not isinstance(row, dict):
+                raise TypeError("invalid polygon accumulator payload")
+            index[(str(osm_type), int(osm_id))] = {
+                "osm_type": str(osm_type),
+                "osm_id": int(osm_id),
+                "osm_version": row.get("osm_version"),
+            }
+        return index
+
+    def close(self) -> None:
+        if self.connection.in_transaction:
+            if self.input_hashes is None:
+                self.connection.commit()
+            else:
+                self.connection.rollback()
+        self.connection.close()
+
+
+def _iter_source_batches(output: Path, *, batch_size: int = 8192) -> Iterator[list[dict[str, Any]]]:
+    for batch in pq.ParquetFile(output).iter_batches(batch_size=batch_size):
+        yield batch.to_pylist()
 
 
 def _write_polygon_rows(
@@ -175,6 +476,24 @@ def _write_polygon_rows(
         temporary_path.unlink(missing_ok=True)
         raise
     return count
+
+
+def _canonical_polygon_index(path: Path) -> dict[tuple[str, int], dict[str, object]]:
+    """Read only the small identity columns needed to join asset rows."""
+    index: dict[tuple[str, int], dict[str, object]] = {}
+    for batch in pq.ParquetFile(path).iter_batches(
+        columns=["osm_type", "osm_id", "osm_version"],
+        batch_size=65536,
+    ):
+        for row in batch.to_pylist():
+            osm_type = str(row["osm_type"])
+            osm_id = int(row["osm_id"])
+            index[(osm_type, osm_id)] = {
+                "osm_type": osm_type,
+                "osm_id": osm_id,
+                "osm_version": row.get("osm_version"),
+            }
+    return index
 
 
 def _validate_public_polygon(path: Path, *, expected_rows: int | None = None) -> None:
@@ -360,42 +679,61 @@ def build_public_dataset(
     )
     reused = _try_reuse(root, polygon_manifests, source_assets)
     if reused is not None:
+        _remove_checkpoint_files(root / PUBLIC_DEDUP_CHECKPOINT_RELATIVE)
+        _remove_checkpoint_files(root / PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE)
         _remove_legacy_public_asset(root)
         return reused
 
-    selected: dict[tuple[str, int], tuple[str, dict[str, Any], set[str], str]] = {}
-    input_polygon_rows = 0
-    for row in _iter_rows(polygon_manifests):
-        input_polygon_rows += 1
-        key = _identity(row)
-        source = str(row["source_pbf"])
-        source_feature = str(row.get("source_feature_id") or "")
-        candidate = (source, row, {source}, source_feature)
-        current = selected.get(key)
-        if current is None:
-            selected[key] = candidate
-            continue
-        current[2].add(source)
-        if _polygon_is_newer(source, row, source_feature, current):
-            selected[key] = (source, row, current[2], source_feature)
-
-    def polygon_rows() -> Iterator[dict[str, Any]]:
-        for key in sorted(selected, key=_identity_sort):
-            _source, row, sources, _feature = selected[key]
-            output = dict(row)
-            output["source_pbfs"] = sorted(sources)
-            yield output
-
-    polygon_path = root / PUBLIC_POLYGON_RELATIVE
-    polygon_rows_count = _write_polygon_rows(polygon_rows(), polygon_path)
+    temporary_root = root / "tmp"
+    created_temporary_root = not temporary_root.exists()
+    temporary_root.mkdir(parents=True, exist_ok=True)
+    database_path = root / PUBLIC_DEDUP_CHECKPOINT_RELATIVE
+    input_hashes = [manifest.output.sha256 for manifest, _ in polygon_manifests]
+    accumulator = _PolygonAccumulator(database_path, input_hashes=input_hashes)
+    try:
+        for source_index, (manifest, output) in enumerate(polygon_manifests):
+            source_sha256 = manifest.output.sha256
+            if accumulator.source_completed(source_index, source_sha256):
+                continue
+            accumulator.begin_source()
+            source_rows = 0
+            try:
+                for batch in _iter_source_batches(output):
+                    source_rows += len(batch)
+                    accumulator.add_many(batch)
+                accumulator.complete_source(source_index, source_sha256, source_rows)
+            except BaseException:
+                accumulator.rollback_source()
+                raise
+        input_polygon_rows = accumulator.input_rows
+        polygon_path = root / PUBLIC_POLYGON_RELATIVE
+        polygon_rows_count = 0
+        reuse_polygon = False
+        recorded_digest = accumulator.public_output_sha256()
+        if (
+            accumulator.all_sources_completed()
+            and recorded_digest is not None
+            and polygon_path.is_file()
+        ):
+            try:
+                polygon_rows_count = accumulator.unique_count()
+                _validate_public_polygon(polygon_path, expected_rows=polygon_rows_count)
+                reuse_polygon = file_sha256(polygon_path) == recorded_digest
+            except (OSError, ValueError, pa.ArrowException):
+                reuse_polygon = False
+        if not reuse_polygon:
+            polygon_rows_count = _write_polygon_rows(accumulator.rows(), polygon_path)
+            accumulator.record_public_output(file_sha256(polygon_path))
+        canonical_polygons = _canonical_polygon_index(polygon_path)
+    finally:
+        accumulator.close()
     polygon_manifest = _public_polygon_manifest(polygon_path, polygon_rows_count)
-    canonical_polygons: dict[tuple[str, int], dict[str, Any]] = {}
-    for key, (source, row, sources, _feature) in selected.items():
-        output = dict(row)
-        output["source_pbf"] = source
-        output["source_pbfs"] = sorted(sources)
-        canonical_polygons[key] = output
-    assets = build_public_asset_tables(root, source_assets, canonical_polygons)
+    assets = build_public_asset_tables(
+        root,
+        source_assets,
+        canonical_polygons,
+        polygon_fingerprint=polygon_manifest.output.sha256,
+    )
     payload = _manifest_payload(
         polygon_manifests,
         source_assets,
@@ -419,6 +757,9 @@ def build_public_dataset(
         sync_directory=True,
     )
     _remove_legacy_public_asset(root)
+    _remove_checkpoint_files(database_path)
+    if created_temporary_root and not any(temporary_root.iterdir()):
+        temporary_root.rmdir()
     return PublicDatasetResult(
         polygon_path,
         assets.image_path,

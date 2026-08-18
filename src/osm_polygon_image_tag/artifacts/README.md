@@ -13,6 +13,12 @@ that lives inside the managed data root.
 - A deterministic deduplicated release view (`public_dataset`) that keeps
   per-PBF inputs private for resume while publishing canonical polygons,
   unique images, and the `polygon_images` link table under `public/`.
+  Its polygon pass checkpoints completed source PBFs in the private
+  `tmp/.public-polygons.sqlite` database and resumes unfinished sources.
+  The image/link pass uses the private `tmp/.public-assets.sqlite` checkpoint;
+  it commits each asset shard separately and resumes unfinished shards. Both
+  checkpoints are removed only after their public outputs and manifest are
+  written successfully.
 - Publication types, inventory, planning, and receipt writing
   (`publication_types`, `publication_inventory`, `publication`).
 - The dataset-card geographic density map (`geography/`): typed models,

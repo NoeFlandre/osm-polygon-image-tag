@@ -21,6 +21,8 @@ from osm_polygon_image_tag.assets.manifest import AssetManifest
 
 PUBLIC_IMAGE_SCHEMA_VERSION = 1
 PUBLIC_LINK_SCHEMA_VERSION = 1
+PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE = "tmp/.public-assets.sqlite"
+PUBLIC_ASSET_DEDUP_CHECKPOINT_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,68 +193,270 @@ def _image_payload(row: Mapping[str, object], public_id: str) -> dict[str, objec
     }
 
 
-def _iter_rows(
-    manifests: Sequence[tuple[AssetManifest, Path]], *, batch_size: int = 8192
-) -> Iterator[dict[str, Any]]:
-    for _manifest, output in manifests:
-        for batch in pq.ParquetFile(output).iter_batches(batch_size=batch_size):
-            yield from batch.to_pylist()
+def _iter_batches(output: Path, *, batch_size: int = 8192) -> Iterator[list[dict[str, Any]]]:
+    for batch in pq.ParquetFile(output).iter_batches(batch_size=batch_size):
+        yield batch.to_pylist()
+
+
+def _remove_checkpoint_files(path: Path) -> None:
+    for suffix in ("", "-journal", "-wal", "-shm"):
+        Path(f"{path}{suffix}").unlink(missing_ok=True)
+
+
+def _remove_legacy_checkpoints(temporary_root: Path, current: Path) -> None:
+    for path in temporary_root.glob(".public-assets.*.sqlite*"):
+        if path != current:
+            path.unlink(missing_ok=True)
 
 
 class _Accumulator:
     """Bounded-memory SQLite accumulator for public image relationships."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(
+        self,
+        path: Path,
+        *,
+        input_hashes: Sequence[str] | None = None,
+        polygon_fingerprint: str | None = None,
+    ) -> None:
+        self.path = path
+        self.input_hashes = tuple(input_hashes) if input_hashes is not None else None
+        self.polygon_fingerprint = polygon_fingerprint or ""
+        self._transaction_input_rows = 0
+        self._transaction_orphan_rows = 0
+        if (
+            self.input_hashes is not None
+            and path.is_file()
+            and not self._is_compatible_checkpoint(
+                path, self.input_hashes, self.polygon_fingerprint
+            )
+        ):
+            _remove_checkpoint_files(path)
         self.connection = sqlite3.connect(path)
-        self.connection.execute("PRAGMA journal_mode=OFF")
-        self.connection.execute("PRAGMA synchronous=OFF")
+        self.connection.execute("PRAGMA journal_mode=DELETE")
+        self.connection.execute("PRAGMA synchronous=NORMAL")
         self.connection.execute("PRAGMA temp_store=FILE")
         self.connection.execute("PRAGMA cache_size=-32768")
+        self.connection.execute("PRAGMA locking_mode=EXCLUSIVE")
         self.connection.executescript(
             """
-            CREATE TABLE images (
+            CREATE TABLE IF NOT EXISTS images (
                 image_key BLOB PRIMARY KEY,
                 payload BLOB NOT NULL,
                 rank INTEGER NOT NULL,
                 sort_key TEXT NOT NULL
             ) WITHOUT ROWID;
-            CREATE TABLE image_sources (
+            CREATE TABLE IF NOT EXISTS image_sources (
                 image_key BLOB NOT NULL,
                 source_pbf TEXT NOT NULL,
                 PRIMARY KEY (image_key, source_pbf)
             ) WITHOUT ROWID;
-            CREATE TABLE links (
+            CREATE TABLE IF NOT EXISTS links (
                 link_key BLOB PRIMARY KEY,
                 payload BLOB NOT NULL
             ) WITHOUT ROWID;
-            CREATE TABLE link_sources (
+            CREATE TABLE IF NOT EXISTS link_sources (
                 link_key BLOB NOT NULL,
                 source_pbf TEXT NOT NULL,
                 PRIMARY KEY (link_key, source_pbf)
             ) WITHOUT ROWID;
-            CREATE TABLE link_versions (
+            CREATE TABLE IF NOT EXISTS link_versions (
                 link_key BLOB NOT NULL,
                 osm_version INTEGER NOT NULL,
                 PRIMARY KEY (link_key, osm_version)
             ) WITHOUT ROWID;
+            CREATE TABLE IF NOT EXISTS checkpoint_metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            ) WITHOUT ROWID;
+            CREATE TABLE IF NOT EXISTS checkpoint_sources (
+                source_index INTEGER PRIMARY KEY,
+                source_sha256 TEXT NOT NULL,
+                row_count INTEGER NOT NULL,
+                orphan_count INTEGER NOT NULL
+            ) WITHOUT ROWID;
             """
         )
-        self.input_rows = 0
-        self.orphan_rows = 0
+        if self.input_hashes is None:
+            self.input_rows = 0
+            self.orphan_rows = 0
+        else:
+            self.connection.execute(
+                "INSERT OR IGNORE INTO checkpoint_metadata(key, value) VALUES (?, ?)",
+                ("schema_version", str(PUBLIC_ASSET_DEDUP_CHECKPOINT_SCHEMA_VERSION)),
+            )
+            self.connection.execute(
+                "INSERT OR IGNORE INTO checkpoint_metadata(key, value) VALUES (?, ?)",
+                ("input_hashes", json.dumps(self.input_hashes, separators=(",", ":"))),
+            )
+            self.connection.execute(
+                "INSERT OR IGNORE INTO checkpoint_metadata(key, value) VALUES (?, ?)",
+                ("polygon_fingerprint", self.polygon_fingerprint),
+            )
+            self.connection.commit()
+            self.input_rows, self.orphan_rows = self._completed_counts()
+
+    @staticmethod
+    def _is_compatible_checkpoint(
+        path: Path,
+        input_hashes: Sequence[str],
+        polygon_fingerprint: str,
+    ) -> bool:
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = sqlite3.connect(path)
+            metadata = dict(
+                connection.execute("SELECT key, value FROM checkpoint_metadata").fetchall()
+            )
+            if metadata.get("schema_version") != str(PUBLIC_ASSET_DEDUP_CHECKPOINT_SCHEMA_VERSION):
+                return False
+            if json.loads(metadata["input_hashes"]) != list(input_hashes):
+                return False
+            if metadata.get("polygon_fingerprint") != polygon_fingerprint:
+                return False
+            for source_index, source_sha256, row_count, orphan_count in connection.execute(
+                "SELECT source_index, source_sha256, row_count, orphan_count "
+                "FROM checkpoint_sources"
+            ):
+                if (
+                    source_index < 0
+                    or source_index >= len(input_hashes)
+                    or input_hashes[source_index] != source_sha256
+                    or row_count < 0
+                    or orphan_count < 0
+                    or orphan_count > row_count
+                ):
+                    return False
+            return True
+        except (
+            OSError,
+            sqlite3.DatabaseError,
+            KeyError,
+            TypeError,
+            ValueError,
+            json.JSONDecodeError,
+        ):
+            return False
+        finally:
+            if connection is not None:
+                connection.close()
+
+    def _completed_counts(self) -> tuple[int, int]:
+        row = self.connection.execute(
+            "SELECT COALESCE(SUM(row_count), 0), COALESCE(SUM(orphan_count), 0) "
+            "FROM checkpoint_sources"
+        ).fetchone()
+        return (int(row[0]), int(row[1])) if row is not None else (0, 0)
+
+    def source_completed(self, source_index: int, source_sha256: str) -> bool:
+        if self.input_hashes is None:
+            return False
+        row = self.connection.execute(
+            "SELECT source_sha256 FROM checkpoint_sources WHERE source_index = ?",
+            (source_index,),
+        ).fetchone()
+        return row is not None and row[0] == source_sha256
+
+    def begin_source(self) -> None:
+        if self.input_hashes is None:
+            return
+        self.connection.execute("BEGIN")
+        self._transaction_input_rows = 0
+        self._transaction_orphan_rows = 0
+
+    def complete_source(
+        self,
+        source_index: int,
+        source_sha256: str,
+        row_count: int,
+        orphan_count: int,
+    ) -> None:
+        if self.input_hashes is None:
+            return
+        self.connection.execute(
+            "INSERT OR REPLACE INTO checkpoint_sources "
+            "(source_index, source_sha256, row_count, orphan_count) VALUES (?, ?, ?, ?)",
+            (source_index, source_sha256, row_count, orphan_count),
+        )
+        self.connection.commit()
+        self._transaction_input_rows = 0
+        self._transaction_orphan_rows = 0
+
+    def rollback_source(self) -> None:
+        if self.input_hashes is None:
+            return
+        self.connection.rollback()
+        self.input_rows -= self._transaction_input_rows
+        self.orphan_rows -= self._transaction_orphan_rows
+        self._transaction_input_rows = 0
+        self._transaction_orphan_rows = 0
 
     def add(self, row: Mapping[str, object], polygon: Mapping[str, object] | None) -> None:
-        self.input_rows += 1
-        if polygon is None:
-            self.orphan_rows += 1
-            return
-        source_pbf = str(row["source_pbf"])
-        identity = image_identity(row)
-        image_key = _digest(identity)
-        public_id = f"img_{image_key.hex()}"
-        payload = _image_payload(row, public_id)
-        rank = _quality_rank(row)
-        sort_key = _stable_json(payload)
-        self.connection.execute(
+        self.add_many(((row, polygon),))
+
+    def add_many(
+        self,
+        rows: Iterable[tuple[Mapping[str, object], Mapping[str, object] | None]],
+    ) -> None:
+        """Insert one Parquet batch with bulk SQLite operations."""
+        materialized = list(rows)
+        self.input_rows += len(materialized)
+        self._transaction_input_rows += len(materialized)
+        image_values: list[tuple[object, ...]] = []
+        image_source_values: list[tuple[bytes, str]] = []
+        link_values: list[tuple[bytes, object]] = []
+        link_source_values: list[tuple[bytes, str]] = []
+        link_version_values: list[tuple[bytes, int]] = []
+        for row, polygon in materialized:
+            if polygon is None:
+                self.orphan_rows += 1
+                self._transaction_orphan_rows += 1
+                continue
+            source_pbf = str(row["source_pbf"])
+            identity = image_identity(row)
+            image_key = _digest(identity)
+            public_id = f"img_{image_key.hex()}"
+            payload = _image_payload(row, public_id)
+            image_values.append(
+                (
+                    image_key,
+                    sqlite3.Binary(pickle.dumps(payload, protocol=5)),
+                    _quality_rank(row),
+                    _stable_json(payload),
+                )
+            )
+            image_source_values.append((image_key, source_pbf))
+
+            polygon_key = (str(polygon["osm_type"]), int(str(polygon["osm_id"])))
+            link_identity = (
+                polygon_key,
+                identity,
+                row["source_tag_key"],
+                row["source_tag_value"],
+                row["canonical_reference"],
+                row["asset_index"],
+                row["relation_kind"],
+            )
+            link_key = _digest(link_identity)
+            link_payload = {
+                "osm_type": polygon["osm_type"],
+                "osm_id": polygon["osm_id"],
+                "osm_version": polygon.get("osm_version"),
+                "image_id": public_id,
+                "provider": row["provider"],
+                "source_tag_key": row["source_tag_key"],
+                "source_tag_value": row["source_tag_value"],
+                "canonical_reference": row["canonical_reference"],
+                "asset_index": row["asset_index"],
+                "relation_kind": row["relation_kind"],
+            }
+            link_values.append((link_key, sqlite3.Binary(pickle.dumps(link_payload, protocol=5))))
+            link_source_values.append((link_key, source_pbf))
+            version = row.get("osm_version")
+            if version is not None:
+                link_version_values.append((link_key, int(str(version))))
+
+        self.connection.executemany(
             """
             INSERT INTO images(image_key, payload, rank, sort_key)
             VALUES (?, ?, ?, ?)
@@ -263,48 +467,18 @@ class _Accumulator:
             WHERE excluded.rank > images.rank
                OR (excluded.rank = images.rank AND excluded.sort_key < images.sort_key)
             """,
-            (image_key, sqlite3.Binary(pickle.dumps(payload, protocol=5)), rank, sort_key),
+            image_values,
         )
-        self.connection.execute(
-            "INSERT OR IGNORE INTO image_sources VALUES (?, ?)", (image_key, source_pbf)
+        self.connection.executemany(
+            "INSERT OR IGNORE INTO image_sources VALUES (?, ?)", image_source_values
         )
-
-        polygon_key = (str(polygon["osm_type"]), int(str(polygon["osm_id"])))
-        link_identity = (
-            polygon_key,
-            identity,
-            row["source_tag_key"],
-            row["source_tag_value"],
-            row["canonical_reference"],
-            row["asset_index"],
-            row["relation_kind"],
+        self.connection.executemany("INSERT OR IGNORE INTO links VALUES (?, ?)", link_values)
+        self.connection.executemany(
+            "INSERT OR IGNORE INTO link_sources VALUES (?, ?)", link_source_values
         )
-        link_key = _digest(link_identity)
-        link_payload = {
-            "osm_type": polygon["osm_type"],
-            "osm_id": polygon["osm_id"],
-            "osm_version": polygon.get("osm_version"),
-            "image_id": public_id,
-            "provider": row["provider"],
-            "source_tag_key": row["source_tag_key"],
-            "source_tag_value": row["source_tag_value"],
-            "canonical_reference": row["canonical_reference"],
-            "asset_index": row["asset_index"],
-            "relation_kind": row["relation_kind"],
-        }
-        self.connection.execute(
-            "INSERT OR IGNORE INTO links VALUES (?, ?)",
-            (link_key, sqlite3.Binary(pickle.dumps(link_payload, protocol=5))),
+        self.connection.executemany(
+            "INSERT OR IGNORE INTO link_versions VALUES (?, ?)", link_version_values
         )
-        self.connection.execute(
-            "INSERT OR IGNORE INTO link_sources VALUES (?, ?)", (link_key, source_pbf)
-        )
-        version = row.get("osm_version")
-        if version is not None:
-            self.connection.execute(
-                "INSERT OR IGNORE INTO link_versions VALUES (?, ?)",
-                (link_key, int(str(version))),
-            )
 
     def _grouped_values(
         self,
@@ -403,7 +577,11 @@ class _Accumulator:
         return image_rows, link_rows
 
     def close(self) -> None:
-        self.connection.commit()
+        if self.connection.in_transaction:
+            if self.input_hashes is None:
+                self.connection.commit()
+            else:
+                self.connection.rollback()
         self.connection.close()
 
 
@@ -470,38 +648,67 @@ def build_public_asset_tables(
     data_root: Path,
     manifests: Sequence[tuple[AssetManifest, Path]],
     canonical_polygons: Mapping[tuple[str, int], Mapping[str, object]],
+    *,
+    polygon_fingerprint: str | None = None,
 ) -> PublicAssetsResult:
     """Materialize unique images and deduplicated relationship links."""
     root = data_root.resolve()
     image_path = root / "public/images.parquet"
     link_path = root / "public/polygon_images.parquet"
     if not manifests:
+        _remove_checkpoint_files(root / PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE)
         _write_parquet([], image_path, public_image_schema())
         _write_parquet([], link_path, public_link_schema())
         return PublicAssetsResult(image_path, link_path, 0, 0, 0, 0, 0)
     temporary_root = root / "tmp"
     temporary_root.mkdir(parents=True, exist_ok=True)
-    for stale in temporary_root.glob(".public-assets.*.sqlite"):
-        stale.unlink(missing_ok=True)
-    with tempfile.NamedTemporaryFile(
-        prefix=".public-assets.", suffix=".sqlite", dir=temporary_root, delete=False
-    ) as temporary:
-        database_path = Path(temporary.name)
-    accumulator = _Accumulator(database_path)
+    database_path = root / PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE
+    _remove_legacy_checkpoints(temporary_root, database_path)
+    input_hashes = [manifest.output.sha256 for manifest, _ in manifests]
+    accumulator = _Accumulator(
+        database_path,
+        input_hashes=input_hashes,
+        polygon_fingerprint=polygon_fingerprint,
+    )
+    succeeded = False
     try:
-        with accumulator.connection:
-            for row in _iter_rows(manifests):
-                polygon_key = (str(row["osm_type"]), int(row["osm_id"]))
-                accumulator.add(row, canonical_polygons.get(polygon_key))
+        for source_index, (manifest, output) in enumerate(manifests):
+            source_sha256 = manifest.output.sha256
+            if accumulator.source_completed(source_index, source_sha256):
+                continue
+            accumulator.begin_source()
+            source_rows = 0
+            source_orphans_before = accumulator.orphan_rows
+            try:
+                for batch in _iter_batches(output):
+                    source_rows += len(batch)
+                    accumulator.add_many(
+                        (
+                            row,
+                            canonical_polygons.get((str(row["osm_type"]), int(row["osm_id"]))),
+                        )
+                        for row in batch
+                    )
+                accumulator.complete_source(
+                    source_index,
+                    source_sha256,
+                    source_rows,
+                    accumulator.orphan_rows - source_orphans_before,
+                )
+            except BaseException:
+                accumulator.rollback_source()
+                raise
         image_rows, link_rows = accumulator.counts()
         matched_rows = accumulator.input_rows - accumulator.orphan_rows
         duplicate_images = matched_rows - image_rows
         duplicate_links = matched_rows - link_rows
         _write_parquet(accumulator.images(), image_path, public_image_schema())
         _write_parquet(accumulator.links(), link_path, public_link_schema())
+        succeeded = True
     finally:
         accumulator.close()
-        database_path.unlink(missing_ok=True)
+        if succeeded:
+            _remove_checkpoint_files(database_path)
     return PublicAssetsResult(
         image_path=image_path,
         link_path=link_path,
@@ -514,6 +721,7 @@ def build_public_asset_tables(
 
 
 __all__ = [
+    "PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE",
     "PUBLIC_IMAGE_SCHEMA_VERSION",
     "PUBLIC_LINK_SCHEMA_VERSION",
     "PublicAssetsResult",

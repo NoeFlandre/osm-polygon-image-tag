@@ -133,6 +133,18 @@ def test_inventory_keeps_cache_and_retry_state_private(tmp_path: Path) -> None:
     assert all(not item.remote_path.startswith("cache/") for item in inventory)
 
 
+def test_inventory_keeps_public_dedup_checkpoints_private(tmp_path: Path) -> None:
+    _dataset(tmp_path)
+    temporary_root = tmp_path / "tmp"
+    temporary_root.mkdir(exist_ok=True)
+    (temporary_root / ".public-polygons.sqlite").write_bytes(b"checkpoint")
+    (temporary_root / ".public-assets.sqlite").write_bytes(b"checkpoint")
+
+    inventory = publication_inventory(tmp_path)
+
+    assert all(not item.remote_path.startswith("tmp/") for item in inventory)
+
+
 def test_inventory_rejects_invalid_hero_png(tmp_path: Path) -> None:
     _dataset(tmp_path)
     (tmp_path / "assets/hero.png").write_bytes(b"not a PNG")
