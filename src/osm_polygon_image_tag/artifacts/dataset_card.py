@@ -97,8 +97,7 @@ def dataset_card(
         f"({_percentage(indirect_image_rows, usable_relationship_rows)})"
     )
     usable_link_summary = (
-        f"Among {_count(usable_relationship_rows)} polygon-to-image links whose "
-        "image record has a usable direct image URL:"
+        f"These percentages use {_count(usable_relationship_rows)} usable links as the denominator:"
     )
     page_url_summary = (
         "- Unique images with a provider page URL (a page, not necessarily an image): "
@@ -107,14 +106,17 @@ def dataset_card(
     geography = statistics.get("geography") or {}
     polygon_rows = statistics["rows"]
     source_pbf_count = int(statistics["shards"])
-    source_pbf_label = "source PBF file" if source_pbf_count == 1 else "source PBF files"
+    source_pbf_phrase = (
+        f"the {_count(source_pbf_count)} processed source PBF file"
+        if source_pbf_count == 1
+        else f"all {_count(source_pbf_count)} processed source PBF files"
+    )
     h3_resolution = int(geography.get("h3_resolution") or 3)
     cell_count = int(geography.get("cell_count") or 0)
     min_cell_count = int(geography.get("min_cell_count") or 0)
     max_cell_count = int(geography.get("max_cell_count") or 0)
     map_summary = (
-        f"The map contains {_count(polygon_rows)} published polygon rows from "
-        f"{_count(source_pbf_count)} {source_pbf_label}."
+        f"The map contains {_count(polygon_rows)} published polygon rows from {source_pbf_phrase}."
     )
     example_values = examples if examples is not None else {}
     text = f"""---\n{frontmatter}---
@@ -147,13 +149,15 @@ This snapshot contains:
 - Published OSM features: {_count(statistics["rows"])}
 - Duplicate polygon rows removed: {_count(statistics.get("duplicate_observations_removed", 0))}
 - Unique image records: {_count(assets["rows"])}
-- Polygon-to-image links: {_count(assets.get("relationship_rows", 0))}
+- Image-reference links checked: {_count(assets.get("relationship_rows", 0))}
 - Unique images with a usable direct image URL: {_count(assets["direct_urls"])}
+- Links with a usable direct image URL: {_count(usable_relationship_rows)}
 - Duplicate image records removed: {_count(assets.get("duplicate_images_removed", 0))}
 - Duplicate polygon-to-image links removed: {_count(assets.get("duplicate_links_removed", 0))}
 These percentages count polygon-to-image links, not unique images. A single
 image can be linked to more than one polygon.
 {usable_link_summary}
+
 {direct_image_summary}
 {indirect_image_summary}
 - Unique images with a non-expiring image URL: {_count(assets["stable_direct_urls"])}
