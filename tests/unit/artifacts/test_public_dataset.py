@@ -438,6 +438,48 @@ def test_asset_checkpoint_uses_bounded_page_cache(tmp_path: Path) -> None:
         accumulator.close()
 
 
+def test_asset_checkpoint_uses_large_pages_for_new_database(tmp_path: Path) -> None:
+    accumulator = public_assets_module._Accumulator(
+        tmp_path / "assets.sqlite", input_hashes=["synthetic"]
+    )
+    try:
+        page_size = accumulator.connection.execute("PRAGMA page_size").fetchone()[0]
+        assert page_size == 65_536
+    finally:
+        accumulator.close()
+
+
+def test_asset_checkpoint_preserves_page_size_when_resuming(tmp_path: Path) -> None:
+    path = tmp_path / "assets.sqlite"
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA page_size=4096")
+    connection.executescript(
+        """
+        CREATE TABLE checkpoint_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE checkpoint_sources (
+            source_index INTEGER PRIMARY KEY,
+            source_sha256 TEXT NOT NULL,
+            row_count INTEGER NOT NULL,
+            orphan_count INTEGER NOT NULL
+        );
+        INSERT INTO checkpoint_metadata VALUES ('schema_version', '1');
+        INSERT INTO checkpoint_metadata VALUES ('input_hashes', '[\"synthetic\"]');
+        INSERT INTO checkpoint_metadata VALUES ('polygon_fingerprint', '');
+        CREATE TABLE existing_checkpoint (value INTEGER);
+        INSERT INTO existing_checkpoint VALUES (1);
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    accumulator = public_assets_module._Accumulator(path, input_hashes=["synthetic"])
+    try:
+        page_size = accumulator.connection.execute("PRAGMA page_size").fetchone()[0]
+        assert page_size == 4096
+    finally:
+        accumulator.close()
+
+
 def test_asset_stable_json_serializes_nested_binary_and_timestamps() -> None:
     assert (
         public_assets_module._stable_json(

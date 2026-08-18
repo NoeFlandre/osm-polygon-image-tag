@@ -26,6 +26,9 @@ PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE = "tmp/.public-assets.sqlite"
 PUBLIC_ASSET_DEDUP_CHECKPOINT_SCHEMA_VERSION = 1
 # A larger bounded page cache reduces random B-tree I/O without unbounded RAM use.
 PUBLIC_ASSET_SQLITE_CACHE_KIB = 131_072
+# Larger pages reduce B-tree depth and random writes on new checkpoints. SQLite
+# keeps the existing page size when resuming a populated checkpoint.
+PUBLIC_ASSET_SQLITE_PAGE_SIZE = 65_536
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,6 +250,7 @@ class _Accumulator:
         ):
             remove_checkpoint_files(path)
         self.connection = sqlite3.connect(path)
+        self.connection.execute(f"PRAGMA page_size={PUBLIC_ASSET_SQLITE_PAGE_SIZE}")
         self.connection.execute("PRAGMA journal_mode=DELETE")
         self.connection.execute("PRAGMA synchronous=NORMAL")
         self.connection.execute("PRAGMA temp_store=FILE")
