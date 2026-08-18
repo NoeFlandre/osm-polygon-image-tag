@@ -24,6 +24,8 @@ PUBLIC_IMAGE_SCHEMA_VERSION = 1
 PUBLIC_LINK_SCHEMA_VERSION = 1
 PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE = "tmp/.public-assets.sqlite"
 PUBLIC_ASSET_DEDUP_CHECKPOINT_SCHEMA_VERSION = 1
+# A larger bounded page cache reduces random B-tree I/O without unbounded RAM use.
+PUBLIC_ASSET_SQLITE_CACHE_KIB = 131_072
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,7 +234,7 @@ class _Accumulator:
         self.connection.execute("PRAGMA journal_mode=DELETE")
         self.connection.execute("PRAGMA synchronous=NORMAL")
         self.connection.execute("PRAGMA temp_store=FILE")
-        self.connection.execute("PRAGMA cache_size=-32768")
+        self.connection.execute(f"PRAGMA cache_size=-{PUBLIC_ASSET_SQLITE_CACHE_KIB}")
         self.connection.execute("PRAGMA locking_mode=EXCLUSIVE")
         self.connection.executescript(
             """

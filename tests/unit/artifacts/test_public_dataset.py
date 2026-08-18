@@ -356,6 +356,17 @@ def test_public_dataset_builds_asset_lookup_from_public_polygons(tmp_path: Path)
     assert result.link_rows == 1
 
 
+def test_asset_checkpoint_uses_bounded_page_cache(tmp_path: Path) -> None:
+    accumulator = public_assets_module._Accumulator(
+        tmp_path / "assets.sqlite", input_hashes=["synthetic"]
+    )
+    try:
+        cache_size = accumulator.connection.execute("PRAGMA cache_size").fetchone()[0]
+        assert cache_size == -public_assets_module.PUBLIC_ASSET_SQLITE_CACHE_KIB
+    finally:
+        accumulator.close()
+
+
 def test_public_dataset_is_reused_when_inputs_are_unchanged(tmp_path: Path) -> None:
     _write_polygon_manifest(tmp_path, "region.osm.pbf", [_polygon_row("region.osm.pbf")])
     first = build_public_dataset(tmp_path)

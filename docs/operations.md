@@ -102,6 +102,8 @@ The image and polygon-link deduplication pass follows the same rule with
 the next one starts, so stopping the command preserves completed asset work.
 The checkpoint is removed only after both public asset Parquet files and the
 public manifest are written successfully.
+The asset checkpoint uses a bounded 128 MiB SQLite page cache to reduce random
+disk reads while keeping memory use predictable.
 
 After metadata generation, refresh the optional Trackio metrics snapshot with:
 
