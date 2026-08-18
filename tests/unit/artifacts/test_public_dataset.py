@@ -340,9 +340,8 @@ def test_polygon_accumulator_keeps_latest_row_and_sources_on_disk(tmp_path: Path
         accumulator.close()
 
 
-def test_public_dataset_builds_asset_lookup_from_public_polygons(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_public_dataset_builds_asset_lookup_from_public_polygons(tmp_path: Path) -> None:
+    assert not hasattr(_PolygonAccumulator, "canonical_index")
     _write_polygon_manifest(tmp_path, "region.osm.pbf", [_polygon_row("region.osm.pbf")])
     _write_asset_manifest(
         tmp_path,
@@ -351,10 +350,6 @@ def test_public_dataset_builds_asset_lookup_from_public_polygons(
         [_asset_row("region.osm.pbf")],
     )
 
-    def no_sqlite_scan(_accumulator: object) -> dict[tuple[str, int], dict[str, object]]:
-        raise AssertionError("asset lookup must not rescan the SQLite payload table")
-
-    monkeypatch.setattr(_PolygonAccumulator, "canonical_index", no_sqlite_scan)
     result = build_public_dataset(tmp_path)
 
     assert result.image_rows == 1

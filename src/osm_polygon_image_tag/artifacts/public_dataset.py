@@ -410,21 +410,6 @@ class _PolygonAccumulator:
             group = next(source_groups, None)
             yield row
 
-    def canonical_index(self) -> dict[tuple[str, int], dict[str, object]]:
-        index: dict[tuple[str, int], dict[str, object]] = {}
-        for osm_type, osm_id, payload in self.connection.execute(
-            "SELECT osm_type, osm_id, payload FROM polygons"
-        ):
-            row = pickle.loads(payload)  # noqa: S301 - database is created above
-            if not isinstance(row, dict):
-                raise TypeError("invalid polygon accumulator payload")
-            index[(str(osm_type), int(osm_id))] = {
-                "osm_type": str(osm_type),
-                "osm_id": int(osm_id),
-                "osm_version": row.get("osm_version"),
-            }
-        return index
-
     def close(self) -> None:
         if self.connection.in_transaction:
             if self.input_hashes is None:
