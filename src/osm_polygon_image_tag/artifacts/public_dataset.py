@@ -255,11 +255,30 @@ class _PolygonAccumulator:
         ).fetchone()
         return str(row[0]) if row is not None else None
 
-    def record_public_output(self, sha256: str) -> None:
+    def public_output_rows(self) -> int | None:
+        """Return the recorded public polygon row count, when available."""
+        row = self.connection.execute(
+            "SELECT value FROM checkpoint_metadata WHERE key = 'public_output_rows'"
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            value = int(row[0])
+        except (TypeError, ValueError):
+            return None
+        return value if value >= 0 else None
+
+    def record_public_output(self, sha256: str, row_count: int) -> None:
         """Record a validated public polygon digest for safe output reuse."""
+        if row_count < 0:
+            raise ValueError("public polygon row count must be non-negative")
         self.connection.execute(
             "INSERT OR REPLACE INTO checkpoint_metadata(key, value) VALUES (?, ?)",
             ("public_output_sha256", sha256),
+        )
+        self.connection.execute(
+            "INSERT OR REPLACE INTO checkpoint_metadata(key, value) VALUES (?, ?)",
+            ("public_output_rows", str(row_count)),
         )
         self.connection.commit()
 
@@ -551,6 +570,22 @@ def _public_polygon_manifest(path: Path, rows: int) -> Manifest:
     )
 
 
+def _manifest_polygon_row_count(root: Path, output: Path, digest: str) -> int | None:
+    """Reuse a matching public-manifest row count without scanning SQLite."""
+    try:
+        payload = json.loads((root / PUBLIC_MANIFEST_RELATIVE).read_text(encoding="utf-8"))
+        polygon_output = payload["polygon_output"]
+        if (
+            polygon_output["sha256"] != digest
+            or int(polygon_output["size_bytes"]) != output.stat().st_size
+        ):
+            return None
+        row_count = int(polygon_output["row_count"])
+        return row_count if row_count >= 0 else None
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
 def _remove_legacy_public_asset(root: Path) -> None:
     """Remove the exact V1 generated image artifact after V2 is ready."""
     legacy = root / LEGACY_PUBLIC_ASSET_RELATIVE
@@ -697,14 +732,22 @@ def build_public_dataset(
             and polygon_path.is_file()
         ):
             try:
-                polygon_rows_count = accumulator.unique_count()
+                polygon_rows_count = accumulator.public_output_rows()
+                if polygon_rows_count is None:
+                    polygon_rows_count = _manifest_polygon_row_count(
+                        root, polygon_path, recorded_digest
+                    )
+                if polygon_rows_count is None:
+                    polygon_rows_count = accumulator.unique_count()
                 _validate_public_polygon(polygon_path, expected_rows=polygon_rows_count)
                 reuse_polygon = file_sha256(polygon_path) == recorded_digest
             except (OSError, ValueError, pa.ArrowException):
                 reuse_polygon = False
         if not reuse_polygon:
             polygon_rows_count = _write_polygon_rows(accumulator.rows(), polygon_path)
-            accumulator.record_public_output(file_sha256(polygon_path))
+            accumulator.record_public_output(file_sha256(polygon_path), polygon_rows_count)
+        if polygon_rows_count is None:
+            raise RuntimeError("public polygon row count is unavailable")
         canonical_polygons = _canonical_polygon_index(polygon_path)
     finally:
         accumulator.close()

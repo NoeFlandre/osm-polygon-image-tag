@@ -340,6 +340,73 @@ def test_polygon_accumulator_keeps_latest_row_and_sources_on_disk(tmp_path: Path
         accumulator.close()
 
 
+def test_polygon_checkpoint_records_output_row_count(tmp_path: Path) -> None:
+    accumulator = _PolygonAccumulator(tmp_path / "polygons.sqlite")
+    try:
+        accumulator.record_public_output("a" * 64, 42)
+        assert accumulator.public_output_sha256() == "a" * 64
+        assert accumulator.public_output_rows() == 42
+    finally:
+        accumulator.close()
+
+
+def test_manifest_polygon_row_count_reuses_matching_output(tmp_path: Path) -> None:
+    output = tmp_path / "public" / "polygons.parquet"
+    output.parent.mkdir()
+    output.write_bytes(b"public polygon output")
+    digest = file_sha256(output)
+    (tmp_path / "public" / "public-manifest.json").write_text(
+        json.dumps(
+            {
+                "polygon_output": {
+                    "sha256": digest,
+                    "size_bytes": output.stat().st_size,
+                    "row_count": 42,
+                }
+            }
+        )
+    )
+
+    assert public_dataset_module._manifest_polygon_row_count(tmp_path, output, digest) == 42
+
+
+def test_public_dataset_reuses_polygon_row_count_without_sqlite_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_polygon_manifest(tmp_path, "region.osm.pbf", [_polygon_row("region.osm.pbf")])
+    _write_asset_manifest(
+        tmp_path,
+        "region.osm.pbf",
+        "data/region.parquet",
+        [_asset_row("region.osm.pbf")],
+    )
+    first = build_public_dataset(tmp_path)
+    first.image_path.unlink()
+    first.link_path.unlink()
+
+    manifests = public_dataset_module.verified_manifests(tmp_path)
+    checkpoint = tmp_path / "tmp" / ".public-polygons.sqlite"
+    checkpoint.parent.mkdir()
+    accumulator = _PolygonAccumulator(
+        checkpoint, input_hashes=[manifest.output.sha256 for manifest, _ in manifests]
+    )
+    try:
+        accumulator.complete_source(0, manifests[0][0].output.sha256, 1)
+        accumulator.record_public_output(first.polygon_manifest.output.sha256, 1)
+    finally:
+        accumulator.close()
+
+    monkeypatch.setattr(
+        _PolygonAccumulator,
+        "unique_count",
+        lambda _self: (_ for _ in ()).throw(AssertionError("SQLite count scan was used")),
+    )
+    result = build_public_dataset(tmp_path)
+
+    assert result.polygon_rows == 1
+    assert result.image_rows == 1
+
+
 def test_public_dataset_builds_asset_lookup_from_public_polygons(tmp_path: Path) -> None:
     assert not hasattr(_PolygonAccumulator, "canonical_index")
     _write_polygon_manifest(tmp_path, "region.osm.pbf", [_polygon_row("region.osm.pbf")])
