@@ -103,9 +103,9 @@ the next one starts, so stopping the command preserves completed asset work.
 The checkpoint is removed only after both public asset Parquet files and the
 public manifest are written successfully.
 The asset checkpoint uses a bounded 128 MiB SQLite page cache to reduce random
-disk reads while keeping memory use predictable. Each input batch is compacted
-and key-ordered before insertion (32,768 rows by default); this improves
-locality without retaining the full dataset in memory.
+disk reads while keeping memory use predictable. Each 8,192-row input batch is
+compacted and key-ordered before insertion; this improves locality without
+retaining the full dataset in memory.
 
 After metadata generation, refresh the optional Trackio metrics snapshot with:
 

@@ -26,7 +26,6 @@ PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE = "tmp/.public-assets.sqlite"
 PUBLIC_ASSET_DEDUP_CHECKPOINT_SCHEMA_VERSION = 1
 # A larger bounded page cache reduces random B-tree I/O without unbounded RAM use.
 PUBLIC_ASSET_SQLITE_CACHE_KIB = 131_072
-PUBLIC_ASSET_BATCH_SIZE = 32_768
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,9 +212,7 @@ def _deduplicate_values[ValueTuple: tuple[Any, ...]](
     return unique
 
 
-def _iter_batches(
-    output: Path, *, batch_size: int = PUBLIC_ASSET_BATCH_SIZE
-) -> Iterator[list[dict[str, Any]]]:
+def _iter_batches(output: Path, *, batch_size: int = 8192) -> Iterator[list[dict[str, Any]]]:
     for batch in pq.ParquetFile(output).iter_batches(batch_size=batch_size):
         yield batch.to_pylist()
 

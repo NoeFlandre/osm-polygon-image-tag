@@ -438,24 +438,6 @@ def test_asset_checkpoint_uses_bounded_page_cache(tmp_path: Path) -> None:
         accumulator.close()
 
 
-def test_asset_batches_use_bounded_large_batch(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    calls: list[int] = []
-
-    class FakeParquetFile:
-        def __init__(self, _path: Path) -> None:
-            pass
-
-        def iter_batches(self, *, batch_size: int) -> list[object]:
-            calls.append(batch_size)
-            return []
-
-    monkeypatch.setattr(public_assets_module.pq, "ParquetFile", FakeParquetFile)
-    assert list(public_assets_module._iter_batches(tmp_path / "assets.parquet")) == []
-    assert calls == [public_assets_module.PUBLIC_ASSET_BATCH_SIZE]
-
-
 def test_asset_stable_json_serializes_nested_binary_and_timestamps() -> None:
     assert (
         public_assets_module._stable_json(
