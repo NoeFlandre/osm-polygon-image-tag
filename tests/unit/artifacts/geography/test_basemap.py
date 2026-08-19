@@ -9,6 +9,8 @@ import pytest
 
 from osm_polygon_image_tag.artifacts.geography.basemap import (
     BUNDLED_BASEMAP_FILENAME,
+    _read_features,
+    draw_landmasses,
     load_land_basemap,
 )
 
@@ -52,6 +54,13 @@ def test_load_land_basemap_returns_none_for_corrupt_geojson(
     assert any("land" in r.getMessage().lower() for r in caplog.records)
 
 
+def test_read_features_returns_only_feature_collection_members(tmp_path: Path) -> None:
+    source = tmp_path / "land.geojson"
+    source.write_text('{"features": [{"type": "Feature"}]}')
+
+    assert _read_features(source, missing_message=None, label="cached") == [{"type": "Feature"}]
+
+
 def test_bundled_basemap_is_package_data() -> None:
     """The Natural Earth GeoJSON must be installed as a package data file."""
     from importlib.resources import files
@@ -73,3 +82,33 @@ def test_basemap_loader_does_not_fetch_over_network(
     monkeypatch.setattr(urllib.request, "urlopen", fail)
     # Loading from a fresh directory should not perform any network call.
     assert load_land_basemap(tmp_path) is None
+
+
+def test_draw_landmasses_handles_polygon_multipolygon_and_malformed_features() -> None:
+    class Axes:
+        def __init__(self) -> None:
+            self.patches: list[object] = []
+
+        def add_patch(self, patch: object) -> None:
+            self.patches.append(patch)
+
+    ring = [[0, 0], [1, 0], [1, 1], [0, 0]]
+    axes = Axes()
+    draw_landmasses(
+        axes,
+        [
+            None,
+            {"geometry": None},
+            {"geometry": {"type": "Polygon", "coordinates": []}},
+            {"geometry": {"type": "Polygon", "coordinates": [[]]}},
+            {"geometry": {"type": "Polygon", "coordinates": [ring]}},
+            {
+                "geometry": {
+                    "type": "MultiPolygon",
+                    "coordinates": [[], [ring]],
+                }
+            },
+        ],
+    )
+
+    assert len(axes.patches) == 2

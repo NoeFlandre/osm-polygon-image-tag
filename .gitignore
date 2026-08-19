@@ -3,6 +3,7 @@
 .pytest_cache/
 .ruff_cache/
 .venv/
+mutants/
 __pycache__/
 *.py[cod]
 build/

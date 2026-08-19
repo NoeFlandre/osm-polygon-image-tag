@@ -62,7 +62,9 @@ include = [
 
 [dependency-groups]
 dev = [
+    "crap4py>=0.1,<0.2",
     "mkdocs-material>=9.6,<10",
+    "mutmut>=3.7,<4",
     "pre-commit>=4.3,<5",
     "pytest>=8.4,<9",
     "pytest-asyncio>=1.2,<2",
@@ -102,3 +104,29 @@ source = ["osm_polygon_image_tag"]
 [tool.coverage.report]
 fail_under = 90
 show_missing = true
+
+[tool.mutmut]
+source_paths = ["src"]
+only_mutate = [
+    "src/osm_polygon_image_tag/artifacts/asset_catalog.py",
+    "src/osm_polygon_image_tag/resolvers/flickr.py",
+]
+pytest_add_cli_args = ["--no-cov"]
+pytest_add_cli_args_test_selection = [
+    "tests/unit/artifacts/test_catalog.py",
+    "tests/unit/resolvers/test_flickr.py",
+]
+mutate_only_covered_lines = true
+do_not_mutate_patterns = [
+    "CREATE TABLE IF NOT EXISTS",
+    "CREATE INDEX IF NOT EXISTS",
+    "SELECT path, sha256 FROM asset_shards",
+    "DELETE FROM asset_",
+    "INSERT INTO asset_observations VALUES",
+    "INSERT OR REPLACE INTO asset_shards VALUES",
+    "cast\\(Any",
+    "cast\\(list\\[Mapping",
+    "typed_candidates = cast",
+    "lambda _event: None",
+    "image_url=cast",
+]

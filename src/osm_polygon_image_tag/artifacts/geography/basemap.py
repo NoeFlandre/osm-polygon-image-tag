@@ -17,7 +17,7 @@ import logging
 from collections.abc import Sequence
 from importlib.resources import files
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 LOGGER = logging.getLogger(__name__)
 
@@ -37,6 +37,28 @@ def _bundled_asset_path() -> Path:
     )
 
 
+def _read_features(path: Path, *, missing_message: str | None, label: str) -> list[Any] | None:
+    if not path.exists() or path.stat().st_size == 0:
+        if missing_message is not None:
+            LOGGER.warning("%s: %s", missing_message, path)
+        return None
+    return _feature_list(_read_json(path, label))
+
+
+def _read_json(path: Path, label: str) -> object | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        LOGGER.warning("Could not read %s GeoJSON: %s", label, error)
+        return None
+
+
+def _feature_list(data: object | None) -> list[Any] | None:
+    if not isinstance(data, dict):
+        return None
+    return cast(list[Any], data.get("features") or [])
+
+
 def load_land_basemap(cache_dir: Path | None = None) -> list[Any] | None:
     """Load the Natural Earth 110m land GeoJSON ``features`` list.
 
@@ -49,29 +71,45 @@ def load_land_basemap(cache_dir: Path | None = None) -> list[Any] | None:
     world map if the asset is missing.
     """
     if cache_dir is not None:
-        runtime = cache_dir / BUNDLED_BASEMAP_FILENAME
-        if not runtime.exists() or runtime.stat().st_size == 0:
-            return None
-        try:
-            data = json.loads(runtime.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as error:
-            LOGGER.warning("Could not read cached land GeoJSON: %s", error)
-            return None
-        if not isinstance(data, dict):
-            return None
-        return data.get("features") or []
-    asset = _bundled_asset_path()
-    if not asset.exists() or asset.stat().st_size == 0:
-        LOGGER.warning("Bundled Natural Earth land GeoJSON is missing or empty: %s", asset)
+        return _read_features(
+            cache_dir / BUNDLED_BASEMAP_FILENAME,
+            missing_message=None,
+            label="cached land",
+        )
+    return _read_features(
+        _bundled_asset_path(),
+        missing_message="Bundled Natural Earth land GeoJSON is missing or empty",
+        label="bundled land",
+    )
+
+
+def _feature_geometry(feature: object) -> tuple[str, Any] | None:
+    if not isinstance(feature, dict):
         return None
-    try:
-        data = json.loads(asset.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
-        LOGGER.warning("Could not read bundled land GeoJSON: %s", error)
+    geometry = feature.get("geometry")
+    if not isinstance(geometry, dict):
         return None
-    if not isinstance(data, dict):
+    coordinates = geometry.get("coordinates")
+    if not coordinates:
         return None
-    return data.get("features") or []
+    return str(geometry.get("type")), coordinates
+
+
+def _draw_feature(ax: Any, feature: object, mpatches: Any) -> None:
+    geometry = _feature_geometry(feature)
+    if geometry is None:
+        return
+    gtype, coordinates = geometry
+    _draw_geometry(ax, gtype, coordinates, mpatches)
+
+
+def _draw_geometry(ax: Any, gtype: str, coordinates: Any, mpatches: Any) -> None:
+    if gtype == "Polygon":
+        _draw_land_ring(ax, coordinates[0], mpatches)
+    elif gtype == "MultiPolygon":
+        for polygon in coordinates:
+            if polygon:
+                _draw_land_ring(ax, polygon[0], mpatches)
 
 
 def draw_landmasses(ax: Any, features: Sequence[Any]) -> None:
@@ -79,19 +117,7 @@ def draw_landmasses(ax: Any, features: Sequence[Any]) -> None:
     import matplotlib.patches as mpatches
 
     for feature in features:
-        if not isinstance(feature, dict):
-            continue
-        geom = feature.get("geometry")
-        if not isinstance(geom, dict):
-            continue
-        coords = geom.get("coordinates")
-        gtype = geom.get("type")
-        if gtype == "Polygon" and coords:
-            _draw_land_ring(ax, coords[0], mpatches)
-        elif gtype == "MultiPolygon" and coords:
-            for polygon in coords:
-                if polygon:
-                    _draw_land_ring(ax, polygon[0], mpatches)
+        _draw_feature(ax, feature, mpatches)
 
 
 def _draw_land_ring(ax: Any, ring: Sequence[Sequence[float]], mpatches: Any) -> None:
