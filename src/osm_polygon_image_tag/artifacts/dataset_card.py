@@ -265,7 +265,7 @@ The [Trackio metrics Space](https://huggingface.co/spaces/NoeFlandre/osm-polygon
 shows the current row counts, image-URL coverage, duplicate removal, and map
 summary. It stores one data-derived snapshot for each published update.
 
-This snapshot is versioned as [GitHub release v0.1.0](https://github.com/NoeFlandre/osm-polygon-image-tag/releases/tag/v0.1.0).
+This snapshot is versioned as [GitHub release v0.1.1](https://github.com/NoeFlandre/osm-polygon-image-tag/releases/tag/v0.1.1).
 
 ## Source, license, and citation
 
