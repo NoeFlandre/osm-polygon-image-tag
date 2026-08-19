@@ -5,11 +5,17 @@ import pytest
 
 from osm_polygon_image_tag.assets.references import SourceReference
 from osm_polygon_image_tag.resolvers.policy import (
+    ProviderAccessDenied,
+    ProviderNotFound,
     ProviderRateLimited,
     SafeHttpError,
     UnsafeUrlError,
 )
-from osm_polygon_image_tag.resolvers.registry import ProviderLimit, ResolverRegistry
+from osm_polygon_image_tag.resolvers.registry import (
+    ProviderLimit,
+    ResolverRegistry,
+    _provider_error_result,
+)
 from osm_polygon_image_tag.resolvers.types import (
     ResolutionResult,
     ResolvedAsset,
@@ -44,6 +50,22 @@ def test_empty_credentials_are_anonymous() -> None:
 
     assert registry.capability("mapillary") == "anonymous"
     assert registry.capability("flickr") == "anonymous"
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "reason"),
+    [
+        (ProviderNotFound("missing"), "not_found", "provider_asset_not_found"),
+        (ProviderAccessDenied("denied"), "requires_auth", "provider_access_denied"),
+    ],
+)
+def test_provider_terminal_errors_have_stable_resolution_results(
+    error: ProviderNotFound | ProviderAccessDenied, status: str, reason: str
+) -> None:
+    result = _provider_error_result(error)
+
+    assert result.status == status
+    assert result.reason == reason
 
 
 @pytest.mark.asyncio

@@ -87,68 +87,121 @@ def _build_sources(
     results: list[BuildResult] = []
     worker_started = False
     try:
-        if enrichment_worker is not None:
-            worker_started = True
-            enrichment_worker.start(
-                AssetJob(manifest, output)
-                for manifest, output in verified_manifests(paths.data_root, progress=emit)
-            )
+        worker_started = _start_enrichment_worker(enrichment_worker, paths, emit)
         for index, source in enumerate(sources, start=1):
             if token.requested:
                 break
-            emit(
-                {
-                    "event": "pbf_started",
-                    "pbf_index": index,
-                    "pbf_count": len(sources),
-                    "source_pbf": source.relative_path.as_posix(),
-                    "source_bytes": source.size_bytes,
-                }
-            )
-            with refresh_lock:
-                result = build(source, paths)
-            results.append(result)
-            if enrichment_worker is not None and result.manifest_path.is_file():
-                enrichment_worker.submit(
-                    AssetJob(read_manifest(result.manifest_path), result.output_path)
+            results.append(
+                _build_source(
+                    source,
+                    index,
+                    sources,
+                    paths,
+                    build=build,
+                    emit=emit,
+                    enrichment_worker=enrichment_worker,
+                    metadata_builder=metadata_builder,
+                    publisher=publisher,
+                    refresh_lock=refresh_lock,
                 )
-            emit(
-                {
-                    "event": "pbf_completed",
-                    "pbf_index": index,
-                    "pbf_count": len(sources),
-                    "source_pbf": result.source_pbf,
-                    "status": result.status,
-                    "accepted_rows": result.accepted_rows,
-                    "rejections": result.rejections,
-                }
-            )
-            if result.status == "built" and enrichment_worker is not None and publisher is not None:
-                enrichment_worker.checkpoint(
-                    lambda: _refresh_artifacts(
-                        paths,
-                        emit,
-                        metadata_builder=metadata_builder,
-                        publisher=publisher,
-                        refresh_lock=refresh_lock,
-                    )
-                )
-            if result.status == "skipped" or enrichment_worker is not None:
-                continue
-            _refresh_artifacts(
-                paths,
-                emit,
-                metadata_builder=metadata_builder,
-                publisher=publisher,
-                refresh_lock=refresh_lock,
             )
     except BaseException:
         token.request()
-        if worker_started and enrichment_worker is not None:
-            with suppress(BaseException):
-                enrichment_worker.finish()
+        _finish_worker_after_error(worker_started, enrichment_worker)
         raise
     return results
+
+
+def _finish_worker_after_error(worker_started: bool, worker: EnrichmentController | None) -> None:
+    if not worker_started or worker is None:
+        return
+    with suppress(BaseException):
+        worker.finish()
+
+
+def _start_enrichment_worker(
+    worker: EnrichmentController | None, paths: PipelinePaths, emit: Progress
+) -> bool:
+    if worker is None:
+        return False
+    worker.start(
+        AssetJob(manifest, output)
+        for manifest, output in verified_manifests(paths.data_root, progress=emit)
+    )
+    return True
+
+
+def _build_source(
+    source: PbfSource,
+    index: int,
+    sources: Sequence[PbfSource],
+    paths: PipelinePaths,
+    *,
+    build: Build,
+    emit: Progress,
+    enrichment_worker: EnrichmentController | None,
+    metadata_builder: MetadataBuilder,
+    publisher: Publisher | None,
+    refresh_lock: threading.Lock,
+) -> BuildResult:
+    emit(
+        {
+            "event": "pbf_started",
+            "pbf_index": index,
+            "pbf_count": len(sources),
+            "source_pbf": source.relative_path.as_posix(),
+            "source_bytes": source.size_bytes,
+        }
+    )
+    with refresh_lock:
+        result = build(source, paths)
+    _submit_asset_job(enrichment_worker, result)
+    emit(
+        {
+            "event": "pbf_completed",
+            "pbf_index": index,
+            "pbf_count": len(sources),
+            "source_pbf": result.source_pbf,
+            "status": result.status,
+            "accepted_rows": result.accepted_rows,
+            "rejections": result.rejections,
+        }
+    )
+
+    def refresh() -> None:
+        _refresh_artifacts(
+            paths,
+            emit,
+            metadata_builder=metadata_builder,
+            publisher=publisher,
+            refresh_lock=refresh_lock,
+        )
+
+    if _should_checkpoint_assets(result, enrichment_worker, publisher):
+        assert enrichment_worker is not None
+        enrichment_worker.checkpoint(refresh)
+    if _should_refresh_without_worker(result, enrichment_worker):
+        refresh()
+    return result
+
+
+def _should_checkpoint_assets(
+    result: BuildResult,
+    enrichment_worker: EnrichmentController | None,
+    publisher: Publisher | None,
+) -> bool:
+    return result.status == "built" and enrichment_worker is not None and publisher is not None
+
+
+def _should_refresh_without_worker(
+    result: BuildResult, enrichment_worker: EnrichmentController | None
+) -> bool:
+    return result.status != "skipped" and enrichment_worker is None
+
+
+def _submit_asset_job(worker: EnrichmentController | None, result: BuildResult) -> None:
+    if worker is not None and result.manifest_path.is_file():
+        worker.submit(AssetJob(read_manifest(result.manifest_path), result.output_path))
 
 
 def _refresh_artifacts(
@@ -189,33 +242,23 @@ def run_all(
     token = stop_token or StopToken()
     sources = discover_pbfs(paths.source_root)
     emit = progress or (lambda _event: None)
-    removed_temps = cleanup_stale_temps(paths.data_root)
-    if removed_temps:
-        emit(
-            {
-                "event": "temporary_cleanup",
-                "removed": len(removed_temps),
-            }
-        )
+    _prepare_run(paths, emit)
     emit(
         {
             "event": "run_started",
             "pbf_count": len(sources),
-            "pbf_bytes": sum(source.size_bytes for source in sources),
+            "pbf_bytes": _source_bytes(sources),
         }
     )
     refresh_lock = threading.Lock()
-    if enrichment_worker is not None and publisher is not None:
-        enrichment_worker.enable_checkpoints(
-            lambda: _refresh_artifacts(
-                paths,
-                emit,
-                metadata_builder=metadata_builder,
-                publisher=publisher,
-                refresh_lock=refresh_lock,
-            ),
-            every=1,
-        )
+    _enable_enrichment_checkpoints(
+        enrichment_worker,
+        publisher,
+        paths,
+        emit,
+        metadata_builder,
+        refresh_lock,
+    )
     results = _build_sources(
         sources,
         paths,
@@ -227,13 +270,8 @@ def run_all(
         publisher=publisher,
         refresh_lock=refresh_lock,
     )
-    enrichment = (
-        enrichment_worker.finish() if enrichment_worker is not None else EnrichmentSummary()
-    )
-    needs_final_artifacts = not results or (
-        enrichment_worker is not None
-        and (any(result.status == "built" for result in results) or enrichment.built > 0)
-    )
+    enrichment = _finish_enrichment(enrichment_worker)
+    needs_final_artifacts = _needs_final_artifacts(results, enrichment_worker, enrichment)
     if needs_final_artifacts:
         _refresh_artifacts(
             paths,
@@ -244,14 +282,69 @@ def run_all(
         )
     summary = RunSummary(
         processed=len(results),
-        built=sum(result.status == "built" for result in results),
-        skipped=sum(result.status == "skipped" for result in results),
-        accepted_rows=sum(result.accepted_rows for result in results),
+        built=_count_status(results, "built"),
+        skipped=_count_status(results, "skipped"),
+        accepted_rows=_accepted_rows(results),
         stopped=token.requested,
         enrichment=enrichment,
     )
     emit({"event": "run_completed", **summary.to_dict()})
     return summary
+
+
+def _source_bytes(sources: Sequence[PbfSource]) -> int:
+    return sum(source.size_bytes for source in sources)
+
+
+def _finish_enrichment(worker: EnrichmentController | None) -> EnrichmentSummary:
+    return worker.finish() if worker is not None else EnrichmentSummary()
+
+
+def _count_status(results: Sequence[BuildResult], status: str) -> int:
+    return sum(result.status == status for result in results)
+
+
+def _accepted_rows(results: Sequence[BuildResult]) -> int:
+    return sum(result.accepted_rows for result in results)
+
+
+def _prepare_run(paths: PipelinePaths, emit: Progress) -> None:
+    removed_temps = cleanup_stale_temps(paths.data_root)
+    if removed_temps:
+        emit({"event": "temporary_cleanup", "removed": len(removed_temps)})
+
+
+def _enable_enrichment_checkpoints(
+    worker: EnrichmentController | None,
+    publisher: Publisher | None,
+    paths: PipelinePaths,
+    emit: Progress,
+    metadata_builder: MetadataBuilder,
+    refresh_lock: threading.Lock,
+) -> None:
+    if worker is None or publisher is None:
+        return
+    worker.enable_checkpoints(
+        lambda: _refresh_artifacts(
+            paths,
+            emit,
+            metadata_builder=metadata_builder,
+            publisher=publisher,
+            refresh_lock=refresh_lock,
+        ),
+        every=1,
+    )
+
+
+def _needs_final_artifacts(
+    results: Sequence[BuildResult],
+    worker: EnrichmentController | None,
+    enrichment: EnrichmentSummary,
+) -> bool:
+    return not results or (
+        worker is not None
+        and (any(result.status == "built" for result in results) or enrichment.built > 0)
+    )
 
 
 def verify_all(paths: PipelinePaths) -> VerifySummary:

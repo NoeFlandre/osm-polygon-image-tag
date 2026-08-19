@@ -1,3 +1,4 @@
+import queue
 import threading
 from pathlib import Path
 
@@ -435,3 +436,88 @@ def test_checkpoint_rechecks_failure_after_worker_termination_race(tmp_path: Pat
         worker.checkpoint(lambda: callbacks.append("published"))
 
     assert callbacks == []
+
+
+def test_worker_enqueue_retries_after_a_full_queue(tmp_path: Path) -> None:
+    worker = EnrichmentWorker(
+        tmp_path,
+        cache_factory=lambda _root: object(),
+        registry_factory=lambda: object(),
+        stop_requested=lambda: False,
+        progress=lambda _event: None,
+    )
+    calls = 0
+    original_put = worker._jobs.put
+
+    def flaky_put(job: AssetJob, *, timeout: float) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise queue.Full
+        original_put(job, timeout=timeout)
+
+    worker._jobs.put = flaky_put  # ty: ignore[invalid-assignment]
+    job = AssetJob(_manifest("queued"), tmp_path / "queued.parquet")
+
+    worker._enqueue_job(job)
+
+    assert calls == 2
+    assert worker._jobs.get_nowait() == job
+
+    worker._error = RuntimeError("worker failed")
+    with pytest.raises(RuntimeError, match="worker failed"):
+        worker._enqueue_job(job)
+
+
+def test_worker_finish_marker_retries_after_a_full_queue(tmp_path: Path) -> None:
+    worker = EnrichmentWorker(
+        tmp_path,
+        cache_factory=lambda _root: object(),
+        registry_factory=lambda: object(),
+        stop_requested=lambda: False,
+        progress=lambda _event: None,
+    )
+
+    class LiveThread:
+        def is_alive(self) -> bool:
+            return True
+
+    worker._thread = LiveThread()  # ty: ignore[invalid-assignment]
+    calls = 0
+
+    def flaky_put(job: AssetJob | None, *, timeout: float) -> None:
+        del timeout
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise queue.Full
+        assert job is None
+
+    worker._jobs.put = flaky_put  # ty: ignore[invalid-assignment]
+
+    worker._send_finish_marker()
+
+    assert calls == 2
+    worker._error = RuntimeError("worker failed")
+    worker._send_finish_marker()
+
+
+def test_worker_wait_until_paused_returns_when_thread_is_dead(tmp_path: Path) -> None:
+    worker = EnrichmentWorker(
+        tmp_path,
+        cache_factory=lambda _root: object(),
+        registry_factory=lambda: object(),
+        stop_requested=lambda: False,
+        progress=lambda _event: None,
+    )
+
+    class DeadThread:
+        def is_alive(self) -> bool:
+            return False
+
+    worker._thread = DeadThread()  # ty: ignore[invalid-assignment]
+
+    worker._wait_until_paused()
+    worker._error = RuntimeError("worker failed")
+    with pytest.raises(RuntimeError, match="worker failed"):
+        worker._wait_until_paused()

@@ -134,29 +134,44 @@ class _Runtime:
         token = _renderer.set(self.renderer)
         try:
             paths = PipelinePaths.build(source_root=source_root, data_root=data_root)
-            if confirmation is not None and confirmation != EXPECTED_REPO:
-                raise ImageTagPipelineError(f"repository confirmation must equal {EXPECTED_REPO}")
-            report: Report
-            if command == "preflight":
-                report = self.execute_preflight(paths)
-            elif command == "run":
-                report = self.execute_run(paths)
-            elif command == "verify":
-                report = self.execute_verify(paths)
-            elif command == "rebuild-metadata":
-                if asset_checkpoint_root is None:
-                    report = self.execute_metadata(paths.data_root)
-                else:
-                    report = self.execute_metadata_with_checkpoint(
-                        paths.data_root, asset_checkpoint_root
-                    )
-            elif command == "publish":
-                report = self.execute_publish(paths, confirmation or "")
-            else:
-                report = self.execute_run_publish(paths, confirmation or "")
+            _validate_confirmation(confirmation)
+            report = self._dispatch_command(command, paths, confirmation, asset_checkpoint_root)
             print(json.dumps(report.to_dict(), sort_keys=True))
         finally:
             _renderer.reset(token)
+
+    def _dispatch_command(
+        self,
+        command: str,
+        paths: PipelinePaths,
+        confirmation: str | None,
+        asset_checkpoint_root: Path | None,
+    ) -> Report:
+        if command == "rebuild-metadata":
+            return _execute_metadata_command(self, paths, asset_checkpoint_root)
+        if command in {"preflight", "run", "verify"}:
+            return {
+                "preflight": lambda: self.execute_preflight(paths),
+                "run": lambda: self.execute_run(paths),
+                "verify": lambda: self.execute_verify(paths),
+            }[command]()
+        return {
+            "publish": lambda: self.execute_publish(paths, confirmation or ""),
+            "run-and-publish": lambda: self.execute_run_publish(paths, confirmation or ""),
+        }[command]()
+
+
+def _validate_confirmation(confirmation: str | None) -> None:
+    if confirmation is not None and confirmation != EXPECTED_REPO:
+        raise ImageTagPipelineError(f"repository confirmation must equal {EXPECTED_REPO}")
+
+
+def _execute_metadata_command(
+    runtime: _Runtime, paths: PipelinePaths, checkpoint_root: Path | None
+) -> MetadataResult:
+    if checkpoint_root is None:
+        return runtime.execute_metadata(paths.data_root)
+    return runtime.execute_metadata_with_checkpoint(paths.data_root, checkpoint_root)
 
 
 def run(
@@ -172,7 +187,46 @@ def run(
     execute_run_publish: Callable[[PipelinePaths, str], RunSummary] = _run_and_publish,
 ) -> int:
     arguments = list(argv) if argv is not None else sys.argv[1:]
-    runtime = _Runtime(
+    runtime = _build_runtime(
+        execute_preflight,
+        execute_run,
+        execute_verify,
+        execute_metadata,
+        execute_metadata_with_checkpoint,
+        execute_publish,
+        execute_run_publish,
+    )
+    try:
+        return _invoke_runtime(arguments, runtime)
+    finally:
+        if runtime.renderer is not None:
+            runtime.renderer.close()
+
+
+def _invoke_runtime(arguments: Sequence[str], runtime: _Runtime) -> int:
+    try:
+        _invoke_app(arguments, runtime)
+    except click.exceptions.Exit as error:
+        raise SystemExit(error.exit_code) from error
+    except (click.ClickException, click.exceptions.BadParameter) as error:
+        error.show(file=sys.stderr)
+        return 2
+    except ImageTagPipelineError as error:
+        _render_pipeline_error(runtime, error)
+        return 2
+    return 0
+
+
+def _build_runtime(
+    execute_preflight: Callable[[PipelinePaths], PreflightReport],
+    execute_run: Callable[[PipelinePaths], RunSummary],
+    execute_verify: Callable[[PipelinePaths], VerifySummary],
+    execute_metadata: Callable[[Path], MetadataResult],
+    execute_metadata_with_checkpoint: Callable[[Path, Path], MetadataResult] | None,
+    execute_publish: Callable[[PipelinePaths, str], PublicationResult],
+    execute_run_publish: Callable[[PipelinePaths, str], RunSummary],
+) -> _Runtime:
+    return _Runtime(
         execute_preflight,
         execute_run,
         execute_verify,
@@ -181,25 +235,19 @@ def run(
         execute_publish,
         execute_run_publish,
     )
-    try:
-        app(
-            args=arguments,
-            prog_name="osm-polygon-image-tag",
-            standalone_mode=False,
-            obj=runtime,
-        )
-        if "--help" in arguments:
-            raise SystemExit(0)
-    except click.exceptions.Exit as error:
-        raise SystemExit(error.exit_code) from error
-    except (click.ClickException, click.exceptions.BadParameter) as error:
-        error.show(file=sys.stderr)
-        return 2
-    except ImageTagPipelineError as error:
-        renderer = runtime.renderer or ConsoleRenderer(log_format="json")
-        renderer.error(str(error))
-        return 2
-    finally:
-        if runtime.renderer is not None:
-            runtime.renderer.close()
-    return 0
+
+
+def _invoke_app(arguments: Sequence[str], runtime: _Runtime) -> None:
+    app(
+        args=list(arguments),
+        prog_name="osm-polygon-image-tag",
+        standalone_mode=False,
+        obj=runtime,
+    )
+    if "--help" in arguments:
+        raise SystemExit(0)
+
+
+def _render_pipeline_error(runtime: _Runtime, error: ImageTagPipelineError) -> None:
+    renderer = runtime.renderer or ConsoleRenderer(log_format="json")
+    renderer.error(str(error))

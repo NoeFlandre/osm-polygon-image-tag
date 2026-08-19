@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from types import TracebackType
+from typing import Any, cast
 
 from osm_polygon_image_tag.assets.manifest import ResolutionSnapshotIdentity
 from osm_polygon_image_tag.assets.resolution import (
@@ -22,30 +23,58 @@ _GET_MANY_BATCH_SIZE = 200
 
 
 def _decode_cached_record(payload_json: object, stored_sha256: object) -> ResolutionRecord:
-    if not isinstance(payload_json, str) or not isinstance(stored_sha256, str):
+    if not _valid_cached_values(payload_json, stored_sha256):
         raise ResolutionCacheError("invalid cached resolution")
-    if hashlib.sha256(payload_json.encode()).hexdigest() != stored_sha256:
+    payload_text = cast(str, payload_json)
+    digest_text = cast(str, stored_sha256)
+    if not _digest_matches(payload_text, digest_text):
         raise ResolutionCacheError("cached resolution digest mismatch")
     try:
-        payload = json.loads(payload_json)
-        retry_value = payload["retry_after"]
-        record = ResolutionRecord(
-            provider=payload["provider"],
-            canonical_reference=payload["canonical_reference"],
-            resolver_contract_version=payload["resolver_contract_version"],
-            status=payload["status"],
-            assets=tuple(dict(asset) for asset in payload["assets"]),
-            retry_after=(datetime.fromisoformat(retry_value) if retry_value is not None else None),
-            reason=payload.get("reason"),
-            category_truncated=payload.get("category_truncated", False),
-            attempt_count=payload.get("attempt_count", 1),
-        )
-        validate_resolution_record(record)
+        return _validated_cached_record(payload_text)
     except ResolutionCacheError:
         raise
     except (AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
         raise ResolutionCacheError("invalid cached resolution") from error
+
+
+def _valid_cached_values(payload_json: object, stored_sha256: object) -> bool:
+    return isinstance(payload_json, str) and isinstance(stored_sha256, str)
+
+
+def _digest_matches(payload_json: str, stored_sha256: str) -> bool:
+    return hashlib.sha256(payload_json.encode()).hexdigest() == stored_sha256
+
+
+def _validated_cached_record(payload_json: str) -> ResolutionRecord:
+    record = _record_from_payload(json.loads(payload_json))
+    validate_resolution_record(record)
     return record
+
+
+def _record_from_payload(payload: object) -> ResolutionRecord:
+    if not isinstance(payload, dict):
+        raise TypeError("cached resolution payload must be an object")
+    values = cast(Mapping[str, Any], payload)
+    retry_value = values["retry_after"]
+    return ResolutionRecord(
+        provider=values["provider"],
+        canonical_reference=values["canonical_reference"],
+        resolver_contract_version=values["resolver_contract_version"],
+        status=values["status"],
+        assets=tuple(dict(asset) for asset in values["assets"]),
+        retry_after=_parse_retry_after(retry_value),
+        reason=values.get("reason"),
+        category_truncated=values.get("category_truncated", False),
+        attempt_count=values.get("attempt_count", 1),
+    )
+
+
+def _parse_retry_after(value: object) -> datetime | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError("retry_after must be an ISO timestamp or null")
+    return datetime.fromisoformat(value)
 
 
 class ResolutionCache:
@@ -107,38 +136,9 @@ class ResolutionCache:
             (key.provider, key.canonical_reference, key.resolver_contract_version): key
             for key in requested
         }
-        rows: list[tuple[object, ...]] = []
         with self._lock:
-            for offset in range(0, len(requested), _GET_MANY_BATCH_SIZE):
-                chunk = requested[offset : offset + _GET_MANY_BATCH_SIZE]
-                placeholders = ", ".join("(?, ?, ?)" for _key in chunk)
-                parameters = tuple(
-                    value
-                    for key in chunk
-                    for value in (
-                        key.provider,
-                        key.canonical_reference,
-                        key.resolver_contract_version,
-                    )
-                )
-                rows.extend(
-                    self._connection.execute(
-                        """
-                        SELECT provider, canonical_reference,
-                               resolver_contract_version, payload_json, response_sha256
-                        FROM resolutions
-                        WHERE (provider, canonical_reference, resolver_contract_version)
-                              IN (PLACEHOLDERS)
-                        """.replace("PLACEHOLDERS", placeholders),
-                        parameters,
-                    ).fetchall()
-                )
-        loaded: dict[ResolutionKey, ResolutionRecord] = {}
-        for provider, canonical_reference, version, payload_json, stored_sha256 in rows:
-            key = requested_tuples.get((provider, canonical_reference, version))
-            if key is not None:
-                loaded[key] = _decode_cached_record(payload_json, stored_sha256)
-        return loaded
+            rows = _get_many_rows(self._connection, requested)
+        return _decode_many_rows(rows, requested_tuples)
 
     def put(self, record: ResolutionRecord) -> None:
         self.put_many((record,))
@@ -190,21 +190,8 @@ class ResolutionCache:
         records: Mapping[ResolutionKey, ResolutionRecord] | None = None,
     ) -> ResolutionSnapshotIdentity:
         entries = []
-        for key in sorted(
-            set(keys),
-            key=lambda item: (
-                item.provider,
-                item.canonical_reference,
-                item.resolver_contract_version,
-            ),
-        ):
-            record = self.get(key) if records is None else records.get(key)
-            if record is None:
-                raise ResolutionCacheError("cannot snapshot a missing resolution")
-            if records is not None:
-                if record.key != key:
-                    raise ResolutionCacheError("resolution record key does not match snapshot key")
-                validate_resolution_record(record)
+        for key in _ordered_keys(keys):
+            record = _snapshot_record(self, key, records)
             entries.append(record_payload(record))
         return ResolutionSnapshotIdentity(
             entry_count=len(entries),
@@ -225,3 +212,67 @@ class ResolutionCache:
         _traceback: TracebackType | None,
     ) -> None:
         self.close()
+
+
+def _ordered_keys(keys: Sequence[ResolutionKey]) -> list[ResolutionKey]:
+    return sorted(
+        set(keys),
+        key=lambda item: (item.provider, item.canonical_reference, item.resolver_contract_version),
+    )
+
+
+def _snapshot_record(
+    cache: ResolutionCache,
+    key: ResolutionKey,
+    records: Mapping[ResolutionKey, ResolutionRecord] | None,
+) -> ResolutionRecord:
+    record = cache.get(key) if records is None else records.get(key)
+    if record is None:
+        raise ResolutionCacheError("cannot snapshot a missing resolution")
+    if records is not None:
+        if record.key != key:
+            raise ResolutionCacheError("resolution record key does not match snapshot key")
+        validate_resolution_record(record)
+    return record
+
+
+def _get_many_rows(
+    connection: sqlite3.Connection, requested: Sequence[ResolutionKey]
+) -> list[tuple[object, ...]]:
+    rows: list[tuple[object, ...]] = []
+    for offset in range(0, len(requested), _GET_MANY_BATCH_SIZE):
+        rows.extend(_get_many_chunk(connection, requested[offset : offset + _GET_MANY_BATCH_SIZE]))
+    return rows
+
+
+def _get_many_chunk(
+    connection: sqlite3.Connection, chunk: Sequence[ResolutionKey]
+) -> list[tuple[object, ...]]:
+    placeholders = ", ".join("(?, ?, ?)" for _key in chunk)
+    parameters = tuple(
+        value
+        for key in chunk
+        for value in (key.provider, key.canonical_reference, key.resolver_contract_version)
+    )
+    return connection.execute(
+        """
+        SELECT provider, canonical_reference,
+               resolver_contract_version, payload_json, response_sha256
+        FROM resolutions
+        WHERE (provider, canonical_reference, resolver_contract_version)
+              IN (PLACEHOLDERS)
+        """.replace("PLACEHOLDERS", placeholders),
+        parameters,
+    ).fetchall()
+
+
+def _decode_many_rows(
+    rows: Sequence[tuple[object, ...]],
+    requested: Mapping[tuple[str, str, int], ResolutionKey],
+) -> dict[ResolutionKey, ResolutionRecord]:
+    loaded: dict[ResolutionKey, ResolutionRecord] = {}
+    for provider, canonical_reference, version, payload_json, stored_sha256 in rows:
+        key = requested.get(cast(tuple[str, str, int], (provider, canonical_reference, version)))
+        if key is not None:
+            loaded[key] = _decode_cached_record(payload_json, stored_sha256)
+    return loaded

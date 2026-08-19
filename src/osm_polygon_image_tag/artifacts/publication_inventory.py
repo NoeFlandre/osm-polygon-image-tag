@@ -109,25 +109,31 @@ def _managed_asset_artifacts(root: Path) -> tuple[set[str], set[str]]:
     for path in sorted((root / "asset-manifests").glob("*.assets.manifest.json")):
         relative_manifest = path.relative_to(root).as_posix()
         managed.add(relative_manifest)
-        try:
-            manifest = read_asset_manifest(path)
-            output_relative = manifest.output.relative_path
-        except AssetManifestError:
-            header = read_asset_manifest_header(path, data_root=root)
-            output_relative = header.output_relative_path
-            manifest = None
-        output = _resolve_publication_output(
-            root,
-            output_relative,
-            label="managed asset output",
-        )
+        output, eligible = _asset_manifest_artifact(path, root)
         managed.add(output.relative_to(root).as_posix())
-        if manifest is not None and (
-            manifest.asset_schema_version == ASSET_SCHEMA_VERSION
-            and manifest.resolver_contract_version == RESOLVER_CONTRACT_VERSION
-        ):
+        if eligible:
             eligible_manifests.add(relative_manifest)
     return managed, eligible_manifests
+
+
+def _asset_manifest_artifact(path: Path, root: Path) -> tuple[Path, bool]:
+    try:
+        manifest = read_asset_manifest(path)
+        output_relative = manifest.output.relative_path
+    except AssetManifestError:
+        header = read_asset_manifest_header(path, data_root=root)
+        return (
+            _resolve_publication_output(
+                root, header.output_relative_path, label="managed asset output"
+            ),
+            False,
+        )
+    output = _resolve_publication_output(root, output_relative, label="managed asset output")
+    eligible = (
+        manifest.asset_schema_version == ASSET_SCHEMA_VERSION
+        and manifest.resolver_contract_version == RESOLVER_CONTRACT_VERSION
+    )
+    return output, eligible
 
 
 def _actual_files(root: Path) -> set[str]:
@@ -166,21 +172,35 @@ def publication_inventory(data_root: Path) -> tuple[PublicationFile, ...]:
         manifested_digests = validate_public_dataset(root)
     except ValueError as error:
         raise PublicationError(str(error)) from error
-    allowed = {"README.md", "citation.cff", "statistics/dataset-statistics.json"}
-    allowed.update(
-        {
-            PUBLIC_POLYGON_RELATIVE,
-            PUBLIC_IMAGE_RELATIVE,
-            PUBLIC_LINK_RELATIVE,
-            PUBLIC_MANIFEST_RELATIVE,
-        }
-    )
+    allowed = _allowed_public_files()
     png_digests = _validated_png_digests(root)
     allowed.update(png_digests)
     manifested_digests.update(png_digests)
     polygon_managed, _polygon_eligible = _managed_polygon_artifacts(root)
     asset_managed, _asset_eligible = _managed_asset_artifacts(root)
     managed = polygon_managed | asset_managed
+    internal = _internal_files(managed, allowed)
+    actual = _actual_files(root)
+    private = {relative for relative in actual if relative.startswith("cache/")}
+    unexpected = _unexpected_files(actual, allowed, internal, private)
+    if unexpected:
+        raise PublicationError(f"unexpected data-root entries: {sorted(unexpected)}")
+    return _publication_files(root, allowed, manifested_digests)
+
+
+def _allowed_public_files() -> set[str]:
+    return {
+        "README.md",
+        "citation.cff",
+        "statistics/dataset-statistics.json",
+        PUBLIC_POLYGON_RELATIVE,
+        PUBLIC_IMAGE_RELATIVE,
+        PUBLIC_LINK_RELATIVE,
+        PUBLIC_MANIFEST_RELATIVE,
+    }
+
+
+def _internal_files(managed: set[str], allowed: set[str]) -> set[str]:
     internal = {
         "catalog/catalog.sqlite",
         "catalog/catalog.sqlite-shm",
@@ -191,16 +211,14 @@ def publication_inventory(data_root: Path) -> tuple[PublicationFile, ...]:
         "receipts/publication.json",
         *(managed - allowed),
     }
-    for checkpoint in (
-        PUBLIC_DEDUP_CHECKPOINT_RELATIVE,
-        PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE,
-    ):
+    for checkpoint in (PUBLIC_DEDUP_CHECKPOINT_RELATIVE, PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE):
         internal.update(
             {checkpoint, f"{checkpoint}-journal", f"{checkpoint}-wal", f"{checkpoint}-shm"}
         )
-    actual = _actual_files(root)
-    private = {relative for relative in actual if relative.startswith("cache/")}
-    unexpected = actual - allowed - internal - private
-    if unexpected:
-        raise PublicationError(f"unexpected data-root entries: {sorted(unexpected)}")
-    return _publication_files(root, allowed, manifested_digests)
+    return internal
+
+
+def _unexpected_files(
+    actual: set[str], allowed: set[str], internal: set[str], private: set[str]
+) -> set[str]:
+    return actual - allowed - internal - private

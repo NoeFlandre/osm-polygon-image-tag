@@ -176,6 +176,23 @@ def render_count_map(
     if not coerced:
         # The empty case still produces a valid deterministic world map.
         return _render_empty_world(output_path, h3_resolution=h3_resolution)
+    return _render_populated_world(
+        coerced,
+        output_path,
+        title=title,
+        h3_resolution=h3_resolution,
+        use_basemap=use_basemap,
+    )
+
+
+def _render_populated_world(
+    coerced: Sequence[PolygonCountCell],
+    output_path: Path,
+    *,
+    title: str,
+    h3_resolution: int,
+    use_basemap: bool,
+) -> RenderResult:
     total_polygons = sum(int(cell.polygon_count) for cell in coerced)
     caption = _build_caption(coerced, h3_resolution=h3_resolution, total_polygons=total_polygons)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -185,9 +202,7 @@ def render_count_map(
         fig.set_facecolor("white")
         _init_axes(ax)
         if use_basemap:
-            land_features = load_land_basemap()
-            if land_features:
-                draw_landmasses(ax, land_features)
+            _draw_land_basemap(ax)
 
         counts = [int(cell.polygon_count) for cell in coerced]
         minimum = max(min(counts), 1)
@@ -224,6 +239,12 @@ def render_count_map(
 
     LOGGER.info("Wrote geographic polygon density map to %s", output_path)
     return RenderResult(output_path=output_path, caption=caption)
+
+
+def _draw_land_basemap(ax: Any) -> None:
+    land_features = load_land_basemap()
+    if land_features:
+        draw_landmasses(ax, land_features)
 
 
 def _render_empty_world(output_path: Path, *, h3_resolution: int) -> RenderResult:

@@ -10,6 +10,7 @@ import pytest
 
 from osm_polygon_image_tag.artifacts.geography.h3 import (
     DEFAULT_H3_RESOLUTION,
+    aggregate_centroids_to_cells,
     assign_h3_cell,
     cell_rings,
     split_antimeridian,
@@ -31,6 +32,15 @@ def test_assign_h3_cell_returns_string_at_resolution_3() -> None:
 
 def test_assign_h3_cell_matches_known_value_for_paris() -> None:
     assert assign_h3_cell(48.8566, 2.3522, resolution=3) == "831fb4fffffffff"
+
+
+def test_aggregate_centroids_returns_sorted_cells_without_deduplicating() -> None:
+    centroids = [(48.8566, 2.3522), (43.73, 7.42), (48.8566, 2.3522)]
+
+    cells = aggregate_centroids_to_cells(centroids, resolution=3)
+
+    assert cells == sorted(cells)
+    assert cells.count("831fb4fffffffff") == 2
 
 
 def test_assign_h3_cell_rejects_nan_latitude() -> None:

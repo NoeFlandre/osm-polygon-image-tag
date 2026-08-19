@@ -64,11 +64,15 @@ def _parse_tags(field: bytes) -> dict[str, str]:
         value: Any = json.loads(_decode_copy_field(field))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ValueError("tags must be valid UTF-8 JSON") from error
-    if not isinstance(value, dict) or not all(
-        isinstance(key, str) and isinstance(item, str) for key, item in value.items()
-    ):
+    if not _valid_tag_mapping(value):
         raise ValueError("tags must be a JSON object of string keys and values")
     return dict(value)
+
+
+def _valid_tag_mapping(value: object) -> bool:
+    return isinstance(value, dict) and all(
+        isinstance(key, str) and isinstance(item, str) for key, item in value.items()
+    )
 
 
 def parse_copy_record(line: bytes) -> ExportRecord:

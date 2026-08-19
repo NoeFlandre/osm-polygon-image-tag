@@ -102,51 +102,52 @@ def _require_keys(value: Any, keys: set[str], *, name: str) -> dict[str, Any]:
 def read_manifest(path: Path) -> Manifest:
     try:
         payload: Any = json.loads(path.read_text(encoding="utf-8"))
-        top = _require_keys(
-            payload,
-            {
-                "manifest_schema_version",
-                "processing_contract_version",
-                "dataset_schema_version",
-                "source",
-                "output",
-                "osmium_version",
-                "counts",
-            },
-            name="manifest",
-        )
-        if top["manifest_schema_version"] != MANIFEST_SCHEMA_VERSION:
-            raise ManifestError("unsupported manifest schema version")
-        source = SourceIdentity(
-            **_require_keys(
-                top["source"],
-                {"relative_path", "size_bytes", "mtime_ns", "sha256"},
-                name="source",
-            )
-        )
-        output = OutputIdentity(
-            **_require_keys(
-                top["output"],
-                {"relative_path", "size_bytes", "sha256", "row_count"},
-                name="output",
-            )
-        )
-        counts_value = _require_keys(
-            top["counts"],
-            {"accepted_rows", "rejections"},
-            name="counts",
-        )
-        counts = RunCounts(**counts_value)
-        return Manifest(
-            manifest_schema_version=top["manifest_schema_version"],
-            processing_contract_version=top["processing_contract_version"],
-            dataset_schema_version=top["dataset_schema_version"],
-            source=source,
-            output=output,
-            osmium_version=top["osmium_version"],
-            counts=counts,
-        )
+        return _build_manifest(payload)
     except ManifestError:
         raise
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError) as error:
         raise ManifestError(f"invalid manifest: {path}") from error
+
+
+def _build_manifest(payload: Any) -> Manifest:
+    top = _require_keys(
+        payload,
+        {
+            "manifest_schema_version",
+            "processing_contract_version",
+            "dataset_schema_version",
+            "source",
+            "output",
+            "osmium_version",
+            "counts",
+        },
+        name="manifest",
+    )
+    if top["manifest_schema_version"] != MANIFEST_SCHEMA_VERSION:
+        raise ManifestError("unsupported manifest schema version")
+    source = SourceIdentity(
+        **_require_keys(
+            top["source"],
+            {"relative_path", "size_bytes", "mtime_ns", "sha256"},
+            name="source",
+        )
+    )
+    output = OutputIdentity(
+        **_require_keys(
+            top["output"],
+            {"relative_path", "size_bytes", "sha256", "row_count"},
+            name="output",
+        )
+    )
+    counts = RunCounts(
+        **_require_keys(top["counts"], {"accepted_rows", "rejections"}, name="counts")
+    )
+    return Manifest(
+        manifest_schema_version=top["manifest_schema_version"],
+        processing_contract_version=top["processing_contract_version"],
+        dataset_schema_version=top["dataset_schema_version"],
+        source=source,
+        output=output,
+        osmium_version=top["osmium_version"],
+        counts=counts,
+    )

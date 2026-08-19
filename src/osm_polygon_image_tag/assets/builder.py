@@ -16,6 +16,9 @@ from osm_polygon_image_tag.assets.cache import ResolutionCache
 from osm_polygon_image_tag.assets.manifest import (
     ASSET_MANIFEST_SCHEMA_VERSION,
     AssetManifest,
+    AssetRunCounts,
+    AssetSourceIdentity,
+    ResolutionSnapshotIdentity,
     write_asset_manifest,
 )
 from osm_polygon_image_tag.assets.polygon_input import (
@@ -28,7 +31,7 @@ from osm_polygon_image_tag.assets.schema import (
     RESOLVER_CONTRACT_VERSION,
 )
 from osm_polygon_image_tag.assets.sort import DiskAssetSorter
-from osm_polygon_image_tag.assets.storage import AtomicAssetWriter
+from osm_polygon_image_tag.assets.storage import AssetWriteResult, AtomicAssetWriter
 from osm_polygon_image_tag.core.manifest import Manifest, OutputIdentity, file_sha256
 from osm_polygon_image_tag.core.progress import Progress
 
@@ -80,24 +83,12 @@ async def build_asset_shard(
 
     try:
         with DiskAssetSorter(asset_path.parent) as sorter:
-            pending: list[tuple[Mapping[str, object], SourceReference]] = []
-            for row in polygon_rows(polygon_path):
-                for reference in references_from_row(row):
-                    pending.append((row, reference))
-                    if len(pending) == 128:
-                        await processor.process(pending, sorter)
-                        pending.clear()
-            if pending:
-                await processor.process(pending, sorter)
+            await _process_asset_references(polygon_path, processor, sorter)
             if stop_requested():
                 raise AssetBuildStopped
-            with AtomicAssetWriter(asset_path) as writer:
-                writer.write(sorter.rows())
-            write_result = writer.result
+            write_result = _write_sorted_assets(asset_path, sorter)
     except AssetBuildStopped:
         return AssetBuildResult("pending", polygon_shard, asset_path, manifest_path, 0, {})
-    if write_result is None:
-        raise RuntimeError("asset writer did not finalize")
     snapshot = processor.resolution_snapshot()
     output = OutputIdentity(
         relative_path=asset_path.relative_to(data_root).as_posix(),
@@ -106,6 +97,56 @@ async def build_asset_shard(
         row_count=write_result.row_count,
     )
     counts = processor.counts(write_result.row_count)
+    _write_asset_manifest(
+        manifest_path,
+        resolver_contract_version,
+        source,
+        snapshot,
+        output,
+        counts,
+    )
+    return AssetBuildResult(
+        "built",
+        polygon_shard,
+        asset_path,
+        manifest_path,
+        write_result.row_count,
+        counts.statuses,
+    )
+
+
+async def _process_asset_references(
+    polygon_path: Path,
+    processor: AssetBatchProcessor,
+    sorter: DiskAssetSorter,
+) -> None:
+    pending: list[tuple[Mapping[str, object], SourceReference]] = []
+    for row in polygon_rows(polygon_path):
+        for reference in references_from_row(row):
+            pending.append((row, reference))
+            if len(pending) == 128:
+                await processor.process(pending, sorter)
+                pending.clear()
+    if pending:
+        await processor.process(pending, sorter)
+
+
+def _write_sorted_assets(asset_path: Path, sorter: DiskAssetSorter) -> AssetWriteResult:
+    with AtomicAssetWriter(asset_path) as writer:
+        writer.write(sorter.rows())
+    if writer.result is None:
+        raise RuntimeError("asset writer did not finalize")
+    return writer.result
+
+
+def _write_asset_manifest(
+    manifest_path: Path,
+    resolver_contract_version: int,
+    source: AssetSourceIdentity,
+    snapshot: ResolutionSnapshotIdentity,
+    output: OutputIdentity,
+    counts: AssetRunCounts,
+) -> None:
     write_asset_manifest(
         AssetManifest(
             ASSET_MANIFEST_SCHEMA_VERSION,
@@ -117,12 +158,4 @@ async def build_asset_shard(
             counts,
         ),
         manifest_path,
-    )
-    return AssetBuildResult(
-        "built",
-        polygon_shard,
-        asset_path,
-        manifest_path,
-        write_result.row_count,
-        counts.statuses,
     )

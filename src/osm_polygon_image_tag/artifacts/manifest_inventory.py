@@ -16,7 +16,7 @@ def verified_manifests(
     data_root: Path, *, progress: Progress | None = None
 ) -> list[tuple[Manifest, Path]]:
     """Return current-contract manifests whose output size and location are valid."""
-    emit = progress or (lambda _event: None)
+    emit = _progress_callback(progress)
     manifest_paths = sorted((data_root / "manifests").glob("*.manifest.json"))
     emit({"event": "metadata_manifest_scan_started", "manifest_count": len(manifest_paths)})
     verified: list[tuple[Manifest, Path]] = []
@@ -24,23 +24,13 @@ def verified_manifests(
     verified_bytes = 0
     for index, manifest_path in enumerate(manifest_paths, start=1):
         manifest = read_manifest(manifest_path)
-        compatible = (
-            manifest.processing_contract_version == PROCESSING_CONTRACT_VERSION
-            and manifest.dataset_schema_version == DATASET_SCHEMA_VERSION
-        )
-        if compatible:
-            output = resolve_managed_output(
-                data_root,
-                manifest.output.relative_path,
-                label="output",
-            )
-            if output.stat().st_size != manifest.output.size_bytes:
-                raise ValueError(f"output identity mismatch: {output}")
+        output = _verified_output(data_root, manifest)
+        if output is not None:
             verified.append((manifest, output))
             verified_bytes += manifest.output.size_bytes
         else:
             skipped += 1
-        if index % 10 == 0 or index == len(manifest_paths):
+        if _should_emit_progress(index, len(manifest_paths)):
             emit(
                 {
                     "event": "metadata_manifest_scan_progress",
@@ -61,3 +51,31 @@ def verified_manifests(
         }
     )
     return verified
+
+
+def _progress_callback(progress: Progress | None) -> Progress:
+    return progress if progress is not None else (lambda _event: None)
+
+
+def _should_emit_progress(index: int, total: int) -> bool:
+    return index % 10 == 0 or index == total
+
+
+def _verified_output(data_root: Path, manifest: Manifest) -> Path | None:
+    if not _compatible_manifest(manifest):
+        return None
+    output = resolve_managed_output(
+        data_root,
+        manifest.output.relative_path,
+        label="output",
+    )
+    if output.stat().st_size != manifest.output.size_bytes:
+        raise ValueError(f"output identity mismatch: {output}")
+    return output
+
+
+def _compatible_manifest(manifest: Manifest) -> bool:
+    return (
+        manifest.processing_contract_version == PROCESSING_CONTRACT_VERSION
+        and manifest.dataset_schema_version == DATASET_SCHEMA_VERSION
+    )

@@ -68,17 +68,10 @@ just crap
 ```
 
 `just crap` runs the full suite, writes a temporary LCOV report under `/tmp`,
-and applies a strict CRAP score below 6 to the three modules refactored in this
-pass: asset-catalog synchronization, Flickr resolution, and basemap loading.
-CRAP combines cyclomatic complexity with test coverage, so a high score
+and applies a strict CRAP score below 6 to every production function under
+`src/`. CRAP combines cyclomatic complexity with test coverage, so a high score
 identifies code that is both complicated and insufficiently exercised. The
 temporary report is not part of the repository or the dataset.
-
-`just crap-full` prints the full-codebase CRAP inventory with the existing
-broader threshold of 30. That inventory is intentionally informational: the
-rest of the mature pipeline contains unrelated, higher-complexity paths that
-would require a separate reviewed refactor rather than a hidden threshold
-exception.
 
 Run both checks with `just quality-advanced`.
 

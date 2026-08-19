@@ -71,30 +71,7 @@ class CommonsResolver:
         )
 
     async def _files(self, titles: Sequence[str]) -> ResolutionResult:
-        assets_by_title: dict[str, ResolvedAsset] = {}
-        saw_non_image = False
-        for offset in range(0, len(titles), self._title_batch_size):
-            batch = titles[offset : offset + self._title_batch_size]
-            payload = await self._request(
-                {
-                    "prop": "imageinfo",
-                    "iiprop": _IMAGE_INFO,
-                    "titles": "|".join(batch),
-                }
-            )
-            pages = as_sequence(as_mapping(payload.get("query")).get("pages"))
-            if not pages:
-                pages = tuple(as_mapping(as_mapping(payload.get("query")).get("pages")).values())
-            for page_value in pages:
-                page = as_mapping(page_value)
-                if page.get("missing") is True:
-                    continue
-                title = as_text(page.get("title"))
-                asset = _asset(page)
-                if title is not None and asset is not None:
-                    assets_by_title[title] = asset
-                elif as_sequence(page.get("imageinfo")):
-                    saw_non_image = True
+        assets_by_title, saw_non_image = await self._collect_files(titles)
         assets = tuple(assets_by_title[title] for title in titles if title in assets_by_title)
         if assets:
             return ResolutionResult(status="resolved", assets=assets)
@@ -102,41 +79,39 @@ class CommonsResolver:
             return ResolutionResult(status="not_direct_image", reason="non_image_mime")
         return ResolutionResult(status="not_found", reason="commons_file_missing")
 
-    async def _category(self, title: str) -> ResolutionResult:
-        continuation: str | None = None
-        members: list[tuple[int, str]] = []
-        truncated = False
-        while True:
-            parameters = {
-                "list": "categorymembers",
-                "cmtitle": f"Category:{title}",
-                "cmnamespace": "6",
-                "cmtype": "file",
-                "cmlimit": "500",
+    async def _collect_files(self, titles: Sequence[str]) -> tuple[dict[str, ResolvedAsset], bool]:
+        assets: dict[str, ResolvedAsset] = {}
+        saw_non_image = False
+        for offset in range(0, len(titles), self._title_batch_size):
+            batch_assets, batch_non_image = await self._file_batch(
+                titles[offset : offset + self._title_batch_size]
+            )
+            assets.update(batch_assets)
+            saw_non_image = saw_non_image or batch_non_image
+        return assets, saw_non_image
+
+    async def _file_batch(self, titles: Sequence[str]) -> tuple[dict[str, ResolvedAsset], bool]:
+        payload = await self._request(
+            {
+                "prop": "imageinfo",
+                "iiprop": _IMAGE_INFO,
+                "titles": "|".join(titles),
             }
-            if continuation is not None:
-                parameters["cmcontinue"] = continuation
-            payload = await self._request(parameters)
-            for value in as_sequence(as_mapping(payload.get("query")).get("categorymembers")):
-                member = as_mapping(value)
-                page_id = as_integer(member.get("pageid"))
-                member_title = as_text(member.get("title"))
-                if page_id is not None and member_title is not None:
-                    members.append((page_id, member_title))
-            continue_value = payload.get("continue")
-            if continue_value is None:
-                break
-            continuation = as_text(as_mapping(continue_value).get("cmcontinue"))
-            if continuation is None:
-                return ResolutionResult(
-                    status="temporary_failure",
-                    reason="malformed_continuation",
-                )
-            if len(members) >= self._category_cap:
-                truncated = True
-                break
-        if len(members) > self._category_cap:
-            truncated = True
+        )
+        pages = _query_pages(payload)
+        assets: dict[str, ResolvedAsset] = {}
+        saw_non_image = False
+        for page_value in pages:
+            title, asset, non_image = _page_asset(page_value)
+            if title is not None and asset is not None:
+                assets[title] = asset
+            saw_non_image = saw_non_image or non_image
+        return assets, saw_non_image
+
+    async def _category(self, title: str) -> ResolutionResult:
+        members, truncated, malformed = await self._collect_category_members(title)
+        if malformed:
+            return ResolutionResult(status="temporary_failure", reason="malformed_continuation")
         selected = sorted(members)[: self._category_cap]
         if not selected:
             return ResolutionResult(status="category_empty", reason="no_direct_file_members")
@@ -148,6 +123,22 @@ class CommonsResolver:
             category_truncated=truncated,
         )
 
+    async def _collect_category_members(
+        self, title: str
+    ) -> tuple[list[tuple[int, str]], bool, bool]:
+        continuation: str | None = None
+        members: list[tuple[int, str]] = []
+        truncated = False
+        while True:
+            payload = await self._request(_category_parameters(title, continuation))
+            members.extend(_category_members(payload))
+            continuation, malformed = _next_category_continuation(payload)
+            if malformed:
+                return members, truncated, True
+            if _category_complete(continuation, len(members), self._category_cap):
+                truncated = _category_truncated(continuation, len(members), self._category_cap)
+                return members, truncated, False
+
     async def resolve(
         self, canonical_reference: str, *, context: ResolverContext
     ) -> ResolutionResult:
@@ -155,3 +146,61 @@ class CommonsResolver:
         if canonical_reference.startswith("File:"):
             return await self._files([canonical_reference])
         return await self._category(canonical_reference)
+
+
+def _category_complete(continuation: str | None, member_count: int, cap: int) -> bool:
+    return continuation is None or member_count >= cap
+
+
+def _category_truncated(continuation: str | None, member_count: int, cap: int) -> bool:
+    return member_count > cap or continuation is not None
+
+
+def _query_pages(payload: Mapping[str, object]) -> Sequence[object]:
+    pages_value = as_mapping(payload.get("query")).get("pages")
+    pages = as_sequence(pages_value)
+    return pages or tuple(as_mapping(pages_value).values())
+
+
+def _page_asset(
+    page_value: object,
+) -> tuple[str | None, ResolvedAsset | None, bool]:
+    page = as_mapping(page_value)
+    if page.get("missing") is True:
+        return None, None, False
+    title = as_text(page.get("title"))
+    asset = _asset(page)
+    non_image = asset is None and bool(as_sequence(page.get("imageinfo")))
+    return title, asset, non_image
+
+
+def _category_parameters(title: str, continuation: str | None) -> dict[str, str]:
+    parameters = {
+        "list": "categorymembers",
+        "cmtitle": f"Category:{title}",
+        "cmnamespace": "6",
+        "cmtype": "file",
+        "cmlimit": "500",
+    }
+    if continuation is not None:
+        parameters["cmcontinue"] = continuation
+    return parameters
+
+
+def _category_members(payload: Mapping[str, object]) -> list[tuple[int, str]]:
+    members: list[tuple[int, str]] = []
+    for value in as_sequence(as_mapping(payload.get("query")).get("categorymembers")):
+        member = as_mapping(value)
+        page_id = as_integer(member.get("pageid"))
+        member_title = as_text(member.get("title"))
+        if page_id is not None and member_title is not None:
+            members.append((page_id, member_title))
+    return members
+
+
+def _next_category_continuation(payload: Mapping[str, object]) -> tuple[str | None, bool]:
+    continue_value = payload.get("continue")
+    if continue_value is None:
+        return None, False
+    continuation = as_text(as_mapping(continue_value).get("cmcontinue"))
+    return continuation, continuation is None

@@ -11,7 +11,7 @@ from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -101,13 +101,21 @@ def _jsonable(value: object) -> object:
     if isinstance(value, datetime | date):
         return value.isoformat()
     if isinstance(value, dict):
-        return {
-            str(key): _jsonable(item)
-            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
-        }
+        return _jsonable_mapping(cast(dict[object, object], value))
     if isinstance(value, list):
-        return [_jsonable(item) for item in value]
+        return _jsonable_list(value)
     return value
+
+
+def _jsonable_mapping(value: dict[object, object]) -> dict[str, object]:
+    return {
+        str(key): _jsonable(item)
+        for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+    }
+
+
+def _jsonable_list(value: Sequence[object]) -> list[object]:
+    return [_jsonable(item) for item in value]
 
 
 def _stable_row_key(row: dict[str, Any]) -> str:
@@ -121,12 +129,7 @@ class _PolygonAccumulator:
         self.path = path
         self.input_hashes = tuple(input_hashes) if input_hashes is not None else None
         self._transaction_input_rows = 0
-        if (
-            self.input_hashes is not None
-            and path.is_file()
-            and not self._is_compatible_checkpoint(path, self.input_hashes)
-        ):
-            remove_checkpoint_files(path)
+        _remove_incompatible_polygon_checkpoint(path, self.input_hashes)
         self.connection = sqlite3.connect(path)
         self.connection.execute("PRAGMA journal_mode=DELETE")
         self.connection.execute("PRAGMA synchronous=NORMAL")
@@ -165,44 +168,17 @@ class _PolygonAccumulator:
             ) WITHOUT ROWID;
             """
         )
-        if self.input_hashes is None:
-            self.input_rows = 0
-        else:
-            self.connection.execute(
-                "INSERT OR IGNORE INTO checkpoint_metadata(key, value) VALUES (?, ?)",
-                (
-                    "schema_version",
-                    str(PUBLIC_DEDUP_CHECKPOINT_SCHEMA_VERSION),
-                ),
-            )
-            self.connection.execute(
-                "INSERT OR IGNORE INTO checkpoint_metadata(key, value) VALUES (?, ?)",
-                ("input_hashes", json.dumps(self.input_hashes, separators=(",", ":"))),
-            )
-            self.connection.commit()
-            self.input_rows = self._completed_input_rows()
+        self.input_rows = _initialize_polygon_checkpoint(self.connection, self.input_hashes, self)
 
     @staticmethod
     def _is_compatible_checkpoint(path: Path, input_hashes: Sequence[str]) -> bool:
         connection: sqlite3.Connection | None = None
         try:
             connection = sqlite3.connect(path)
-            rows = dict(connection.execute("SELECT key, value FROM checkpoint_metadata").fetchall())
-            if rows.get("schema_version") != str(PUBLIC_DEDUP_CHECKPOINT_SCHEMA_VERSION):
-                return False
-            if json.loads(rows["input_hashes"]) != list(input_hashes):
-                return False
-            for source_index, source_sha256, row_count in connection.execute(
-                "SELECT source_index, source_sha256, row_count FROM checkpoint_sources"
-            ):
-                if (
-                    source_index < 0
-                    or source_index >= len(input_hashes)
-                    or input_hashes[source_index] != source_sha256
-                    or row_count < 0
-                ):
-                    return False
-            return True
+            metadata = _polygon_checkpoint_metadata(connection)
+            return _polygon_checkpoint_metadata_matches(metadata, input_hashes) and (
+                _polygon_checkpoint_sources_match(connection, input_hashes)
+            )
         except (
             OSError,
             sqlite3.DatabaseError,
@@ -238,9 +214,8 @@ class _PolygonAccumulator:
         completed = self.connection.execute(
             "SELECT source_index, source_sha256 FROM checkpoint_sources ORDER BY source_index"
         ).fetchall()
-        return len(completed) == len(self.input_hashes) and all(
-            source_index == expected_index and source_sha256 == self.input_hashes[expected_index]
-            for expected_index, (source_index, source_sha256) in enumerate(completed)
+        return len(completed) == len(self.input_hashes) and _completed_sources_match(
+            completed, self.input_hashes
         )
 
     def unique_count(self) -> int:
@@ -396,32 +371,13 @@ class _PolygonAccumulator:
         )
 
     def rows(self) -> Iterator[dict[str, Any]]:
-        separator = "\x1f"
-        source_groups = self.connection.execute(
-            """
-            SELECT osm_type, osm_id, GROUP_CONCAT(source_pbf, ?)
-            FROM (
-                SELECT osm_type, osm_id, source_pbf
-                FROM polygon_sources
-                ORDER BY osm_type, osm_id, source_pbf
-            )
-            GROUP BY osm_type, osm_id
-            ORDER BY osm_type, osm_id
-            """,
-            (separator,),
-        )
+        source_groups = _polygon_source_groups(self.connection)
         group = next(source_groups, None)
         for osm_type, osm_id, payload in self.connection.execute(
             "SELECT osm_type, osm_id, payload FROM polygons ORDER BY osm_type, osm_id"
         ):
-            while group is not None and (group[0], group[1]) < (osm_type, osm_id):
-                group = next(source_groups, None)
-            if group is None or (group[0], group[1]) != (osm_type, osm_id):
-                raise ValueError("polygon accumulator provenance is incomplete")
-            row = pickle.loads(payload)  # noqa: S301 - database is created above
-            if not isinstance(row, dict):
-                raise TypeError("invalid polygon accumulator payload")
-            row["source_pbfs"] = str(group[2]).split(separator)
+            group = _advance_polygon_source_group(group, source_groups, (osm_type, osm_id))
+            row = _polygon_row_with_sources(payload, group)
             group = next(source_groups, None)
             yield row
 
@@ -432,6 +388,125 @@ class _PolygonAccumulator:
             else:
                 self.connection.rollback()
         self.connection.close()
+
+
+def _remove_incompatible_polygon_checkpoint(path: Path, input_hashes: Sequence[str] | None) -> None:
+    if (
+        input_hashes is not None
+        and path.is_file()
+        and not _PolygonAccumulator._is_compatible_checkpoint(path, input_hashes)
+    ):
+        remove_checkpoint_files(path)
+
+
+def _initialize_polygon_checkpoint(
+    connection: sqlite3.Connection,
+    input_hashes: Sequence[str] | None,
+    accumulator: _PolygonAccumulator,
+) -> int:
+    if input_hashes is None:
+        return 0
+    values = (
+        ("schema_version", str(PUBLIC_DEDUP_CHECKPOINT_SCHEMA_VERSION)),
+        ("input_hashes", json.dumps(input_hashes, separators=(",", ":"))),
+    )
+    connection.executemany(
+        "INSERT OR IGNORE INTO checkpoint_metadata(key, value) VALUES (?, ?)",
+        values,
+    )
+    connection.commit()
+    return accumulator._completed_input_rows()
+
+
+def _polygon_source_groups(
+    connection: sqlite3.Connection,
+) -> Iterator[tuple[str, int, str | None]]:
+    return iter(
+        connection.execute(
+            """
+            SELECT osm_type, osm_id, GROUP_CONCAT(source_pbf, ?)
+            FROM (
+                SELECT osm_type, osm_id, source_pbf
+                FROM polygon_sources
+                ORDER BY osm_type, osm_id, source_pbf
+            )
+            GROUP BY osm_type, osm_id
+            ORDER BY osm_type, osm_id
+            """,
+            ("\x1f",),
+        )
+    )
+
+
+def _advance_polygon_source_group(
+    group: tuple[str, int, str | None] | None,
+    groups: Iterator[tuple[str, int, str | None]],
+    identity: tuple[str, int],
+) -> tuple[str, int, str | None]:
+    while group is not None and (group[0], group[1]) < identity:
+        group = next(groups, None)
+    if group is None or (group[0], group[1]) != identity:
+        raise ValueError("polygon accumulator provenance is incomplete")
+    return group
+
+
+def _polygon_row_with_sources(payload: bytes, group: tuple[str, int, str | None]) -> dict[str, Any]:
+    row = pickle.loads(payload)  # noqa: S301 - database is created above
+    if not isinstance(row, dict):
+        raise TypeError("invalid polygon accumulator payload")
+    row["source_pbfs"] = _source_pbf_values(group[2])
+    return row
+
+
+def _source_pbf_values(value: str | None) -> list[str]:
+    return str(value or "").split("\x1f") if value else []
+
+
+def _polygon_checkpoint_metadata(connection: sqlite3.Connection) -> dict[str, str]:
+    return dict(connection.execute("SELECT key, value FROM checkpoint_metadata").fetchall())
+
+
+def _polygon_checkpoint_metadata_matches(
+    metadata: Mapping[str, str], input_hashes: Sequence[str]
+) -> bool:
+    return metadata.get("schema_version") == str(
+        PUBLIC_DEDUP_CHECKPOINT_SCHEMA_VERSION
+    ) and json.loads(metadata["input_hashes"]) == list(input_hashes)
+
+
+def _polygon_checkpoint_sources_match(
+    connection: sqlite3.Connection, input_hashes: Sequence[str]
+) -> bool:
+    for source_index, source_sha256, row_count in connection.execute(
+        "SELECT source_index, source_sha256, row_count FROM checkpoint_sources"
+    ):
+        if not _valid_polygon_checkpoint_source(
+            source_index, source_sha256, row_count, input_hashes
+        ):
+            return False
+    return True
+
+
+def _completed_sources_match(
+    completed: Sequence[tuple[int, str]], input_hashes: Sequence[str]
+) -> bool:
+    return all(
+        source_index == expected_index and source_sha256 == input_hashes[expected_index]
+        for expected_index, (source_index, source_sha256) in enumerate(completed)
+    )
+
+
+def _valid_polygon_checkpoint_source(
+    source_index: int,
+    source_sha256: str,
+    row_count: int,
+    input_hashes: Sequence[str],
+) -> bool:
+    return (
+        0 <= source_index < len(input_hashes)
+        and input_hashes[source_index] == source_sha256
+        and row_count >= 0
+    )
 
 
 def _iter_source_batches(output: Path, *, batch_size: int = 8192) -> Iterator[list[dict[str, Any]]]:
@@ -498,20 +573,28 @@ def _canonical_polygon_index(path: Path) -> dict[tuple[str, int], dict[str, obje
 
 def _validate_public_polygon(path: Path, *, expected_rows: int | None = None) -> None:
     parquet = pq.ParquetFile(path)
-    actual = parquet.schema_arrow
-    expected = public_polygon_schema()
-    if (
-        actual.names != expected.names
-        or actual.metadata != expected.metadata
-        or any(
-            actual_field.type != expected_field.type
-            or actual_field.nullable != expected_field.nullable
-            for actual_field, expected_field in zip(actual, expected, strict=True)
-        )
-    ):
+    _validate_public_polygon_schema(parquet)
+    _validate_public_polygon_rows(parquet, expected_rows)
+
+
+def _validate_public_polygon_schema(parquet: pq.ParquetFile) -> None:
+    if not _public_polygon_schema_matches(parquet.schema_arrow, public_polygon_schema()):
         raise ValueError("public polygon Parquet schema does not match")
+
+
+def _validate_public_polygon_rows(parquet: pq.ParquetFile, expected_rows: int | None) -> None:
     if expected_rows is not None and parquet.metadata.num_rows != expected_rows:
         raise ValueError("public polygon row count does not match")
+
+
+def _public_polygon_schema_matches(actual: pa.Schema, expected: pa.Schema) -> bool:
+    if actual.names != expected.names or actual.metadata != expected.metadata:
+        return False
+    return all(
+        actual_field.type == expected_field.type
+        and actual_field.nullable == expected_field.nullable
+        for actual_field, expected_field in zip(actual, expected, strict=True)
+    )
 
 
 def validate_public_dataset(data_root: Path) -> dict[str, str]:
@@ -527,35 +610,58 @@ def validate_public_dataset(data_root: Path) -> dict[str, str]:
     image_path = root / PUBLIC_IMAGE_RELATIVE
     link_path = root / PUBLIC_LINK_RELATIVE
     try:
-        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if payload.get("public_schema_version") != PUBLIC_SCHEMA_VERSION:
-            raise ValueError("unsupported public dataset schema version")
-        polygon_output = payload["polygon_output"]
-        image_output = payload["image_output"]
-        link_output = payload["link_output"]
-        if polygon_output["size_bytes"] != polygon_path.stat().st_size:
-            raise ValueError("public polygon size mismatch")
-        if image_output["size_bytes"] != image_path.stat().st_size:
-            raise ValueError("public image size mismatch")
-        if link_output["size_bytes"] != link_path.stat().st_size:
-            raise ValueError("public link size mismatch")
-        if file_sha256(polygon_path) != polygon_output["sha256"]:
-            raise ValueError("public polygon digest mismatch")
-        if file_sha256(image_path) != image_output["sha256"]:
-            raise ValueError("public image digest mismatch")
-        if file_sha256(link_path) != link_output["sha256"]:
-            raise ValueError("public link digest mismatch")
-        _validate_public_polygon(polygon_path, expected_rows=int(polygon_output["row_count"]))
-        validate_public_image_parquet(image_path, expected_rows=int(image_output["row_count"]))
-        validate_public_link_parquet(link_path, expected_rows=int(link_output["row_count"]))
+        payload = _read_public_manifest(manifest_path)
+        outputs = _public_output_paths(payload, polygon_path, image_path, link_path)
+        for label, path, output in outputs:
+            _validate_public_output(label, path, output)
+        _validate_public_parquet_files(payload, polygon_path, image_path, link_path)
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
         raise ValueError(str(error) or "public dataset artifacts are missing or invalid") from error
+    polygon_output = payload["polygon_output"]
+    image_output = payload["image_output"]
+    link_output = payload["link_output"]
     return {
         PUBLIC_POLYGON_RELATIVE: str(polygon_output["sha256"]),
         PUBLIC_IMAGE_RELATIVE: str(image_output["sha256"]),
         PUBLIC_LINK_RELATIVE: str(link_output["sha256"]),
         PUBLIC_MANIFEST_RELATIVE: file_sha256(manifest_path),
     }
+
+
+def _read_public_manifest(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("public_schema_version") != PUBLIC_SCHEMA_VERSION:
+        raise ValueError("unsupported public dataset schema version")
+    return payload
+
+
+def _public_output_paths(
+    payload: Mapping[str, Any], polygon_path: Path, image_path: Path, link_path: Path
+) -> tuple[tuple[str, Path, Mapping[str, Any]], ...]:
+    return (
+        ("polygon", polygon_path, payload["polygon_output"]),
+        ("image", image_path, payload["image_output"]),
+        ("link", link_path, payload["link_output"]),
+    )
+
+
+def _validate_public_output(label: str, path: Path, output: Mapping[str, Any]) -> None:
+    if output["size_bytes"] != path.stat().st_size:
+        raise ValueError(f"public {label} size mismatch")
+    if file_sha256(path) != output["sha256"]:
+        raise ValueError(f"public {label} digest mismatch")
+
+
+def _validate_public_parquet_files(
+    payload: Mapping[str, Any], polygon_path: Path, image_path: Path, link_path: Path
+) -> None:
+    _validate_public_polygon(
+        polygon_path, expected_rows=int(payload["polygon_output"]["row_count"])
+    )
+    validate_public_image_parquet(
+        image_path, expected_rows=int(payload["image_output"]["row_count"])
+    )
+    validate_public_link_parquet(link_path, expected_rows=int(payload["link_output"]["row_count"]))
 
 
 def _public_polygon_manifest(path: Path, rows: int) -> Manifest:
@@ -575,15 +681,25 @@ def _manifest_polygon_row_count(root: Path, output: Path, digest: str) -> int | 
     try:
         payload = json.loads((root / PUBLIC_MANIFEST_RELATIVE).read_text(encoding="utf-8"))
         polygon_output = payload["polygon_output"]
-        if (
-            polygon_output["sha256"] != digest
-            or int(polygon_output["size_bytes"]) != output.stat().st_size
-        ):
+        if not _manifest_polygon_output_matches(polygon_output, output, digest):
             return None
         row_count = int(polygon_output["row_count"])
-        return row_count if row_count >= 0 else None
+        return _nonnegative_row_count(row_count)
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
         return None
+
+
+def _manifest_polygon_output_matches(
+    polygon_output: Mapping[str, Any], output: Path, digest: str
+) -> bool:
+    return (
+        polygon_output["sha256"] == digest
+        and int(polygon_output["size_bytes"]) == output.stat().st_size
+    )
+
+
+def _nonnegative_row_count(row_count: int) -> int | None:
+    return row_count if row_count >= 0 else None
 
 
 def _remove_legacy_public_asset(root: Path) -> None:
@@ -645,40 +761,95 @@ def _try_reuse(
     image_path = root / PUBLIC_IMAGE_RELATIVE
     link_path = root / PUBLIC_LINK_RELATIVE
     try:
-        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if payload.get("public_schema_version") != PUBLIC_SCHEMA_VERSION:
-            return None
-        if payload.get("polygon_inputs") != [m.output.sha256 for m, _ in polygon_manifests]:
-            return None
-        if payload.get("asset_inputs") != [m.output.sha256 for m, _ in asset_manifests]:
-            return None
-        if not polygon_path.is_file() or not image_path.is_file() or not link_path.is_file():
-            return None
-        polygon_manifest = _public_polygon_manifest(polygon_path, int(payload["polygon_rows"]))
-        if polygon_manifest.output.sha256 != payload["polygon_output"]["sha256"]:
-            return None
-        if file_sha256(image_path) != payload["image_output"]["sha256"]:
-            return None
-        if file_sha256(link_path) != payload["link_output"]["sha256"]:
-            return None
-        validate_public_dataset(root)
-        return PublicDatasetResult(
+        payload = _read_public_manifest(manifest_path)
+        if not _reuse_sources_and_outputs_match(
+            payload,
+            polygon_manifests,
+            asset_manifests,
             polygon_path,
             image_path,
             link_path,
-            manifest_path,
-            polygon_manifest,
-            polygon_manifest.output.row_count,
-            int(payload["image_rows"]),
-            int(payload["link_rows"]),
-            int(payload["duplicate_polygon_rows"]),
-            int(payload["duplicate_image_rows"]),
-            int(payload["duplicate_link_rows"]),
-            int(payload.get("orphan_asset_rows", 0)),
-            reused=True,
+        ):
+            return None
+        polygon_manifest = _reuse_polygon_manifest(payload, polygon_path)
+        if polygon_manifest is None:
+            return None
+        if not _reuse_hashes_match(payload, image_path, link_path):
+            return None
+        validate_public_dataset(root)
+        return _reuse_result(
+            payload, polygon_path, image_path, link_path, manifest_path, polygon_manifest
         )
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
         return None
+
+
+def _public_outputs_exist(*paths: Path) -> bool:
+    return all(path.is_file() and not path.is_symlink() for path in paths)
+
+
+def _reuse_sources_and_outputs_match(
+    payload: Mapping[str, Any],
+    polygon_manifests: Sequence[tuple[Any, Path]],
+    asset_manifests: Sequence[tuple[Any, Path]],
+    polygon_path: Path,
+    image_path: Path,
+    link_path: Path,
+) -> bool:
+    return _reuse_inputs_match(
+        payload, polygon_manifests, asset_manifests
+    ) and _public_outputs_exist(polygon_path, image_path, link_path)
+
+
+def _reuse_inputs_match(
+    payload: Mapping[str, Any],
+    polygon_manifests: Sequence[tuple[Any, Path]],
+    asset_manifests: Sequence[tuple[Any, Path]],
+) -> bool:
+    return payload.get("polygon_inputs") == [m.output.sha256 for m, _ in polygon_manifests] and (
+        payload.get("asset_inputs") == [m.output.sha256 for m, _ in asset_manifests]
+    )
+
+
+def _reuse_polygon_manifest(payload: Mapping[str, Any], polygon_path: Path) -> Manifest | None:
+    polygon_manifest = _public_polygon_manifest(polygon_path, int(payload["polygon_rows"]))
+    return (
+        polygon_manifest
+        if polygon_manifest.output.sha256 == payload["polygon_output"]["sha256"]
+        else None
+    )
+
+
+def _reuse_hashes_match(payload: Mapping[str, Any], image_path: Path, link_path: Path) -> bool:
+    return (
+        file_sha256(image_path) == payload["image_output"]["sha256"]
+        and file_sha256(link_path) == payload["link_output"]["sha256"]
+    )
+
+
+def _reuse_result(
+    payload: Mapping[str, Any],
+    polygon_path: Path,
+    image_path: Path,
+    link_path: Path,
+    manifest_path: Path,
+    polygon_manifest: Manifest,
+) -> PublicDatasetResult:
+    return PublicDatasetResult(
+        polygon_path=polygon_path,
+        image_path=image_path,
+        link_path=link_path,
+        manifest_path=manifest_path,
+        polygon_manifest=polygon_manifest,
+        polygon_rows=polygon_manifest.output.row_count,
+        image_rows=int(payload["image_rows"]),
+        link_rows=int(payload["link_rows"]),
+        duplicate_polygon_rows=int(payload["duplicate_polygon_rows"]),
+        duplicate_image_rows=int(payload["duplicate_image_rows"]),
+        duplicate_link_rows=int(payload["duplicate_link_rows"]),
+        orphan_asset_rows=int(payload.get("orphan_asset_rows", 0)),
+        reused=True,
+    )
 
 
 def build_public_dataset(
@@ -696,64 +867,15 @@ def build_public_dataset(
     )
     reused = _try_reuse(root, polygon_manifests, source_assets)
     if reused is not None:
-        remove_checkpoint_files(root / PUBLIC_DEDUP_CHECKPOINT_RELATIVE)
-        remove_checkpoint_files(root / PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE)
-        _remove_legacy_public_asset(root)
+        _cleanup_reused_public_dataset(root)
         return reused
 
-    temporary_root = root / "tmp"
-    created_temporary_root = not temporary_root.exists()
-    temporary_root.mkdir(parents=True, exist_ok=True)
+    temporary_root, created_temporary_root = _prepare_public_build_root(root)
     database_path = root / PUBLIC_DEDUP_CHECKPOINT_RELATIVE
-    input_hashes = [manifest.output.sha256 for manifest, _ in polygon_manifests]
-    accumulator = _PolygonAccumulator(database_path, input_hashes=input_hashes)
-    try:
-        for source_index, (manifest, output) in enumerate(polygon_manifests):
-            source_sha256 = manifest.output.sha256
-            if accumulator.source_completed(source_index, source_sha256):
-                continue
-            accumulator.begin_source()
-            source_rows = 0
-            try:
-                for batch in _iter_source_batches(output):
-                    source_rows += len(batch)
-                    accumulator.add_many(batch)
-                accumulator.complete_source(source_index, source_sha256, source_rows)
-            except BaseException:
-                accumulator.rollback_source()
-                raise
-        input_polygon_rows = accumulator.input_rows
-        polygon_path = root / PUBLIC_POLYGON_RELATIVE
-        polygon_rows_count = 0
-        reuse_polygon = False
-        recorded_digest = accumulator.public_output_sha256()
-        if (
-            accumulator.all_sources_completed()
-            and recorded_digest is not None
-            and polygon_path.is_file()
-        ):
-            try:
-                polygon_rows_count = accumulator.public_output_rows()
-                if polygon_rows_count is None:
-                    polygon_rows_count = _manifest_polygon_row_count(
-                        root, polygon_path, recorded_digest
-                    )
-                if polygon_rows_count is None:
-                    # The Parquet footer is authoritative and avoids scanning
-                    # the much larger SQLite checkpoint table.
-                    polygon_rows_count = int(pq.ParquetFile(polygon_path).metadata.num_rows)
-                _validate_public_polygon(polygon_path, expected_rows=polygon_rows_count)
-                reuse_polygon = file_sha256(polygon_path) == recorded_digest
-            except (OSError, ValueError, pa.ArrowException):
-                reuse_polygon = False
-        if not reuse_polygon:
-            polygon_rows_count = _write_polygon_rows(accumulator.rows(), polygon_path)
-            accumulator.record_public_output(file_sha256(polygon_path), polygon_rows_count)
-        if polygon_rows_count is None:
-            raise RuntimeError("public polygon row count is unavailable")
-        canonical_polygons = _canonical_polygon_index(polygon_path)
-    finally:
-        accumulator.close()
+    polygon_path, polygon_rows_count, input_polygon_rows = _materialize_polygons(
+        root, polygon_manifests, database_path
+    )
+    canonical_polygons = _canonical_polygon_index(polygon_path)
     polygon_manifest = _public_polygon_manifest(polygon_path, polygon_rows_count)
     assets = build_public_asset_tables(
         root,
@@ -762,15 +884,141 @@ def build_public_dataset(
         polygon_fingerprint=polygon_manifest.output.sha256,
         checkpoint_root=asset_checkpoint_root,
     )
-    payload = _manifest_payload(
+    result = _write_public_dataset(
+        root,
         polygon_manifests,
         source_assets,
         polygon_manifest,
         assets,
         polygon_rows=polygon_rows_count,
+        input_polygon_rows=input_polygon_rows,
+    )
+    _cleanup_public_build(root, temporary_root, created_temporary_root, database_path)
+    return result
+
+
+def _cleanup_reused_public_dataset(root: Path) -> None:
+    remove_checkpoint_files(root / PUBLIC_DEDUP_CHECKPOINT_RELATIVE)
+    remove_checkpoint_files(root / PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE)
+    _remove_legacy_public_asset(root)
+
+
+def _prepare_public_build_root(root: Path) -> tuple[Path, bool]:
+    temporary_root = root / "tmp"
+    created = not temporary_root.exists()
+    temporary_root.mkdir(parents=True, exist_ok=True)
+    return temporary_root, created
+
+
+def _process_polygon_sources(
+    accumulator: _PolygonAccumulator,
+    polygon_manifests: Sequence[tuple[Any, Path]],
+) -> None:
+    for source_index, (manifest, output) in enumerate(polygon_manifests):
+        source_sha256 = manifest.output.sha256
+        if accumulator.source_completed(source_index, source_sha256):
+            continue
+        accumulator.begin_source()
+        source_rows = 0
+        try:
+            for batch in _iter_source_batches(output):
+                source_rows += len(batch)
+                accumulator.add_many(batch)
+            accumulator.complete_source(source_index, source_sha256, source_rows)
+        except BaseException:
+            accumulator.rollback_source()
+            raise
+
+
+def _reusable_polygon_rows(
+    root: Path, accumulator: _PolygonAccumulator, polygon_path: Path
+) -> int | None:
+    checkpoint = _polygon_output_checkpoint(accumulator, polygon_path)
+    if checkpoint is None:
+        return None
+    recorded_digest, row_count = checkpoint
+    try:
+        return _validated_reusable_rows(root, polygon_path, recorded_digest, row_count)
+    except (OSError, ValueError, pa.ArrowException):
+        return None
+
+
+def _polygon_output_checkpoint(
+    accumulator: _PolygonAccumulator, polygon_path: Path
+) -> tuple[str, int | None] | None:
+    recorded_digest = accumulator.public_output_sha256()
+    if not accumulator.all_sources_completed() or recorded_digest is None:
+        return None
+    if not polygon_path.is_file():
+        return None
+    return recorded_digest, accumulator.public_output_rows()
+
+
+def _validated_reusable_rows(
+    root: Path,
+    polygon_path: Path,
+    recorded_digest: str,
+    row_count: int | None,
+) -> int | None:
+    row_count = _resolved_polygon_row_count(root, polygon_path, recorded_digest, row_count)
+    _validate_public_polygon(polygon_path, expected_rows=row_count)
+    return row_count if _polygon_digest_matches(polygon_path, recorded_digest) else None
+
+
+def _resolved_polygon_row_count(
+    root: Path, polygon_path: Path, recorded_digest: str, row_count: int | None
+) -> int:
+    if row_count is not None:
+        return row_count
+    recorded = _manifest_polygon_row_count(root, polygon_path, recorded_digest)
+    if recorded is not None:
+        return recorded
+    return int(pq.ParquetFile(polygon_path).metadata.num_rows)
+
+
+def _polygon_digest_matches(path: Path, recorded_digest: str) -> bool:
+    return file_sha256(path) == recorded_digest
+
+
+def _materialize_polygons(
+    root: Path,
+    polygon_manifests: Sequence[tuple[Any, Path]],
+    database_path: Path,
+) -> tuple[Path, int, int]:
+    input_hashes = [manifest.output.sha256 for manifest, _ in polygon_manifests]
+    accumulator = _PolygonAccumulator(database_path, input_hashes=input_hashes)
+    polygon_path = root / PUBLIC_POLYGON_RELATIVE
+    try:
+        _process_polygon_sources(accumulator, polygon_manifests)
+        input_polygon_rows = accumulator.input_rows
+        polygon_rows_count = _reusable_polygon_rows(root, accumulator, polygon_path)
+        if polygon_rows_count is None:
+            polygon_rows_count = _write_polygon_rows(accumulator.rows(), polygon_path)
+            accumulator.record_public_output(file_sha256(polygon_path), polygon_rows_count)
+        return polygon_path, polygon_rows_count, input_polygon_rows
+    finally:
+        accumulator.close()
+
+
+def _write_public_dataset(
+    root: Path,
+    polygon_manifests: Sequence[tuple[Any, Path]],
+    source_assets: Sequence[tuple[Any, Path]],
+    polygon_manifest: Manifest,
+    assets: PublicAssetsResult,
+    *,
+    polygon_rows: int,
+    input_polygon_rows: int,
+) -> PublicDatasetResult:
+    payload = _manifest_payload(
+        polygon_manifests,
+        source_assets,
+        polygon_manifest,
+        assets,
+        polygon_rows=polygon_rows,
         image_rows=assets.image_rows,
         link_rows=assets.link_rows,
-        duplicate_polygon_rows=input_polygon_rows - polygon_rows_count,
+        duplicate_polygon_rows=input_polygon_rows - polygon_rows,
         duplicate_image_rows=assets.duplicate_image_rows,
         duplicate_link_rows=assets.duplicate_link_rows,
         orphan_asset_rows=assets.orphan_rows,
@@ -784,24 +1032,29 @@ def build_public_dataset(
         suffix=".tmp",
         sync_directory=True,
     )
-    _remove_legacy_public_asset(root)
-    remove_checkpoint_files(database_path)
-    if created_temporary_root and not any(temporary_root.iterdir()):
-        temporary_root.rmdir()
     return PublicDatasetResult(
-        polygon_path,
+        root / PUBLIC_POLYGON_RELATIVE,
         assets.image_path,
         assets.link_path,
         root / PUBLIC_MANIFEST_RELATIVE,
         polygon_manifest,
-        polygon_rows_count,
+        polygon_rows,
         assets.image_rows,
         assets.link_rows,
-        input_polygon_rows - polygon_rows_count,
+        input_polygon_rows - polygon_rows,
         assets.duplicate_image_rows,
         assets.duplicate_link_rows,
         assets.orphan_rows,
     )
+
+
+def _cleanup_public_build(
+    root: Path, temporary_root: Path, created_temporary_root: bool, database_path: Path
+) -> None:
+    _remove_legacy_public_asset(root)
+    remove_checkpoint_files(database_path)
+    if created_temporary_root and not any(temporary_root.iterdir()):
+        temporary_root.rmdir()
 
 
 __all__ = [

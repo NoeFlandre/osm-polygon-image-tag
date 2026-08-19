@@ -67,33 +67,49 @@ def metrics_from_statistics(statistics: Mapping[str, object]) -> dict[str, int |
     """
     metrics: dict[str, int | float] = {}
     for source, prefix in ((statistics, ""), (_mapping(statistics.get("assets")), "asset_")):
-        fields = {
-            "rows": f"{prefix}rows",
-            "shards": f"{prefix}shards",
-            "duplicate_observations": f"{prefix}duplicate_rows",
-            "duplicate_observations_removed": f"{prefix}duplicate_rows_removed",
-            "duplicate_assets": f"{prefix}duplicate_rows",
-            "duplicate_assets_removed": f"{prefix}duplicate_rows_removed",
-            "direct_urls": f"{prefix}direct_image_urls",
-            "stable_direct_urls": f"{prefix}stable_direct_image_urls",
-            "page_urls": f"{prefix}page_urls",
-            "licensed_assets": f"{prefix}licensed_assets",
-            "pending_retries": f"{prefix}pending_retries",
-            "output_bytes": f"{prefix}output_bytes",
-            "source_bytes": f"{prefix}source_bytes",
-        }
-        for field, name in fields.items():
-            _add_metric(metrics, name, source.get(field))
+        metrics.update(_source_metrics(source, prefix))
+    metrics.update(_geography_metrics(_mapping(statistics.get("geography"))))
+    metrics.update(_derived_metrics(statistics))
+    return dict(sorted(metrics.items()))
 
-        for field, field_prefix in (
-            ("provider_counts", f"{prefix}provider_"),
-            ("status_counts", f"{prefix}status_"),
-        ):
-            for key, value in sorted(_mapping(source.get(field)).items()):
-                safe_key = str(key).replace("-", "_").replace(" ", "_")
-                _add_metric(metrics, f"{field_prefix}{safe_key}", value)
 
-    geography = _mapping(statistics.get("geography"))
+def _source_metrics(source: Mapping[str, object], prefix: str) -> dict[str, int | float]:
+    metrics: dict[str, int | float] = {}
+    fields = {
+        "rows": f"{prefix}rows",
+        "shards": f"{prefix}shards",
+        "duplicate_observations": f"{prefix}duplicate_rows",
+        "duplicate_observations_removed": f"{prefix}duplicate_rows_removed",
+        "duplicate_assets": f"{prefix}duplicate_rows",
+        "duplicate_assets_removed": f"{prefix}duplicate_rows_removed",
+        "direct_urls": f"{prefix}direct_image_urls",
+        "stable_direct_urls": f"{prefix}stable_direct_image_urls",
+        "page_urls": f"{prefix}page_urls",
+        "licensed_assets": f"{prefix}licensed_assets",
+        "pending_retries": f"{prefix}pending_retries",
+        "output_bytes": f"{prefix}output_bytes",
+        "source_bytes": f"{prefix}source_bytes",
+    }
+    for field, name in fields.items():
+        _add_metric(metrics, name, source.get(field))
+    for field, field_prefix in (
+        ("provider_counts", f"{prefix}provider_"),
+        ("status_counts", f"{prefix}status_"),
+    ):
+        metrics.update(_nested_metrics(source.get(field), field_prefix))
+    return metrics
+
+
+def _nested_metrics(value: object, prefix: str) -> dict[str, int | float]:
+    metrics: dict[str, int | float] = {}
+    for key, item in sorted(_mapping(value).items()):
+        safe_key = str(key).replace("-", "_").replace(" ", "_")
+        _add_metric(metrics, f"{prefix}{safe_key}", item)
+    return metrics
+
+
+def _geography_metrics(geography: Mapping[str, object]) -> dict[str, int | float]:
+    metrics: dict[str, int | float] = {}
     for field, name in (
         ("cell_count", "geographic_cell_count"),
         ("polygon_rows", "geographic_polygon_rows"),
@@ -102,15 +118,20 @@ def metrics_from_statistics(statistics: Mapping[str, object]) -> dict[str, int |
         ("max_cell_count", "geographic_max_cell_count"),
     ):
         _add_metric(metrics, name, geography.get(field))
+    return metrics
 
+
+def _derived_metrics(statistics: Mapping[str, object]) -> dict[str, int | float]:
+    metrics: dict[str, int | float] = {}
+    assets = _mapping(statistics.get("assets"))
     polygon_rows = _number(statistics.get("rows"))
-    asset_rows = _number(_mapping(statistics.get("assets")).get("rows"))
-    direct_urls = _number(_mapping(statistics.get("assets")).get("direct_urls"))
+    asset_rows = _number(assets.get("rows"))
+    direct_urls = _number(assets.get("direct_urls"))
     if polygon_rows:
         metrics["asset_rows_per_polygon"] = float(asset_rows or 0) / polygon_rows
     if asset_rows:
         metrics["direct_image_url_ratio"] = float(direct_urls or 0) / asset_rows
-    return dict(sorted(metrics.items()))
+    return metrics
 
 
 def _load_statistics(data_root: Path) -> tuple[dict[str, object], str]:

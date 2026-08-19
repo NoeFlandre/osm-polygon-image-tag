@@ -5,9 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from osm_polygon_image_tag.artifacts.geography.cache import (
     CACHE_SCHEMA_VERSION,
     PerShardCache,
+    _parse_cell_entry,
     input_digest,
     load_shard_cache,
     load_stats_cache,
@@ -80,6 +83,22 @@ def test_shard_cache_rejects_empty_shard_path(tmp_path: Path) -> None:
     (cache_root / "shards.json").write_text(json.dumps(payload), encoding="utf-8")
 
     assert load_shard_cache(cache_root) is None
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ({"h3_cell": "cell", "polygon_count": 2}, ("cell", 2)),
+        (None, None),
+        ({"h3_cell": "", "polygon_count": 1}, None),
+        ({"h3_cell": "cell", "polygon_count": -1}, None),
+        ({"h3_cell": "cell", "polygon_count": True}, None),
+    ],
+)
+def test_cache_cell_entry_parser_rejects_invalid_shapes(
+    value: object, expected: tuple[str, int] | None
+) -> None:
+    assert _parse_cell_entry(value) == expected
 
 
 def test_stats_cache_round_trip_and_schema_validation(tmp_path: Path) -> None:

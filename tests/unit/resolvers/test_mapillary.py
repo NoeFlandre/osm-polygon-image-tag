@@ -4,7 +4,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from osm_polygon_image_tag.resolvers.mapillary import MapillaryResolver
+from osm_polygon_image_tag.resolvers.mapillary import MapillaryResolver, _expiry
 from osm_polygon_image_tag.resolvers.types import ResolverContext
 
 
@@ -20,6 +20,20 @@ class Http:
         self.urls.append(url)
         self.headers.append(headers)
         return self.payload
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        (None, None),
+        ("https://cdn.test/image.jpg?Expires=not-a-number", None),
+        ("https://cdn.test/image.jpg?Expires=é", None),
+    ],
+)
+def test_mapillary_expiry_accepts_only_ascii_epoch_query_values(
+    url: str | None, expected: datetime | None
+) -> None:
+    assert _expiry(url) == expected
 
 
 @pytest.mark.asyncio

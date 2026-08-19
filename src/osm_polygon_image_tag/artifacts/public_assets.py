@@ -56,6 +56,17 @@ class PublicAssetsResult:
     orphan_rows: int
 
 
+@dataclass(slots=True)
+class _BatchValues:
+    input_rows: int
+    orphan_rows: int
+    image_values: list[tuple[object, ...]]
+    image_source_values: list[tuple[bytes, str]]
+    link_values: list[tuple[bytes, object]]
+    link_source_values: list[tuple[bytes, str]]
+    link_version_values: list[tuple[bytes, int]]
+
+
 def public_image_schema() -> pa.Schema:
     """Return the one-row-per-image public schema."""
     utc_timestamp = pa.timestamp("ms", tz="UTC")
@@ -128,13 +139,21 @@ def _jsonable(value: object) -> object:
     if isinstance(value, datetime | date):
         return value.isoformat()
     if isinstance(value, dict):
-        return {
-            str(key): _jsonable(item)
-            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
-        }
+        return _jsonable_mapping(cast(dict[object, object], value))
     if isinstance(value, list):
-        return [_jsonable(item) for item in value]
+        return _jsonable_list(value)
     return value
+
+
+def _jsonable_mapping(value: dict[object, object]) -> dict[str, object]:
+    return {
+        str(key): _jsonable(item)
+        for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+    }
+
+
+def _jsonable_list(value: Sequence[object]) -> list[object]:
+    return [_jsonable(item) for item in value]
 
 
 def _stable_json(value: object) -> str:
@@ -238,9 +257,14 @@ def _iter_batches(output: Path, *, batch_size: int = 8192) -> Iterator[list[dict
 
 
 def _remove_legacy_checkpoints(temporary_root: Path, current: Path) -> None:
+    for path in _legacy_checkpoint_paths(temporary_root, current):
+        path.unlink(missing_ok=True)
+
+
+def _legacy_checkpoint_paths(temporary_root: Path, current: Path) -> Iterator[Path]:
     for path in temporary_root.glob(".public-assets.*.sqlite*"):
         if path != current:
-            path.unlink(missing_ok=True)
+            yield path
 
 
 def _copy_clean_checkpoint(source: Path, destination: Path) -> None:
@@ -265,6 +289,54 @@ def _copy_clean_checkpoint(source: Path, destination: Path) -> None:
         raise
 
 
+def _checkpoint_family(path: Path) -> tuple[Path, ...]:
+    return tuple(Path(f"{path}{suffix}") for suffix in ("", "-journal", "-wal", "-shm"))
+
+
+def _validate_checkpoint_root(data_root: Path, checkpoint_root: Path) -> Path:
+    if checkpoint_root.exists() and checkpoint_root.is_symlink():
+        raise ValueError("asset checkpoint root must not be a symlink")
+    scratch_root = checkpoint_root.expanduser().resolve()
+    data_resolved = data_root.resolve()
+    if _checkpoint_root_overlaps(scratch_root, data_resolved):
+        raise ValueError("asset checkpoint root must be separate from the data root")
+    scratch_root.mkdir(parents=True, exist_ok=True)
+    return scratch_root
+
+
+def _seed_external_checkpoint(durable: Path, scratch: Path) -> None:
+    scratch_family = _checkpoint_family(scratch)
+    durable_family = _checkpoint_family(durable)
+    if _can_seed_external_checkpoint(scratch_family, durable, durable_family):
+        _checkpoint_max_bytes(scratch, initial_bytes=durable.stat().st_size)
+        _copy_clean_checkpoint(durable, scratch)
+
+
+def _checkpoint_root_overlaps(scratch: Path, data_root: Path) -> bool:
+    return scratch == data_root or scratch in data_root.parents or data_root in scratch.parents
+
+
+def _can_seed_external_checkpoint(
+    scratch_family: Sequence[Path], durable: Path, durable_family: Sequence[Path]
+) -> bool:
+    return (
+        not any(path.exists() for path in scratch_family)
+        and durable.is_file()
+        and not any(path.exists() for path in durable_family[1:])
+    )
+
+
+def _active_checkpoint(durable: Path, scratch: Path) -> Path:
+    scratch_family = _checkpoint_family(scratch)
+    durable_family = _checkpoint_family(durable)
+    return (
+        scratch
+        if any(path.exists() for path in scratch_family)
+        or not any(path.exists() for path in durable_family[1:])
+        else durable
+    )
+
+
 def _prepare_checkpoint_paths(
     data_root: Path, checkpoint_root: Path | None
 ) -> tuple[Path, tuple[Path, ...]]:
@@ -273,39 +345,12 @@ def _prepare_checkpoint_paths(
     if checkpoint_root is None:
         return durable, (durable,)
 
-    if checkpoint_root.exists() and checkpoint_root.is_symlink():
-        raise ValueError("asset checkpoint root must not be a symlink")
-    scratch_root = checkpoint_root.expanduser().resolve()
-    data_resolved = data_root.resolve()
-    if (
-        scratch_root == data_resolved
-        or scratch_root in data_resolved.parents
-        or data_resolved in scratch_root.parents
-    ):
-        raise ValueError("asset checkpoint root must be separate from the data root")
-    scratch_root.mkdir(parents=True, exist_ok=True)
+    scratch_root = _validate_checkpoint_root(data_root, checkpoint_root)
     scratch = scratch_root / PUBLIC_ASSET_CHECKPOINT_FILENAME
     if scratch.is_symlink():
         raise ValueError("asset checkpoint file must not be a symlink")
-    scratch_family = tuple(
-        Path(f"{scratch}{suffix}") for suffix in ("", "-journal", "-wal", "-shm")
-    )
-    durable_family = tuple(
-        Path(f"{durable}{suffix}") for suffix in ("", "-journal", "-wal", "-shm")
-    )
-    if (
-        not any(path.exists() for path in scratch_family)
-        and durable.is_file()
-        and not any(path.exists() for path in durable_family[1:])
-    ):
-        _checkpoint_max_bytes(scratch, initial_bytes=durable.stat().st_size)
-        _copy_clean_checkpoint(durable, scratch)
-    active = (
-        scratch
-        if any(path.exists() for path in scratch_family)
-        or not any(path.exists() for path in durable_family[1:])
-        else durable
-    )
+    _seed_external_checkpoint(durable, scratch)
+    active = _active_checkpoint(durable, scratch)
     cleanup = (active, scratch if active != scratch else durable)
     return active, cleanup
 
@@ -313,10 +358,19 @@ def _prepare_checkpoint_paths(
 def _checkpoint_max_bytes(path: Path, *, initial_bytes: int = 0) -> int:
     """Return a conservative file limit for an external checkpoint."""
     free_bytes = shutil.disk_usage(path.parent).free
+    current_bytes = path.stat().st_size if path.is_file() else initial_bytes
+    max_bytes = _checkpoint_limit(free_bytes, current_bytes)
+    _validate_checkpoint_limit(current_bytes, max_bytes)
+    return max_bytes
+
+
+def _checkpoint_limit(free_bytes: int, current_bytes: int) -> int:
     reserved_bytes = max(PUBLIC_ASSET_CHECKPOINT_MIN_FREE_BYTES, free_bytes // 3)
     growth_budget = (free_bytes - reserved_bytes) // 2
-    current_bytes = path.stat().st_size if path.is_file() else initial_bytes
-    max_bytes = min(PUBLIC_ASSET_CHECKPOINT_MAX_FILE_BYTES, current_bytes + growth_budget)
+    return min(PUBLIC_ASSET_CHECKPOINT_MAX_FILE_BYTES, current_bytes + growth_budget)
+
+
+def _validate_checkpoint_limit(current_bytes: int, max_bytes: int) -> None:
     if max_bytes <= 0:
         raise RuntimeError(
             "asset checkpoint filesystem has insufficient free space; "
@@ -327,7 +381,252 @@ def _checkpoint_max_bytes(path: Path, *, initial_bytes: int = 0) -> int:
             "asset checkpoint is too large for the safe local-storage limit; "
             "free local space or use the durable checkpoint"
         )
-    return max_bytes
+
+
+def _checkpoint_metadata(connection: sqlite3.Connection) -> dict[str, str]:
+    return dict(connection.execute("SELECT key, value FROM checkpoint_metadata").fetchall())
+
+
+def _checkpoint_metadata_matches(
+    metadata: Mapping[str, str],
+    input_hashes: Sequence[str],
+    polygon_fingerprint: str,
+) -> bool:
+    return (
+        metadata.get("schema_version") == str(PUBLIC_ASSET_DEDUP_CHECKPOINT_SCHEMA_VERSION)
+        and json.loads(metadata["input_hashes"]) == list(input_hashes)
+        and metadata.get("polygon_fingerprint") == polygon_fingerprint
+    )
+
+
+def _checkpoint_sources_match(connection: sqlite3.Connection, input_hashes: Sequence[str]) -> bool:
+    for source_index, source_sha256, row_count, orphan_count in connection.execute(
+        "SELECT source_index, source_sha256, row_count, orphan_count FROM checkpoint_sources"
+    ):
+        if not _checkpoint_source_is_valid(
+            source_index, source_sha256, row_count, orphan_count, input_hashes
+        ):
+            return False
+    return True
+
+
+def _checkpoint_source_is_valid(
+    source_index: int,
+    source_sha256: str,
+    row_count: int,
+    orphan_count: int,
+    input_hashes: Sequence[str],
+) -> bool:
+    return (
+        0 <= source_index < len(input_hashes)
+        and input_hashes[source_index] == source_sha256
+        and row_count >= 0
+        and 0 <= orphan_count <= row_count
+    )
+
+
+def _prepare_batch_values(
+    rows: Iterable[tuple[Mapping[str, object], Mapping[str, object] | None]],
+) -> _BatchValues:
+    values = _BatchValues(0, 0, [], [], [], [], [])
+    for row, polygon in rows:
+        values.input_rows += 1
+        if polygon is None:
+            values.orphan_rows += 1
+            continue
+        _append_batch_row(values, row, polygon)
+    return values
+
+
+def _append_batch_row(
+    values: _BatchValues,
+    row: Mapping[str, object],
+    polygon: Mapping[str, object],
+) -> None:
+    source_pbf = str(row["source_pbf"])
+    identity = image_identity(row)
+    image_key = _digest(identity)
+    public_id = f"img_{image_key.hex()}"
+    payload = _image_payload(row, public_id)
+    values.image_values.append(
+        (
+            image_key,
+            sqlite3.Binary(pickle.dumps(payload, protocol=5)),
+            _quality_rank(row),
+            _stable_json(payload),
+        )
+    )
+    values.image_source_values.append((image_key, source_pbf))
+    polygon_key = (str(polygon["osm_type"]), int(str(polygon["osm_id"])))
+    link_identity = (
+        polygon_key,
+        identity,
+        row["source_tag_key"],
+        row["source_tag_value"],
+        row["canonical_reference"],
+        row["asset_index"],
+        row["relation_kind"],
+    )
+    link_key = _digest(link_identity)
+    link_payload = _link_payload(row, polygon, public_id)
+    values.link_values.append((link_key, sqlite3.Binary(pickle.dumps(link_payload, protocol=5))))
+    values.link_source_values.append((link_key, source_pbf))
+    version = row.get("osm_version")
+    if version is not None:
+        values.link_version_values.append((link_key, int(str(version))))
+
+
+def _link_payload(
+    row: Mapping[str, object], polygon: Mapping[str, object], public_id: str
+) -> dict[str, object]:
+    return {
+        "osm_type": polygon["osm_type"],
+        "osm_id": polygon["osm_id"],
+        "osm_version": polygon.get("osm_version"),
+        "image_id": public_id,
+        "provider": row["provider"],
+        "source_tag_key": row["source_tag_key"],
+        "source_tag_value": row["source_tag_value"],
+        "canonical_reference": row["canonical_reference"],
+        "asset_index": row["asset_index"],
+        "relation_kind": row["relation_kind"],
+    }
+
+
+def _deduplicate_batch_values(values: _BatchValues) -> None:
+    best_images: dict[bytes, tuple[object, ...]] = {}
+    for value in values.image_values:
+        key = cast(bytes, value[0])
+        previous = best_images.get(key)
+        if previous is None or _image_value_wins(value, previous):
+            best_images[key] = value
+    values.image_values = list(best_images.values())
+    values.image_source_values = _deduplicate_values(values.image_source_values, key_columns=(0, 1))
+    values.link_values = _deduplicate_values(values.link_values, key_columns=(0,))
+    values.link_source_values = _deduplicate_values(values.link_source_values, key_columns=(0, 1))
+    values.link_version_values = _deduplicate_values(values.link_version_values, key_columns=(0, 1))
+    for batch in (
+        values.image_values,
+        values.image_source_values,
+        values.link_values,
+        values.link_source_values,
+        values.link_version_values,
+    ):
+        batch.sort(key=lambda value: value[0])
+
+
+def _image_value_wins(value: tuple[object, ...], previous: tuple[object, ...]) -> bool:
+    value_rank, previous_rank = cast(int, value[2]), cast(int, previous[2])
+    return value_rank > previous_rank or (
+        value_rank == previous_rank and cast(str, value[3]) < cast(str, previous[3])
+    )
+
+
+def _insert_batch_values(connection: sqlite3.Connection, values: _BatchValues) -> None:
+    connection.executemany(
+        """
+        INSERT INTO images(image_key, payload, rank, sort_key)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(image_key) DO UPDATE SET
+          payload = excluded.payload,
+          rank = excluded.rank,
+          sort_key = excluded.sort_key
+        WHERE excluded.rank > images.rank
+           OR (excluded.rank = images.rank AND excluded.sort_key < images.sort_key)
+        """,
+        values.image_values,
+    )
+    connection.executemany(
+        "INSERT OR IGNORE INTO image_sources VALUES (?, ?)", values.image_source_values
+    )
+    connection.executemany("INSERT OR IGNORE INTO links VALUES (?, ?)", values.link_values)
+    connection.executemany(
+        "INSERT OR IGNORE INTO link_sources VALUES (?, ?)", values.link_source_values
+    )
+    connection.executemany(
+        "INSERT OR IGNORE INTO link_versions VALUES (?, ?)", values.link_version_values
+    )
+
+
+def _remove_incompatible_checkpoint(
+    path: Path, input_hashes: Sequence[str] | None, polygon_fingerprint: str
+) -> None:
+    if (
+        input_hashes is not None
+        and path.is_file()
+        and not _Accumulator._is_compatible_checkpoint(path, input_hashes, polygon_fingerprint)
+    ):
+        remove_checkpoint_files(path)
+
+
+def _open_asset_connection(path: Path) -> sqlite3.Connection:
+    connection = sqlite3.connect(path)
+    connection.execute(f"PRAGMA page_size={PUBLIC_ASSET_SQLITE_PAGE_SIZE}")
+    connection.execute("PRAGMA journal_mode=DELETE")
+    connection.execute("PRAGMA synchronous=NORMAL")
+    connection.execute("PRAGMA temp_store=FILE")
+    connection.execute(f"PRAGMA cache_size=-{PUBLIC_ASSET_SQLITE_CACHE_KIB}")
+    connection.execute(f"PRAGMA mmap_size={PUBLIC_ASSET_SQLITE_MMAP_BYTES}")
+    connection.execute("PRAGMA locking_mode=EXCLUSIVE")
+    return connection
+
+
+def _initialize_asset_schema(connection: sqlite3.Connection) -> None:
+    connection.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS images (
+            image_key BLOB PRIMARY KEY,
+            payload BLOB NOT NULL,
+            rank INTEGER NOT NULL,
+            sort_key TEXT NOT NULL
+        ) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS image_sources (
+            image_key BLOB NOT NULL,
+            source_pbf TEXT NOT NULL,
+            PRIMARY KEY (image_key, source_pbf)
+        ) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS links (
+            link_key BLOB PRIMARY KEY,
+            payload BLOB NOT NULL
+        ) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS link_sources (
+            link_key BLOB NOT NULL,
+            source_pbf TEXT NOT NULL,
+            PRIMARY KEY (link_key, source_pbf)
+        ) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS link_versions (
+            link_key BLOB NOT NULL,
+            osm_version INTEGER NOT NULL,
+            PRIMARY KEY (link_key, osm_version)
+        ) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS checkpoint_metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        ) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS checkpoint_sources (
+            source_index INTEGER PRIMARY KEY,
+            source_sha256 TEXT NOT NULL,
+            row_count INTEGER NOT NULL,
+            orphan_count INTEGER NOT NULL
+        ) WITHOUT ROWID;
+        """
+    )
+
+
+def _initialize_checkpoint_metadata(
+    connection: sqlite3.Connection,
+    input_hashes: Sequence[str],
+    polygon_fingerprint: str,
+) -> None:
+    values = (
+        ("schema_version", str(PUBLIC_ASSET_DEDUP_CHECKPOINT_SCHEMA_VERSION)),
+        ("input_hashes", json.dumps(input_hashes, separators=(",", ":"))),
+        ("polygon_fingerprint", polygon_fingerprint),
+    )
+    connection.executemany(
+        "INSERT OR IGNORE INTO checkpoint_metadata(key, value) VALUES (?, ?)", values
+    )
+    connection.commit()
 
 
 class _Accumulator:
@@ -346,81 +645,20 @@ class _Accumulator:
         self.polygon_fingerprint = polygon_fingerprint or ""
         self._transaction_input_rows = 0
         self._transaction_orphan_rows = 0
-        if (
-            self.input_hashes is not None
-            and path.is_file()
-            and not self._is_compatible_checkpoint(
-                path, self.input_hashes, self.polygon_fingerprint
-            )
-        ):
-            remove_checkpoint_files(path)
-        self.connection = sqlite3.connect(path)
-        self.connection.execute(f"PRAGMA page_size={PUBLIC_ASSET_SQLITE_PAGE_SIZE}")
-        self.connection.execute("PRAGMA journal_mode=DELETE")
-        self.connection.execute("PRAGMA synchronous=NORMAL")
-        self.connection.execute("PRAGMA temp_store=FILE")
-        self.connection.execute(f"PRAGMA cache_size=-{PUBLIC_ASSET_SQLITE_CACHE_KIB}")
-        self.connection.execute(f"PRAGMA mmap_size={PUBLIC_ASSET_SQLITE_MMAP_BYTES}")
-        self.connection.execute("PRAGMA locking_mode=EXCLUSIVE")
+        _remove_incompatible_checkpoint(path, self.input_hashes, self.polygon_fingerprint)
+        self.connection = _open_asset_connection(path)
         if max_bytes is not None:
             self._set_max_size(max_bytes)
-        self.connection.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS images (
-                image_key BLOB PRIMARY KEY,
-                payload BLOB NOT NULL,
-                rank INTEGER NOT NULL,
-                sort_key TEXT NOT NULL
-            ) WITHOUT ROWID;
-            CREATE TABLE IF NOT EXISTS image_sources (
-                image_key BLOB NOT NULL,
-                source_pbf TEXT NOT NULL,
-                PRIMARY KEY (image_key, source_pbf)
-            ) WITHOUT ROWID;
-            CREATE TABLE IF NOT EXISTS links (
-                link_key BLOB PRIMARY KEY,
-                payload BLOB NOT NULL
-            ) WITHOUT ROWID;
-            CREATE TABLE IF NOT EXISTS link_sources (
-                link_key BLOB NOT NULL,
-                source_pbf TEXT NOT NULL,
-                PRIMARY KEY (link_key, source_pbf)
-            ) WITHOUT ROWID;
-            CREATE TABLE IF NOT EXISTS link_versions (
-                link_key BLOB NOT NULL,
-                osm_version INTEGER NOT NULL,
-                PRIMARY KEY (link_key, osm_version)
-            ) WITHOUT ROWID;
-            CREATE TABLE IF NOT EXISTS checkpoint_metadata (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            ) WITHOUT ROWID;
-            CREATE TABLE IF NOT EXISTS checkpoint_sources (
-                source_index INTEGER PRIMARY KEY,
-                source_sha256 TEXT NOT NULL,
-                row_count INTEGER NOT NULL,
-                orphan_count INTEGER NOT NULL
-            ) WITHOUT ROWID;
-            """
-        )
+        _initialize_asset_schema(self.connection)
+        self.input_rows, self.orphan_rows = self._initial_counts()
+
+    def _initial_counts(self) -> tuple[int, int]:
         if self.input_hashes is None:
-            self.input_rows = 0
-            self.orphan_rows = 0
-        else:
-            self.connection.execute(
-                "INSERT OR IGNORE INTO checkpoint_metadata(key, value) VALUES (?, ?)",
-                ("schema_version", str(PUBLIC_ASSET_DEDUP_CHECKPOINT_SCHEMA_VERSION)),
-            )
-            self.connection.execute(
-                "INSERT OR IGNORE INTO checkpoint_metadata(key, value) VALUES (?, ?)",
-                ("input_hashes", json.dumps(self.input_hashes, separators=(",", ":"))),
-            )
-            self.connection.execute(
-                "INSERT OR IGNORE INTO checkpoint_metadata(key, value) VALUES (?, ?)",
-                ("polygon_fingerprint", self.polygon_fingerprint),
-            )
-            self.connection.commit()
-            self.input_rows, self.orphan_rows = self._completed_counts()
+            return 0, 0
+        _initialize_checkpoint_metadata(
+            self.connection, self.input_hashes, self.polygon_fingerprint
+        )
+        return self._completed_counts()
 
     def _set_max_size(self, max_bytes: int) -> None:
         page_size = int(self.connection.execute("PRAGMA page_size").fetchone()[0])
@@ -442,29 +680,10 @@ class _Accumulator:
         connection: sqlite3.Connection | None = None
         try:
             connection = sqlite3.connect(path)
-            metadata = dict(
-                connection.execute("SELECT key, value FROM checkpoint_metadata").fetchall()
-            )
-            if metadata.get("schema_version") != str(PUBLIC_ASSET_DEDUP_CHECKPOINT_SCHEMA_VERSION):
-                return False
-            if json.loads(metadata["input_hashes"]) != list(input_hashes):
-                return False
-            if metadata.get("polygon_fingerprint") != polygon_fingerprint:
-                return False
-            for source_index, source_sha256, row_count, orphan_count in connection.execute(
-                "SELECT source_index, source_sha256, row_count, orphan_count "
-                "FROM checkpoint_sources"
-            ):
-                if (
-                    source_index < 0
-                    or source_index >= len(input_hashes)
-                    or input_hashes[source_index] != source_sha256
-                    or row_count < 0
-                    or orphan_count < 0
-                    or orphan_count > row_count
-                ):
-                    return False
-            return True
+            metadata = _checkpoint_metadata(connection)
+            return _checkpoint_metadata_matches(
+                metadata, input_hashes, polygon_fingerprint
+            ) and _checkpoint_sources_match(connection, input_hashes)
         except (
             OSError,
             sqlite3.DatabaseError,
@@ -536,116 +755,15 @@ class _Accumulator:
         rows: Iterable[tuple[Mapping[str, object], Mapping[str, object] | None]],
     ) -> None:
         """Insert one Parquet batch with bulk SQLite operations."""
-        image_values: list[tuple[object, ...]] = []
-        image_source_values: list[tuple[bytes, str]] = []
-        link_values: list[tuple[bytes, object]] = []
-        link_source_values: list[tuple[bytes, str]] = []
-        link_version_values: list[tuple[bytes, int]] = []
-        for row, polygon in rows:
-            self.input_rows += 1
-            self._transaction_input_rows += 1
-            if polygon is None:
-                self.orphan_rows += 1
-                self._transaction_orphan_rows += 1
-                continue
-            source_pbf = str(row["source_pbf"])
-            identity = image_identity(row)
-            image_key = _digest(identity)
-            public_id = f"img_{image_key.hex()}"
-            payload = _image_payload(row, public_id)
-            image_values.append(
-                (
-                    image_key,
-                    sqlite3.Binary(pickle.dumps(payload, protocol=5)),
-                    _quality_rank(row),
-                    _stable_json(payload),
-                )
-            )
-            image_source_values.append((image_key, source_pbf))
-
-            polygon_key = (str(polygon["osm_type"]), int(str(polygon["osm_id"])))
-            link_identity = (
-                polygon_key,
-                identity,
-                row["source_tag_key"],
-                row["source_tag_value"],
-                row["canonical_reference"],
-                row["asset_index"],
-                row["relation_kind"],
-            )
-            link_key = _digest(link_identity)
-            link_payload = {
-                "osm_type": polygon["osm_type"],
-                "osm_id": polygon["osm_id"],
-                "osm_version": polygon.get("osm_version"),
-                "image_id": public_id,
-                "provider": row["provider"],
-                "source_tag_key": row["source_tag_key"],
-                "source_tag_value": row["source_tag_value"],
-                "canonical_reference": row["canonical_reference"],
-                "asset_index": row["asset_index"],
-                "relation_kind": row["relation_kind"],
-            }
-            link_values.append((link_key, sqlite3.Binary(pickle.dumps(link_payload, protocol=5))))
-            link_source_values.append((link_key, source_pbf))
-            version = row.get("osm_version")
-            if version is not None:
-                link_version_values.append((link_key, int(str(version))))
-
-        best_images: dict[bytes, tuple[object, ...]] = {}
-        for value in image_values:
-            key = cast(bytes, value[0])
-            previous = best_images.get(key)
-            if (
-                previous is None
-                or cast(int, value[2]) > cast(int, previous[2])
-                or (
-                    cast(int, value[2]) == cast(int, previous[2])
-                    and cast(str, value[3]) < cast(str, previous[3])
-                )
-            ):
-                best_images[key] = value
-        image_values = list(best_images.values())
-        image_source_values = _deduplicate_values(image_source_values, key_columns=(0, 1))
-        link_values = _deduplicate_values(link_values, key_columns=(0,))
-        link_source_values = _deduplicate_values(link_source_values, key_columns=(0, 1))
-        link_version_values = _deduplicate_values(link_version_values, key_columns=(0, 1))
-
-        # Hash-derived keys arrive in source order, which is effectively random
-        # for these B-trees.  Sorting each bounded batch makes writes mostly
-        # sequential without changing any winner or provenance semantics.
-        for values in (
-            image_values,
-            image_source_values,
-            link_values,
-            link_source_values,
-            link_version_values,
-        ):
-            values.sort(key=lambda value: value[0])
-
-        self.connection.executemany(
-            """
-            INSERT INTO images(image_key, payload, rank, sort_key)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(image_key) DO UPDATE SET
-              payload = excluded.payload,
-              rank = excluded.rank,
-              sort_key = excluded.sort_key
-            WHERE excluded.rank > images.rank
-               OR (excluded.rank = images.rank AND excluded.sort_key < images.sort_key)
-            """,
-            image_values,
-        )
-        self.connection.executemany(
-            "INSERT OR IGNORE INTO image_sources VALUES (?, ?)", image_source_values
-        )
-        self.connection.executemany("INSERT OR IGNORE INTO links VALUES (?, ?)", link_values)
-        self.connection.executemany(
-            "INSERT OR IGNORE INTO link_sources VALUES (?, ?)", link_source_values
-        )
-        self.connection.executemany(
-            "INSERT OR IGNORE INTO link_versions VALUES (?, ?)", link_version_values
-        )
+        prepared = _prepare_batch_values(rows)
+        self.input_rows += prepared.input_rows
+        self._transaction_input_rows += prepared.input_rows
+        self.orphan_rows += prepared.orphan_rows
+        self._transaction_orphan_rows += prepared.orphan_rows
+        if not prepared.image_values:
+            return
+        _deduplicate_batch_values(prepared)
+        _insert_batch_values(self.connection, prepared)
 
     def _grouped_values(
         self,
@@ -758,35 +876,44 @@ def _write_parquet(rows: Iterable[Mapping[str, object]], path: Path, schema: pa.
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent, delete=False
     ) as temporary:
         temporary_path = Path(temporary.name)
-    count = 0
     try:
-        with pq.ParquetWriter(
-            temporary_path, schema, compression="zstd", use_dictionary=True, write_statistics=True
-        ) as writer:
-            batch: list[Mapping[str, object]] = []
-            for row in rows:
-                batch.append(row)
-                if len(batch) == 4096:
-                    writer.write_table(pa.Table.from_pylist(batch, schema=schema))
-                    count += len(batch)
-                    batch.clear()
-            if batch:
-                writer.write_table(pa.Table.from_pylist(batch, schema=schema))
-                count += len(batch)
-            if count == 0:
-                writer.write_table(pa.Table.from_pylist([], schema=schema))
-        with temporary_path.open("rb") as handle:
-            os.fsync(handle.fileno())
-        os.replace(temporary_path, path)
-        directory_fd = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        count = _write_parquet_file(rows, temporary_path, schema)
+        _promote_parquet(temporary_path, path)
     except BaseException:
         temporary_path.unlink(missing_ok=True)
         raise
     return count
+
+
+def _write_parquet_file(rows: Iterable[Mapping[str, object]], path: Path, schema: pa.Schema) -> int:
+    count = 0
+    with pq.ParquetWriter(
+        path, schema, compression="zstd", use_dictionary=True, write_statistics=True
+    ) as writer:
+        batch: list[Mapping[str, object]] = []
+        for row in rows:
+            batch.append(row)
+            if len(batch) == 4096:
+                writer.write_table(pa.Table.from_pylist(batch, schema=schema))
+                count += len(batch)
+                batch.clear()
+        if batch:
+            writer.write_table(pa.Table.from_pylist(batch, schema=schema))
+            count += len(batch)
+        if count == 0:
+            writer.write_table(pa.Table.from_pylist([], schema=schema))
+    return count
+
+
+def _promote_parquet(temporary_path: Path, final_path: Path) -> None:
+    with temporary_path.open("rb") as handle:
+        os.fsync(handle.fileno())
+    os.replace(temporary_path, final_path)
+    directory_fd = os.open(final_path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
 
 
 def validate_public_image_parquet(path: Path, *, expected_rows: int | None = None) -> None:
@@ -824,74 +951,170 @@ def build_public_asset_tables(
     image_path = root / "public/images.parquet"
     link_path = root / "public/polygon_images.parquet"
     if not manifests:
-        _checkpoint, cleanup_paths = _prepare_checkpoint_paths(root, checkpoint_root)
-        for path in cleanup_paths:
-            remove_checkpoint_files(path)
-        _write_parquet([], image_path, public_image_schema())
-        _write_parquet([], link_path, public_link_schema())
-        return PublicAssetsResult(image_path, link_path, 0, 0, 0, 0, 0)
+        return _empty_public_asset_tables(root, image_path, link_path, checkpoint_root)
+    accumulator, cleanup_paths = _open_public_asset_accumulator(
+        root,
+        checkpoint_root,
+        manifests,
+        polygon_fingerprint=polygon_fingerprint,
+    )
+    succeeded = False
+    try:
+        _process_asset_sources(accumulator, manifests, canonical_polygons)
+        image_rows, link_rows, duplicate_images, duplicate_links = _asset_counts(accumulator)
+        _write_public_asset_outputs(accumulator, image_path, link_path)
+        succeeded = True
+    finally:
+        accumulator.close()
+        _cleanup_public_asset_checkpoints(cleanup_paths, succeeded)
+    return _public_asset_result(
+        image_path,
+        link_path,
+        image_rows,
+        link_rows,
+        duplicate_images,
+        duplicate_links,
+        accumulator.orphan_rows,
+    )
+
+
+def _open_public_asset_accumulator(
+    root: Path,
+    checkpoint_root: Path | None,
+    manifests: Sequence[tuple[AssetManifest, Path]],
+    *,
+    polygon_fingerprint: str | None,
+) -> tuple[_Accumulator, tuple[Path, ...]]:
     database_path, cleanup_paths = _prepare_checkpoint_paths(root, checkpoint_root)
     for path in cleanup_paths:
         _remove_legacy_checkpoints(path.parent, path)
     input_hashes = [manifest.output.sha256 for manifest, _ in manifests]
-    external_checkpoint = (
-        checkpoint_root is not None
-        and database_path.parent == checkpoint_root.expanduser().resolve()
-    )
+    external_checkpoint = _is_external_checkpoint(database_path, checkpoint_root)
     accumulator = _Accumulator(
         database_path,
         input_hashes=input_hashes,
         polygon_fingerprint=polygon_fingerprint,
         max_bytes=_checkpoint_max_bytes(database_path) if external_checkpoint else None,
     )
-    succeeded = False
+    return accumulator, cleanup_paths
+
+
+def _is_external_checkpoint(database_path: Path, checkpoint_root: Path | None) -> bool:
+    return (
+        checkpoint_root is not None
+        and database_path.parent == checkpoint_root.expanduser().resolve()
+    )
+
+
+def _cleanup_public_asset_checkpoints(paths: Sequence[Path], succeeded: bool) -> None:
+    if not succeeded:
+        return
+    for path in paths:
+        remove_checkpoint_files(path)
+
+
+def _empty_public_asset_tables(
+    root: Path,
+    image_path: Path,
+    link_path: Path,
+    checkpoint_root: Path | None,
+) -> PublicAssetsResult:
+    _checkpoint, cleanup_paths = _prepare_checkpoint_paths(root, checkpoint_root)
+    for path in cleanup_paths:
+        remove_checkpoint_files(path)
+    _write_public_asset_outputs(None, image_path, link_path)
+    return _public_asset_result(image_path, link_path, 0, 0, 0, 0, 0)
+
+
+def _process_asset_sources(
+    accumulator: _Accumulator,
+    manifests: Sequence[tuple[AssetManifest, Path]],
+    canonical_polygons: Mapping[tuple[str, int], Mapping[str, object]],
+) -> None:
+    for source_index, (manifest, output) in enumerate(manifests):
+        source_sha256 = manifest.output.sha256
+        if accumulator.source_completed(source_index, source_sha256):
+            continue
+        _process_asset_source(
+            accumulator,
+            manifest,
+            output,
+            source_index,
+            source_sha256,
+            canonical_polygons,
+        )
+
+
+def _process_asset_source(
+    accumulator: _Accumulator,
+    manifest: AssetManifest,
+    output: Path,
+    source_index: int,
+    source_sha256: str,
+    canonical_polygons: Mapping[tuple[str, int], Mapping[str, object]],
+) -> None:
+    accumulator.begin_source()
+    source_rows = 0
+    source_orphans_before = accumulator.orphan_rows
     try:
-        for source_index, (manifest, output) in enumerate(manifests):
-            source_sha256 = manifest.output.sha256
-            if accumulator.source_completed(source_index, source_sha256):
-                continue
-            accumulator.begin_source()
-            source_rows = 0
-            source_orphans_before = accumulator.orphan_rows
-            try:
-                for batch in _iter_batches(output):
-                    source_rows += len(batch)
-                    accumulator.add_many(
-                        (
-                            row,
-                            canonical_polygons.get((str(row["osm_type"]), int(row["osm_id"]))),
-                        )
-                        for row in batch
-                    )
-                accumulator.complete_source(
-                    source_index,
-                    source_sha256,
-                    source_rows,
-                    accumulator.orphan_rows - source_orphans_before,
+        for batch in _iter_batches(output):
+            source_rows += len(batch)
+            accumulator.add_many(
+                (
+                    row,
+                    canonical_polygons.get((str(row["osm_type"]), int(row["osm_id"]))),
                 )
-            except BaseException:
-                accumulator.rollback_source()
-                raise
-        image_rows, link_rows = accumulator.counts()
-        matched_rows = accumulator.input_rows - accumulator.orphan_rows
-        duplicate_images = matched_rows - image_rows
-        duplicate_links = matched_rows - link_rows
-        _write_parquet(accumulator.images(), image_path, public_image_schema())
-        _write_parquet(accumulator.links(), link_path, public_link_schema())
-        succeeded = True
-    finally:
-        accumulator.close()
-        if succeeded:
-            for path in cleanup_paths:
-                remove_checkpoint_files(path)
+                for row in batch
+            )
+        accumulator.complete_source(
+            source_index,
+            source_sha256,
+            source_rows,
+            accumulator.orphan_rows - source_orphans_before,
+        )
+    except BaseException:
+        accumulator.rollback_source()
+        raise
+
+
+def _asset_counts(accumulator: _Accumulator) -> tuple[int, int, int, int]:
+    image_rows, link_rows = accumulator.counts()
+    matched_rows = accumulator.input_rows - accumulator.orphan_rows
+    return image_rows, link_rows, matched_rows - image_rows, matched_rows - link_rows
+
+
+def _write_public_asset_outputs(
+    accumulator: _Accumulator | None,
+    image_path: Path,
+    link_path: Path,
+) -> None:
+    if accumulator is None:
+        image_rows: Iterable[Mapping[str, object]] = ()
+        link_rows: Iterable[Mapping[str, object]] = ()
+    else:
+        image_rows = accumulator.images()
+        link_rows = accumulator.links()
+    _write_parquet(image_rows, image_path, public_image_schema())
+    _write_parquet(link_rows, link_path, public_link_schema())
+
+
+def _public_asset_result(
+    image_path: Path,
+    link_path: Path,
+    image_rows: int,
+    link_rows: int,
+    duplicate_image_rows: int,
+    duplicate_link_rows: int,
+    orphan_rows: int,
+) -> PublicAssetsResult:
     return PublicAssetsResult(
         image_path=image_path,
         link_path=link_path,
         image_rows=image_rows,
         link_rows=link_rows,
-        duplicate_image_rows=duplicate_images,
-        duplicate_link_rows=duplicate_links,
-        orphan_rows=accumulator.orphan_rows,
+        duplicate_image_rows=duplicate_image_rows,
+        duplicate_link_rows=duplicate_link_rows,
+        orphan_rows=orphan_rows,
     )
 
 

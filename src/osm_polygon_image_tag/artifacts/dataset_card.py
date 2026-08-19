@@ -2,8 +2,8 @@
 
 import json
 import re
-from collections.abc import Mapping
-from typing import Any
+from collections.abc import Mapping, Sequence
+from typing import Any, cast
 
 import yaml
 
@@ -35,13 +35,23 @@ def _safe_example_value(value: object) -> object:
     if isinstance(value, str):
         return _SECRET_QUERY.sub(r"\1=[redacted]", value)
     if isinstance(value, Mapping):
-        return {str(key): _safe_example_value(item) for key, item in value.items()}
+        return _safe_example_mapping(cast(Mapping[object, object], value))
     if isinstance(value, list):
-        return [_safe_example_value(item) for item in value]
+        return _safe_example_list(value)
+    return _safe_example_scalar(value)
+
+
+def _safe_example_mapping(value: Mapping[object, object]) -> dict[str, object]:
+    return {str(key): _safe_example_value(item) for key, item in value.items()}
+
+
+def _safe_example_list(value: Sequence[object]) -> list[object]:
+    return [_safe_example_value(item) for item in value]
+
+
+def _safe_example_scalar(value: object) -> object:
     isoformat = getattr(value, "isoformat", None)
-    if callable(isoformat):
-        return isoformat()
-    return value
+    return isoformat() if callable(isoformat) else value
 
 
 def _example_json(example: Mapping[str, object] | None) -> str:
@@ -52,16 +62,41 @@ def _example_json(example: Mapping[str, object] | None) -> str:
     return f"```json\n{rendered}\n```"
 
 
+def _provider_lines(statistics: Mapping[str, Any]) -> str:
+    return "\n".join(
+        f"- `{provider}`: {_count(count)}"
+        for provider, count in statistics["provider_counts"].items()
+    )
+
+
+def _geography_values(statistics: Mapping[str, Any]) -> tuple[int, int, int, int, int]:
+    geography = statistics.get("geography") or {}
+    return (
+        _geography_value(geography, "h3_resolution", 3),
+        _geography_value(geography, "cell_count", 0),
+        _geography_value(geography, "min_cell_count", 0),
+        _geography_value(geography, "max_cell_count", 0),
+        int(statistics["rows"]),
+    )
+
+
+def _geography_value(geography: Mapping[str, Any], key: str, default: int) -> int:
+    return int(geography.get(key) or default)
+
+
+def _source_pbf_phrase(source_pbf_count: int) -> str:
+    if source_pbf_count == 1:
+        return f"the {_count(source_pbf_count)} processed source PBF file"
+    return f"all {_count(source_pbf_count)} processed source PBF files"
+
+
 def dataset_card(
     statistics: dict[str, Any],
     *,
     examples: Mapping[str, Mapping[str, object] | None] | None = None,
 ) -> bytes:
     """Render a card containing only facts derived from the statistics payload."""
-    providers = "\n".join(
-        f"- `{provider}`: {_count(count)}"
-        for provider, count in statistics["provider_counts"].items()
-    )
+    providers = _provider_lines(statistics)
     metadata = {
         "license": "odbl",
         "tags": ["openstreetmap", "geospatial", "geoparquet", "image"],
@@ -103,22 +138,14 @@ def dataset_card(
         "- Unique images with a provider page URL (a page, not necessarily an image): "
         f"{_count(assets['page_urls'])}"
     )
-    geography = statistics.get("geography") or {}
-    polygon_rows = statistics["rows"]
-    source_pbf_count = int(statistics["shards"])
-    source_pbf_phrase = (
-        f"the {_count(source_pbf_count)} processed source PBF file"
-        if source_pbf_count == 1
-        else f"all {_count(source_pbf_count)} processed source PBF files"
+    h3_resolution, cell_count, min_cell_count, max_cell_count, polygon_rows = _geography_values(
+        statistics
     )
-    h3_resolution = int(geography.get("h3_resolution") or 3)
-    cell_count = int(geography.get("cell_count") or 0)
-    min_cell_count = int(geography.get("min_cell_count") or 0)
-    max_cell_count = int(geography.get("max_cell_count") or 0)
+    source_pbf_phrase = _source_pbf_phrase(int(statistics["shards"]))
     map_summary = (
         f"The map contains {_count(polygon_rows)} published polygon rows from {source_pbf_phrase}."
     )
-    example_values = examples if examples is not None else {}
+    example_values = examples or {}
     text = f"""---\n{frontmatter}---
 ![OSM Polygon Image Tag hero]({HERO_PNG_RELATIVE})
 

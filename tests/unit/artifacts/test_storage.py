@@ -10,6 +10,8 @@ from shapely.geometry import Polygon
 
 from osm_polygon_image_tag.artifacts.storage import (
     StorageError,
+    _valid_geo_metadata,
+    _validate_geo_metadata,
     validate_geoparquet,
     write_geoparquet,
 )
@@ -98,3 +100,23 @@ def test_validation_rejects_schema_drift(tmp_path: Path) -> None:
 
     with pytest.raises(StorageError, match="schema"):
         validate_geoparquet(path)
+
+
+def test_geo_metadata_validator_requires_the_complete_contract() -> None:
+    valid = {
+        "version": "1.1.0",
+        "primary_column": "geometry",
+        "columns": {
+            "geometry": {
+                "encoding": "WKB",
+                "geometry_types": ["Polygon", "MultiPolygon"],
+            }
+        },
+    }
+
+    assert _valid_geo_metadata(valid)
+    assert not _valid_geo_metadata(None)
+    assert not _valid_geo_metadata({"columns": []})
+    assert not _valid_geo_metadata({"columns": {"geometry": {}}})
+    with pytest.raises(StorageError, match="missing"):
+        _validate_geo_metadata(None)

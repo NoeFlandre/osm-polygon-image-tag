@@ -24,14 +24,30 @@ class AssetWriteResult:
 def validate_asset_parquet(path: Path, *, expected_rows: int | None = None) -> None:
     if path.is_symlink():
         raise AssetStorageError("asset Parquet must not be a symlink")
+    parquet = _open_asset_parquet(path)
+    _validate_asset_schema(parquet)
+    _validate_asset_row_count(parquet, expected_rows)
+    _read_asset_groups(parquet)
+
+
+def _open_asset_parquet(path: Path) -> pq.ParquetFile:
     try:
-        parquet = pq.ParquetFile(path)
+        return pq.ParquetFile(path)
     except (OSError, pa.ArrowException) as error:
         raise AssetStorageError(f"unreadable asset Parquet: {path}") from error
+
+
+def _validate_asset_schema(parquet: pq.ParquetFile) -> None:
     if not parquet.schema_arrow.equals(asset_schema(), check_metadata=True):
         raise AssetStorageError("asset Parquet schema or metadata does not match")
+
+
+def _validate_asset_row_count(parquet: pq.ParquetFile, expected_rows: int | None) -> None:
     if expected_rows is not None and parquet.metadata.num_rows != expected_rows:
         raise AssetStorageError("asset Parquet row count does not match")
+
+
+def _read_asset_groups(parquet: pq.ParquetFile) -> None:
     for row_group in range(parquet.metadata.num_row_groups):
         parquet.read_row_group(row_group, columns=["osm_id", "image_url"])
 

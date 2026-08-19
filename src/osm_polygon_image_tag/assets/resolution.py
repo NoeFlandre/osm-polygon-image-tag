@@ -85,9 +85,21 @@ def validate_resolution_record(record: ResolutionRecord) -> None:
         validate_status(record.status)
     except ValueError as error:
         raise ResolutionCacheError(str(error)) from error
+    _validate_record_reference(record)
+    _validate_record_retry(record)
+    _validate_attempt_count(record)
+
+
+def _validate_record_reference(record: ResolutionRecord) -> None:
     if not is_cacheable_canonical_reference(record.canonical_reference):
         raise ResolutionCacheError("secret-bearing canonical references are not cacheable")
+
+
+def _validate_record_retry(record: ResolutionRecord) -> None:
     if record.retry_after is not None and record.retry_after.tzinfo is None:
         raise ResolutionCacheError("retry_after must be timezone-aware")
+
+
+def _validate_attempt_count(record: ResolutionRecord) -> None:
     if record.attempt_count < 0:
         raise ResolutionCacheError("attempt_count must not be negative")

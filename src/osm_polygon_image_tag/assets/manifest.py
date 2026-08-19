@@ -1,7 +1,7 @@
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from osm_polygon_image_tag.assets.schema import (
     ASSET_SCHEMA_VERSION,
@@ -101,7 +101,25 @@ def _validate_relative_path(relative_path: str, data_root: Path) -> None:
 
 
 def _build_manifest(payload: Any) -> AssetManifest:
-    top = _require_keys(
+    top = _manifest_fields(payload)
+    _validate_manifest_versions(top)
+    source = _build_source(top["source"])
+    snapshot = _build_snapshot(top["resolution_snapshot"])
+    output = _build_output(top["output"])
+    counts = _build_counts(top["counts"])
+    return AssetManifest(
+        manifest_schema_version=top["manifest_schema_version"],
+        asset_schema_version=top["asset_schema_version"],
+        resolver_contract_version=top["resolver_contract_version"],
+        source=source,
+        resolution_snapshot=snapshot,
+        output=output,
+        counts=counts,
+    )
+
+
+def _manifest_fields(payload: Any) -> dict[str, Any]:
+    return _require_keys(
         payload,
         {
             "manifest_schema_version",
@@ -114,36 +132,49 @@ def _build_manifest(payload: Any) -> AssetManifest:
         },
         name="manifest",
     )
-    if top["manifest_schema_version"] != ASSET_MANIFEST_SCHEMA_VERSION:
-        raise AssetManifestError("unsupported asset manifest schema version")
-    if top["asset_schema_version"] != ASSET_SCHEMA_VERSION:
-        raise AssetManifestError("unsupported asset schema version")
-    if top["resolver_contract_version"] != RESOLVER_CONTRACT_VERSION:
-        raise AssetManifestError("unsupported resolver contract version")
-    source = AssetSourceIdentity(
+
+
+def _validate_manifest_versions(top: dict[str, Any]) -> None:
+    expected = (
+        ("manifest_schema_version", ASSET_MANIFEST_SCHEMA_VERSION, "asset manifest"),
+        ("asset_schema_version", ASSET_SCHEMA_VERSION, "asset"),
+        ("resolver_contract_version", RESOLVER_CONTRACT_VERSION, "resolver contract"),
+    )
+    for key, version, label in expected:
+        if top[key] != version:
+            raise AssetManifestError(f"unsupported {label} schema version")
+
+
+def _build_source(value: Any) -> AssetSourceIdentity:
+    return AssetSourceIdentity(
         **_require_keys(
-            top["source"],
+            value,
             {"relative_path", "size_bytes", "sha256", "row_count"},
             name="source",
         )
     )
-    snapshot = ResolutionSnapshotIdentity(
-        **_require_keys(
-            top["resolution_snapshot"],
-            {"entry_count", "sha256"},
-            name="resolution snapshot",
-        )
+
+
+def _build_snapshot(value: Any) -> ResolutionSnapshotIdentity:
+    return ResolutionSnapshotIdentity(
+        **_require_keys(value, {"entry_count", "sha256"}, name="resolution snapshot")
     )
-    output = OutputIdentity(
+
+
+def _build_output(value: Any) -> OutputIdentity:
+    return OutputIdentity(
         **_require_keys(
-            top["output"],
+            value,
             {"relative_path", "size_bytes", "sha256", "row_count"},
             name="output",
         )
     )
+
+
+def _build_counts(value: Any) -> AssetRunCounts:
     counts = AssetRunCounts(
         **_require_keys(
-            top["counts"],
+            value,
             {
                 "rows",
                 "statuses",
@@ -162,15 +193,7 @@ def _build_manifest(payload: Any) -> AssetManifest:
             validate_status(status)
         except ValueError as error:
             raise AssetManifestError(str(error)) from error
-    return AssetManifest(
-        manifest_schema_version=top["manifest_schema_version"],
-        asset_schema_version=top["asset_schema_version"],
-        resolver_contract_version=top["resolver_contract_version"],
-        source=source,
-        resolution_snapshot=snapshot,
-        output=output,
-        counts=counts,
-    )
+    return counts
 
 
 def read_asset_manifest(path: Path, *, data_root: Path | None = None) -> AssetManifest:
@@ -193,19 +216,42 @@ def read_asset_manifest_header(
 ) -> AssetManifestHeader:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(payload, dict) or not isinstance(payload.get("output"), dict):
-            raise TypeError
-        output = payload["output"]["relative_path"]
-        versions = (
-            payload["manifest_schema_version"],
-            payload["asset_schema_version"],
-            payload["resolver_contract_version"],
-        )
-        if not isinstance(output, str) or not all(isinstance(value, int) for value in versions):
-            raise TypeError
-        _validate_relative_path(output, data_root)
-        return AssetManifestHeader(*versions, output)
+        return _parse_manifest_header(payload, data_root)
     except AssetManifestError:
         raise
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError) as error:
         raise AssetManifestError(f"invalid asset manifest header: {path}") from error
+
+
+def _parse_manifest_header(payload: Any, data_root: Path) -> AssetManifestHeader:
+    if not isinstance(payload, dict) or not isinstance(payload.get("output"), dict):
+        raise TypeError
+    output = _header_output(payload["output"])
+    versions = _header_versions(payload)
+    _validate_relative_path(output, data_root)
+    return AssetManifestHeader(versions[0], versions[1], versions[2], output)
+
+
+def _header_output(value: object) -> str:
+    if not isinstance(value, dict):
+        raise TypeError
+    output = value.get("relative_path")
+    if not isinstance(output, str):
+        raise TypeError
+    return output
+
+
+def _header_versions(payload: dict[str, object]) -> tuple[int, int, int]:
+    keys = (
+        "manifest_schema_version",
+        "asset_schema_version",
+        "resolver_contract_version",
+    )
+    versions = tuple(payload.get(key) for key in keys)
+    if not _valid_header_versions(versions):
+        raise TypeError
+    return cast(tuple[int, int, int], versions)
+
+
+def _valid_header_versions(versions: tuple[object, ...]) -> bool:
+    return all(isinstance(value, int) and not isinstance(value, bool) for value in versions)

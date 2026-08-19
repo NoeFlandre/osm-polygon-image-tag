@@ -4,6 +4,7 @@ import pytest
 
 from osm_polygon_image_tag.assets.references import (
     SourceReference,
+    _pair_values,
     references_from_row,
 )
 
@@ -80,3 +81,19 @@ def test_indexed_panoramax_preserves_provenance_for_one_canonical_request() -> N
 
 def test_empty_values_are_not_references() -> None:
     assert references_from_row({"tags": {"image": ""}, "panoramax_values": {}}) == ()
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ({"key": "image", "value": "photo"}, ("image", "photo")),
+        (("image", "photo"), ("image", "photo")),
+        (["image", "photo"], ("image", "photo")),
+        (("image",), None),
+        ("image", None),
+    ],
+)
+def test_reference_pair_parser_accepts_only_supported_pair_shapes(
+    value: object, expected: tuple[object, object] | None
+) -> None:
+    assert _pair_values(value) == expected

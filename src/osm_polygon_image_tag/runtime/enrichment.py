@@ -5,6 +5,7 @@ from collections import Counter, deque
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from osm_polygon_image_tag.assets.build_state import AssetBuildResult, asset_paths
 from osm_polygon_image_tag.assets.builder import build_asset_shard
@@ -98,6 +99,10 @@ class EnrichmentWorker:
     def submit(self, job: AssetJob) -> bool:
         if not self._register(job):
             return False
+        self._enqueue_job(job)
+        return True
+
+    def _enqueue_job(self, job: AssetJob) -> None:
         while True:
             if self._error is not None:
                 raise self._error
@@ -106,7 +111,6 @@ class EnrichmentWorker:
                 break
             except queue.Full:
                 continue
-        return True
 
     def _register(self, job: AssetJob) -> bool:
         identity = job.polygon_path.resolve().as_posix()
@@ -126,23 +130,11 @@ class EnrichmentWorker:
             self._checkpoint_next = self._completed + every
 
     def checkpoint(self, callback: Checkpoint) -> None:
-        if self._thread is None:
-            raise RuntimeError("enrichment worker was not started")
-        if self._error is not None:
-            raise self._error
-        if not self._thread.is_alive():
-            if self._error is not None:
-                raise self._error
+        self._ensure_started()
+        self._raise_worker_error()
+        if not self._pause_for_checkpoint():
             callback()
             return
-        self._resume.clear()
-        self._pause_requested.set()
-        while self._thread.is_alive() and not self._paused.wait(timeout=0.1):
-            continue
-        if self._error is not None:
-            self._pause_requested.clear()
-            self._resume.set()
-            raise self._error
         try:
             callback()
         finally:
@@ -150,18 +142,48 @@ class EnrichmentWorker:
             self._resume.set()
 
     def finish(self) -> EnrichmentSummary:
+        self._ensure_started()
+        assert self._thread is not None
+        self._send_finish_marker()
+        self._thread.join()
+        self._raise_worker_error()
+        return self._summary
+
+    def _ensure_started(self) -> None:
         if self._thread is None:
             raise RuntimeError("enrichment worker was not started")
-        while self._thread.is_alive() and self._error is None:
+
+    def _raise_worker_error(self) -> None:
+        if self._error is not None:
+            raise self._error
+
+    def _pause_for_checkpoint(self) -> bool:
+        assert self._thread is not None
+        if not self._thread.is_alive():
+            self._raise_worker_error()
+            return False
+        self._resume.clear()
+        self._pause_requested.set()
+        self._wait_until_paused()
+        return True
+
+    def _wait_until_paused(self) -> None:
+        thread = cast(threading.Thread, self._thread)
+        while thread.is_alive() and not self._paused.wait(timeout=0.1):
+            continue
+        if self._error is not None:
+            self._pause_requested.clear()
+            self._resume.set()
+            raise self._error
+
+    def _send_finish_marker(self) -> None:
+        thread = cast(threading.Thread, self._thread)
+        while thread.is_alive() and self._error is None:
             try:
                 self._jobs.put(None, timeout=0.1)
                 break
             except queue.Full:
                 continue
-        self._thread.join()
-        if self._error is not None:
-            raise self._error
-        return self._summary
 
     def _thread_main(self) -> None:
         try:
@@ -221,8 +243,6 @@ class EnrichmentWorker:
     async def _run(self) -> EnrichmentSummary:
         cache = self._cache_factory(self._data_root)
         registry = self._registry_factory()
-        built = skipped = pending = rows = index = 0
-        statuses: Counter[str] = Counter()
         self._progress(
             {
                 "event": "asset_backfill_started",
@@ -230,32 +250,7 @@ class EnrichmentWorker:
             }
         )
         try:
-            while True:
-                if self._pause_requested.is_set():
-                    self._paused.set()
-                    self._resume.wait()
-                    self._paused.clear()
-                job = self._next_job()
-                if job is _NO_JOB:
-                    continue
-                if job is None:
-                    if self._initial_jobs:
-                        continue
-                    break
-                assert isinstance(job, AssetJob)
-                index += 1
-                if self._stop_requested():
-                    pending += 1
-                    continue
-                result = await self._process_job(job, index, cache=cache, registry=registry)
-                built += result.status == "built"
-                skipped += result.status == "skipped"
-                pending += result.status == "pending"
-                rows += result.rows
-                statuses.update(result.statuses)
-                callback = self._checkpoint_after(result)
-                if callback is not None:
-                    callback()
+            summary = await self._run_jobs(cache, registry)
         finally:
             close = getattr(cache, "close", None)
             if callable(close):
@@ -263,13 +258,6 @@ class EnrichmentWorker:
             aclose = getattr(registry, "aclose", None)
             if callable(aclose):
                 await aclose()
-        summary = EnrichmentSummary(
-            built=built,
-            skipped=skipped,
-            pending=pending,
-            rows=rows,
-            statuses=dict(sorted(statuses.items())),
-        )
         self._progress(
             {
                 "event": "asset_backfill_completed",
@@ -282,24 +270,72 @@ class EnrichmentWorker:
         )
         return summary
 
+    async def _run_jobs(self, cache: object, registry: object) -> EnrichmentSummary:
+        built = skipped = pending = rows = index = 0
+        statuses: Counter[str] = Counter()
+        while True:
+            self._pause_if_requested()
+            job = self._next_available_job()
+            if job is None:
+                break
+            index += 1
+            if self._stop_requested():
+                pending += 1
+                continue
+            result = await self._process_job(job, index, cache=cache, registry=registry)
+            built += result.status == "built"
+            skipped += result.status == "skipped"
+            pending += result.status == "pending"
+            rows += result.rows
+            statuses.update(result.statuses)
+            callback = self._checkpoint_after(result)
+            if callback is not None:
+                callback()
+        return EnrichmentSummary(
+            built=built,
+            skipped=skipped,
+            pending=pending,
+            rows=rows,
+            statuses=dict(sorted(statuses.items())),
+        )
+
+    def _pause_if_requested(self) -> None:
+        if not self._pause_requested.is_set():
+            return
+        self._paused.set()
+        self._resume.wait()
+        self._paused.clear()
+
+    def _next_available_job(self) -> AssetJob | None:
+        while True:
+            job = self._next_job()
+            if job is not _NO_JOB:
+                return cast(AssetJob | None, job)
+
     def _next_job(self) -> AssetJob | None | object:
         if self._initial_jobs:
-            if self._prefer_initial:
-                self._prefer_initial = False
-                return self._initial_jobs.popleft()
-            try:
-                job = self._jobs.get_nowait()
-            except queue.Empty:
-                self._prefer_initial = True
-                return self._initial_jobs.popleft()
-            if job is None and self._initial_jobs:
-                self._finish_marker_seen = True
-                self._prefer_initial = False
-                return self._initial_jobs.popleft()
-            self._prefer_initial = True
-            return job
+            return self._next_initial_job()
         if self._finish_marker_seen:
             return None
+        return self._next_queued_job()
+
+    def _next_initial_job(self) -> AssetJob | None | object:
+        if self._prefer_initial:
+            self._prefer_initial = False
+            return self._initial_jobs.popleft()
+        try:
+            job = self._jobs.get_nowait()
+        except queue.Empty:
+            self._prefer_initial = True
+            return self._initial_jobs.popleft()
+        if job is None and self._initial_jobs:
+            self._finish_marker_seen = True
+            self._prefer_initial = False
+            return self._initial_jobs.popleft()
+        self._prefer_initial = True
+        return job
+
+    def _next_queued_job(self) -> AssetJob | None | object:
         try:
             return self._jobs.get(timeout=0.1)
         except queue.Empty:

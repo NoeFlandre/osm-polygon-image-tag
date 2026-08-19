@@ -14,7 +14,9 @@ import logging
 import math
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any, cast
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 from shapely import from_wkb
 from shapely.errors import GEOSException, ShapelyError
@@ -50,48 +52,81 @@ def iter_polygon_geometry(
     """
     if batch_size < 1:
         raise GeographicMapError(f"batch_size must be positive, got {batch_size}")
+    parquet = _open_polygon_parquet(parquet_path)
+    _validate_required_columns(parquet, parquet_path)
+    row_base = 0
+    for batch in parquet.iter_batches(batch_size=batch_size, columns=list(REQUIRED_COLUMNS)):
+        yield from _batch_geometry_rows(parquet_path, batch, row_base)
+        row_base += batch.num_rows
+
+
+def _open_polygon_parquet(path: Path) -> pq.ParquetFile:
     try:
-        parquet = pq.ParquetFile(parquet_path)
+        return pq.ParquetFile(path)
     except (OSError, ValueError) as error:
-        raise GeographicMapError(
-            f"Could not read polygon parquet {parquet_path}: {error}"
-        ) from error
+        raise GeographicMapError(f"Could not read polygon parquet {path}: {error}") from error
+
+
+def _validate_required_columns(parquet: pq.ParquetFile, path: Path) -> None:
     actual_schema = set(parquet.schema_arrow.names) - PYARROW_INTERNAL_COLUMNS
     missing = [name for name in REQUIRED_COLUMNS if name not in actual_schema]
     if missing:
         raise GeographicMapError(
-            f"Polygon parquet {parquet_path} is missing required columns: {sorted(missing)}"
+            f"Polygon parquet {path} is missing required columns: {sorted(missing)}"
         )
-    row_base = 0
-    for batch in parquet.iter_batches(batch_size=batch_size, columns=list(REQUIRED_COLUMNS)):
-        geometries = batch.column("geometry").to_pylist()
-        geometry_types = batch.column("geometry_type").to_pylist()
-        for offset, (wkb, geometry_type) in enumerate(zip(geometries, geometry_types, strict=True)):
-            row_index = row_base + offset
-            if wkb is None:
-                raise GeographicMapError(
-                    f"Polygon parquet {parquet_path} row {row_index}: geometry is null"
-                )
-            if geometry_type is None:
-                raise GeographicMapError(
-                    f"Polygon parquet {parquet_path} row {row_index}: geometry_type is null"
-                )
-            try:
-                geometry_wkb = bytes(wkb)
-            except (TypeError, ValueError) as error:
-                raise GeographicMapError(
-                    f"Polygon parquet {parquet_path} row {row_index}: geometry is not bytes"
-                ) from error
-            yield row_index, geometry_wkb, str(geometry_type)
-        row_base += len(geometries)
+
+
+def _batch_geometry_rows(
+    path: Path, batch: pa.RecordBatch, row_base: int
+) -> Iterator[tuple[int, bytes, str]]:
+    geometries = batch.column("geometry").to_pylist()
+    geometry_types = batch.column("geometry_type").to_pylist()
+    for offset, (wkb, geometry_type) in enumerate(zip(geometries, geometry_types, strict=True)):
+        row_index = row_base + offset
+        yield (
+            row_index,
+            _coerce_geometry(path, row_index, wkb),
+            _coerce_geometry_type(path, row_index, geometry_type),
+        )
+
+
+def _coerce_geometry(path: Path, row_index: int, value: object) -> bytes:
+    if value is None:
+        raise GeographicMapError(f"Polygon parquet {path} row {row_index}: geometry is null")
+    try:
+        return bytes(cast(Any, value))
+    except (TypeError, ValueError) as error:
+        raise GeographicMapError(
+            f"Polygon parquet {path} row {row_index}: geometry is not bytes"
+        ) from error
+
+
+def _coerce_geometry_type(path: Path, row_index: int, value: object) -> str:
+    if value is None:
+        raise GeographicMapError(f"Polygon parquet {path} row {row_index}: geometry_type is null")
+    return str(value)
 
 
 def _centroid_from_wkb(wkb: bytes, geometry_type: str) -> tuple[float, float]:
     """Decode the WKB and compute its Shapely centroid in CRS84."""
+    _validate_geometry_type(geometry_type)
+    geometry = _decode_geometry(wkb)
+    _validate_polygon_geometry(geometry)
+    centroid = geometry.centroid
+    lon = float(centroid.x)
+    lat = float(centroid.y)
+    _validate_centroid_coordinates(lon, lat)
+    return lon, lat
+
+
+def _validate_geometry_type(geometry_type: str) -> None:
     if geometry_type not in {"Polygon", "MultiPolygon"}:
         raise GeographicMapError(
             f"Geometry centroid requires Polygon or MultiPolygon, got {geometry_type!r}"
         )
+
+
+def _decode_geometry(wkb: bytes) -> Polygon | MultiPolygon:
     try:
         geometry = from_wkb(wkb)
     except (GEOSException, ShapelyError, ValueError, TypeError) as error:
@@ -100,16 +135,19 @@ def _centroid_from_wkb(wkb: bytes, geometry_type: str) -> tuple[float, float]:
         raise GeographicMapError(
             f"Geometry centroid requires Polygon or MultiPolygon, got {type(geometry).__name__}"
         )
+    return geometry
+
+
+def _validate_polygon_geometry(geometry: Polygon | MultiPolygon) -> None:
     if geometry.is_empty:
         raise GeographicMapError("Cannot compute centroid of an empty geometry")
-    centroid = geometry.centroid
-    lon = float(centroid.x)
-    lat = float(centroid.y)
+
+
+def _validate_centroid_coordinates(lon: float, lat: float) -> None:
     if not (math.isfinite(lon) and math.isfinite(lat)):
         raise GeographicMapError(
             f"Geometry centroid yielded non-finite coordinates: x={lon}, y={lat}"
         )
-    return lon, lat
 
 
 def read_shard_polygon_centroids(

@@ -1,4 +1,5 @@
 import hashlib
+import os
 import re
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator
@@ -74,35 +75,59 @@ def _is_reusable(
     try:
         manifest = read_manifest(manifest_path)
         source_stat = source.absolute_path.stat()
-        if (
-            manifest.processing_contract_version != PROCESSING_CONTRACT_VERSION
-            or manifest.dataset_schema_version != DATASET_SCHEMA_VERSION
-            or manifest.source.relative_path != source.relative_path.as_posix()
-            or manifest.source.size_bytes != source_stat.st_size
-            or manifest.source.mtime_ns != source_stat.st_mtime_ns
-            or manifest.output.relative_path
-            != output_path.relative_to(manifest_path.parents[1]).as_posix()
-            or output_path.is_symlink()
-            or not output_path.is_file()
-            or output_path.stat().st_size != manifest.output.size_bytes
+        if not _reusable_metadata_matches(
+            manifest, source, source_stat, manifest_path, output_path
         ):
             return None
-        if deep:
-            if (
-                source_identity(
-                    source.absolute_path,
-                    relative_path=source.relative_path.as_posix(),
-                )
-                != manifest.source
-                or file_sha256(output_path) != manifest.output.sha256
-            ):
-                return None
-            validate_geoparquet(output_path)
-            if pq.ParquetFile(output_path).metadata.num_rows != manifest.output.row_count:
-                return None
+        if deep and not _deep_reusable_matches(manifest, source, output_path):
+            return None
         return manifest
     except (ManifestError, OSError, ValueError):
         return None
+
+
+def _reusable_metadata_matches(
+    manifest: Manifest,
+    source: PbfSource,
+    source_stat: os.stat_result,
+    manifest_path: Path,
+    output_path: Path,
+) -> bool:
+    metadata_matches = not any(
+        (
+            manifest.processing_contract_version != PROCESSING_CONTRACT_VERSION,
+            manifest.dataset_schema_version != DATASET_SCHEMA_VERSION,
+            manifest.source.relative_path != source.relative_path.as_posix(),
+            manifest.source.size_bytes != source_stat.st_size,
+            manifest.source.mtime_ns != source_stat.st_mtime_ns,
+            manifest.output.relative_path
+            != output_path.relative_to(manifest_path.parents[1]).as_posix(),
+        )
+    )
+    return metadata_matches and _output_matches(output_path, manifest.output.size_bytes)
+
+
+def _output_matches(output_path: Path, expected_size: int) -> bool:
+    return (
+        not output_path.is_symlink()
+        and output_path.is_file()
+        and output_path.stat().st_size == expected_size
+    )
+
+
+def _deep_reusable_matches(manifest: Manifest, source: PbfSource, output_path: Path) -> bool:
+    if (
+        source_identity(
+            source.absolute_path,
+            relative_path=source.relative_path.as_posix(),
+        )
+        != manifest.source
+    ):
+        return False
+    if file_sha256(output_path) != manifest.output.sha256:
+        return False
+    validate_geoparquet(output_path)
+    return pq.ParquetFile(output_path).metadata.num_rows == manifest.output.row_count
 
 
 def build_one(

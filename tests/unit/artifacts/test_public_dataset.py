@@ -7,6 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 from shapely import to_wkb
 from shapely.geometry import Polygon
@@ -19,8 +21,13 @@ from osm_polygon_image_tag.artifacts.public_dataset import (
     LEGACY_PUBLIC_ASSET_RELATIVE,
     PUBLIC_IMAGE_RELATIVE,
     PUBLIC_LINK_RELATIVE,
+    _advance_polygon_source_group,
     _PolygonAccumulator,
+    _public_polygon_schema_matches,
+    _remove_incompatible_polygon_checkpoint,
+    _resolved_polygon_row_count,
     build_public_dataset,
+    public_polygon_schema,
 )
 from osm_polygon_image_tag.artifacts.storage import write_geoparquet
 from osm_polygon_image_tag.assets.manifest import (
@@ -197,8 +204,6 @@ def test_public_dataset_deduplicates_identity_and_preserves_provenance(tmp_path:
     assert result.duplicate_image_rows == 1
     assert result.duplicate_link_rows == 1
 
-    import pyarrow.parquet as pq
-
     polygon = pq.read_table(result.polygon_path).to_pylist()[0]
     image = pq.read_table(result.image_path).to_pylist()[0]
     link = pq.read_table(result.link_path).to_pylist()[0]
@@ -213,6 +218,13 @@ def test_public_dataset_deduplicates_identity_and_preserves_provenance(tmp_path:
     assert manifest["image_rows"] == 1
     assert manifest["link_rows"] == 1
 
+    public_assets_module.validate_public_image_parquet(result.image_path, expected_rows=1)
+    public_assets_module.validate_public_link_parquet(result.link_path, expected_rows=1)
+    with pytest.raises(ValueError, match="image row count"):
+        public_assets_module.validate_public_image_parquet(result.image_path, expected_rows=2)
+    with pytest.raises(ValueError, match="link row count"):
+        public_assets_module.validate_public_link_parquet(result.link_path, expected_rows=2)
+
 
 def test_public_dataset_resumes_after_source_checkpoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -225,8 +237,6 @@ def test_public_dataset_resumes_after_source_checkpoint(
     )
 
     def batches(output: Path):
-        import pyarrow.parquet as pq
-
         for batch in pq.ParquetFile(output).iter_batches(batch_size=8192):
             yield batch.to_pylist()
 
@@ -323,6 +333,11 @@ def test_public_dataset_resumes_after_asset_checkpoint(
 def test_public_dataset_resumes_with_external_asset_checkpoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(
+        public_assets_module.shutil,
+        "disk_usage",
+        lambda _path: type("Usage", (), {"free": 20 * 1024**3})(),
+    )
     _write_polygon_manifest(tmp_path, "a-region.osm.pbf", [_polygon_row("a-region.osm.pbf")])
     _write_polygon_manifest(
         tmp_path,
@@ -385,6 +400,11 @@ def test_public_dataset_resumes_with_external_asset_checkpoint(
 def test_external_asset_checkpoint_is_seeded_from_durable_checkpoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(
+        public_assets_module.shutil,
+        "disk_usage",
+        lambda _path: type("Usage", (), {"free": 20 * 1024**3})(),
+    )
     _write_polygon_manifest(tmp_path, "a-region.osm.pbf", [_polygon_row("a-region.osm.pbf")])
     _write_polygon_manifest(
         tmp_path,
@@ -470,6 +490,55 @@ def test_polygon_checkpoint_records_output_row_count(tmp_path: Path) -> None:
         accumulator.close()
 
 
+def test_polygon_checkpoint_row_count_rejects_missing_invalid_and_negative_values(
+    tmp_path: Path,
+) -> None:
+    accumulator = _PolygonAccumulator(tmp_path / "polygons.sqlite")
+    try:
+        assert accumulator.public_output_rows() is None
+        accumulator.connection.execute(
+            "INSERT INTO checkpoint_metadata(key, value) VALUES (?, ?)",
+            ("public_output_rows", "not-an-integer"),
+        )
+        accumulator.connection.commit()
+        assert accumulator.public_output_rows() is None
+        accumulator.connection.execute(
+            "UPDATE checkpoint_metadata SET value = ? WHERE key = ?",
+            ("-1", "public_output_rows"),
+        )
+        accumulator.connection.commit()
+        assert accumulator.public_output_rows() is None
+    finally:
+        accumulator.close()
+
+
+def test_polygon_source_group_advances_and_rejects_missing_identity() -> None:
+    groups = iter([("way", 1, "a"), ("way", 2, "b")])
+
+    assert _advance_polygon_source_group(next(groups), groups, ("way", 2)) == ("way", 2, "b")
+    with pytest.raises(ValueError, match="provenance is incomplete"):
+        _advance_polygon_source_group(None, iter(()), ("way", 3))
+
+
+def test_public_polygon_schema_comparison_checks_metadata_and_fields() -> None:
+    expected = public_polygon_schema()
+
+    assert _public_polygon_schema_matches(expected, expected)
+    assert not _public_polygon_schema_matches(expected, expected.with_metadata({b"other": b"1"}))
+
+
+def test_incompatible_polygon_checkpoint_is_removed_only_when_inputs_are_known(
+    tmp_path: Path,
+) -> None:
+    checkpoint = tmp_path / "polygons.sqlite"
+    checkpoint.write_bytes(b"not a sqlite database")
+    _remove_incompatible_polygon_checkpoint(checkpoint, None)
+    assert checkpoint.exists()
+
+    _remove_incompatible_polygon_checkpoint(checkpoint, ["a" * 64])
+    assert not checkpoint.exists()
+
+
 def test_manifest_polygon_row_count_reuses_matching_output(tmp_path: Path) -> None:
     output = tmp_path / "public" / "polygons.parquet"
     output.parent.mkdir()
@@ -488,6 +557,33 @@ def test_manifest_polygon_row_count_reuses_matching_output(tmp_path: Path) -> No
     )
 
     assert public_dataset_module._manifest_polygon_row_count(tmp_path, output, digest) == 42
+
+
+def test_resolved_polygon_row_count_uses_checkpoint_manifest_then_file(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "public" / "polygons.parquet"
+    output.parent.mkdir()
+    pq.write_table(pa.table({"value": [1, 2]}), output)
+    digest = file_sha256(output)
+    assert _resolved_polygon_row_count(tmp_path, output, digest, 7) == 7
+
+    manifest_path = tmp_path / "public" / "public-manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "polygon_output": {
+                    "sha256": digest,
+                    "size_bytes": output.stat().st_size,
+                    "row_count": 42,
+                }
+            }
+        )
+    )
+    assert _resolved_polygon_row_count(tmp_path, output, digest, None) == 42
+
+    manifest_path.unlink()
+    assert _resolved_polygon_row_count(tmp_path, output, digest, None) == 2
 
 
 def test_public_dataset_reuses_polygon_row_count_without_sqlite_scan(

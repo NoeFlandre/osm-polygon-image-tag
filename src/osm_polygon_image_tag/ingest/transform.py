@@ -44,39 +44,97 @@ def transform_record(
 ) -> AcceptedRow | RejectedRow:
     if not has_target_tag(record.tags):
         return RejectedRow(reason="missing_target_tag")
-    try:
-        geometry = from_wkb(bytes.fromhex(record.geometry_ewkb_hex))
-    except (ValueError, GEOSException):
-        return RejectedRow(reason="malformed_wkb")
-    if geometry.is_empty:
-        return RejectedRow(reason="empty_geometry")
-    if geometry.geom_type not in {"Polygon", "MultiPolygon"}:
-        return RejectedRow(reason="non_polygon_geometry")
-    if not geometry.is_valid:
-        return RejectedRow(reason="invalid_geometry")
-    is_single_way_polygon = (
-        record.osm_type == "way"
-        and geometry.geom_type == "MultiPolygon"
-        and len(geometry.geoms) == 1
-    )
-    if is_single_way_polygon:
-        geometry = geometry.geoms[0]
-
-    oriented = orient_polygons(geometry, exterior_cw=False)
-    bounds = tuple(float(value) for value in oriented.bounds)
-    if len(bounds) != 4 or not all(math.isfinite(value) for value in bounds):
-        return RejectedRow(reason="non_finite_geometry")
-    area, _perimeter = _GEOD.geometry_area_perimeter(oriented)
-    area_m2 = abs(float(area))
-    if not math.isfinite(area_m2) or area_m2 <= 0:
-        return RejectedRow(reason="non_positive_area")
+    geometry, reason = _validated_geometry(record)
+    if reason is not None:
+        return RejectedRow(reason=reason)
     try:
         timestamp = _timestamp(record.timestamp)
     except ValueError:
         return RejectedRow(reason="invalid_timestamp")
+    return AcceptedRow(values=_accepted_values(record, source_pbf, geometry, timestamp))
 
+
+def _validated_geometry(
+    record: ExportRecord,
+) -> tuple[tuple[Any, tuple[float, ...], float] | None, str | None]:
+    geometry, reason = _decode_geometry(record.geometry_ewkb_hex)
+    if reason is not None:
+        return None, reason
+    reason = _geometry_rejection(geometry)
+    if reason is not None:
+        return None, reason
+    oriented = _oriented_geometry(geometry, record.osm_type)
+    bounds = _finite_bounds(oriented)
+    if bounds is None:
+        return None, "non_finite_geometry"
+    area_m2 = _positive_area(oriented)
+    if area_m2 is None:
+        return None, "non_positive_area"
+    return (oriented, bounds, area_m2), None
+
+
+def _decode_geometry(value: str) -> tuple[Any | None, str | None]:
+    try:
+        return from_wkb(bytes.fromhex(value)), None
+    except (ValueError, GEOSException):
+        return None, "malformed_wkb"
+
+
+def _geometry_rejection(geometry: Any) -> str | None:
+    if geometry.is_empty:
+        return "empty_geometry"
+    if geometry.geom_type not in {"Polygon", "MultiPolygon"}:
+        return "non_polygon_geometry"
+    if not geometry.is_valid:
+        return "invalid_geometry"
+    return None
+
+
+def _oriented_geometry(geometry: Any, osm_type: str) -> Any:
+    if osm_type == "way" and geometry.geom_type == "MultiPolygon" and len(geometry.geoms) == 1:
+        geometry = geometry.geoms[0]
+    return orient_polygons(geometry, exterior_cw=False)
+
+
+def _finite_bounds(geometry: Any) -> tuple[float, ...] | None:
+    bounds = tuple(float(value) for value in geometry.bounds)
+    return bounds if len(bounds) == 4 and all(math.isfinite(value) for value in bounds) else None
+
+
+def _positive_area(geometry: Any) -> float | None:
+    area, _perimeter = _GEOD.geometry_area_perimeter(geometry)
+    area_m2 = abs(float(area))
+    return area_m2 if math.isfinite(area_m2) and area_m2 > 0 else None
+
+
+def _accepted_values(
+    record: ExportRecord,
+    source_pbf: str,
+    geometry_data: tuple[Any, tuple[float, ...], float] | None,
+    timestamp: datetime | None,
+) -> dict[str, Any]:
+    if geometry_data is None:
+        raise ValueError("validated geometry is required")
+    oriented, bounds, area_m2 = geometry_data
     sorted_tags = dict(sorted(record.tags.items()))
-    values: dict[str, Any] = {
+    values = _base_accepted_values(
+        record, source_pbf, oriented, bounds, area_m2, timestamp, sorted_tags
+    )
+    values.update({key: sorted_tags.get(key) for key in TARGET_TAG_KEYS})
+    values[PANORAMAX_VALUES_COLUMN] = panoramax_tag_values(sorted_tags)
+    return values
+
+
+def _base_accepted_values(
+    record: ExportRecord,
+    source_pbf: str,
+    oriented: Any,
+    bounds: tuple[float, ...],
+    area_m2: float,
+    timestamp: datetime | None,
+    sorted_tags: dict[str, str],
+) -> dict[str, Any]:
+    return {
         "osm_type": record.osm_type,
         "osm_id": record.osm_id,
         "osm_version": record.version,
@@ -96,6 +154,3 @@ def transform_record(
         "bbox_max_lat": bounds[3],
         "tags": sorted_tags,
     }
-    values.update({key: sorted_tags.get(key) for key in TARGET_TAG_KEYS})
-    values[PANORAMAX_VALUES_COLUMN] = panoramax_tag_values(sorted_tags)
-    return AcceptedRow(values=values)

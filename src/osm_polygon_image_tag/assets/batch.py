@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
@@ -74,21 +74,7 @@ async def _resolve(
         )
         return record, False, False
     cached = cache.get(key) if cached_records is None else cached_records.get(key)
-    now = datetime.now(UTC)
-    refresh_before = now + timedelta(hours=1)
-    expiring = cached is not None and any(
-        isinstance(value := asset.get("image_url_expires_at"), str)
-        and datetime.fromisoformat(value) <= refresh_before
-        for asset in cached.assets
-    )
-    auth_limited = cached is not None and credential_refresh_required(
-        reference.provider,
-        cached.status,
-        registry.capability,
-    )
-    if cached is not None and not (
-        expiring or auth_limited or retry_refresh_required(cached.status, cached.retry_after, now)
-    ):
+    if cached is not None and _cached_is_reusable(cached, reference, registry.capability):
         return cached, True, True
     record = await registry.resolve_reference(
         reference,
@@ -96,6 +82,39 @@ async def _resolve(
         resolver_contract_version=resolver_contract_version,
     )
     return record, False, True
+
+
+def _cached_is_reusable(
+    cached: ResolutionRecord | None,
+    reference: SourceReference,
+    capability: Callable[[str], str],
+) -> bool:
+    if cached is None:
+        return False
+    now = datetime.now(UTC)
+    return not _cached_refresh_required(cached, reference, capability, now)
+
+
+def _cached_refresh_required(
+    cached: ResolutionRecord,
+    reference: SourceReference,
+    capability: Callable[[str], str],
+    now: datetime,
+) -> bool:
+    return (
+        _cached_asset_expiring(cached, now)
+        or credential_refresh_required(reference.provider, cached.status, capability)
+        or retry_refresh_required(cached.status, cached.retry_after, now)
+    )
+
+
+def _cached_asset_expiring(cached: ResolutionRecord, now: datetime) -> bool:
+    refresh_before = now + timedelta(hours=1)
+    for asset in cached.assets:
+        value = asset.get("image_url_expires_at")
+        if isinstance(value, str) and datetime.fromisoformat(value) <= refresh_before:
+            return True
+    return False
 
 
 class AssetBatchProcessor:
@@ -146,67 +165,68 @@ class AssetBatchProcessor:
             )
         return key, record, cache_hit, cacheable
 
-    async def process(
-        self,
-        pending: list[tuple[Mapping[str, object], SourceReference]],
-        sorter: DiskAssetSorter,
-    ) -> None:
-        if self._stop_requested():
-            raise AssetBuildStopped
+    def _unique_pending(
+        self, pending: list[tuple[Mapping[str, object], SourceReference]]
+    ) -> dict[ResolutionKey, tuple[Mapping[str, object], SourceReference]]:
         unique: dict[ResolutionKey, tuple[Mapping[str, object], SourceReference]] = {}
         for row, reference in pending:
             unique.setdefault(_key(reference, self._resolver_contract_version), (row, reference))
+        return unique
 
-        cacheable_keys = tuple(
-            key
-            for key, (_row, reference) in unique.items()
-            if is_cacheable_canonical_reference(reference.canonical_reference)
-        )
-        missing_cache_keys = tuple(
-            key for key in cacheable_keys if key not in self._snapshot_records
-        )
-        if missing_cache_keys:
-            self._snapshot_records.update(self._cache.get_many(missing_cache_keys))
-        cached_records = {
-            key: self._snapshot_records[key]
-            for key in cacheable_keys
-            if key in self._snapshot_records
-        }
-        resolved = await asyncio.gather(
-            *(
-                self._resolve_one(key, row, reference, cached_records)
-                for key, (row, reference) in unique.items()
+    def _cached_records(
+        self,
+        unique: Mapping[ResolutionKey, tuple[Mapping[str, object], SourceReference]],
+    ) -> Mapping[ResolutionKey, ResolutionRecord]:
+        cacheable_keys = _cacheable_keys(unique)
+        missing_keys = _missing_snapshot_keys(cacheable_keys, self._snapshot_records)
+        if missing_keys:
+            self._snapshot_records.update(self._cache.get_many(missing_keys))
+        return _cached_snapshot_values(cacheable_keys, self._snapshot_records)
+
+    async def _resolve_unique(
+        self,
+        unique: Mapping[ResolutionKey, tuple[Mapping[str, object], SourceReference]],
+        cached_records: Mapping[ResolutionKey, ResolutionRecord],
+    ) -> list[tuple[ResolutionKey, ResolutionRecord, bool, bool]]:
+        return list(
+            await asyncio.gather(
+                *(
+                    self._resolve_one(key, row, reference, cached_records)
+                    for key, (row, reference) in unique.items()
+                )
             )
         )
-        self._cache.put_many(
-            tuple(
-                record
-                for _key, record, cache_hit, cacheable in resolved
-                if cacheable and not cache_hit
-            )
-        )
-        records = {key: record for key, record, _cache_hit, _cacheable in resolved}
+
+    def _record_resolutions(
+        self, resolved: list[tuple[ResolutionKey, ResolutionRecord, bool, bool]]
+    ) -> dict[ResolutionKey, ResolutionRecord]:
+        self._cache.put_many(_new_cache_records(resolved))
         self._cache_hits += sum(cache_hit for _key, _record, cache_hit, _cacheable in resolved)
         self._resolver_requests += sum(
             not cache_hit for _key, _record, cache_hit, _cacheable in resolved
         )
-        self._snapshot_records.update(
-            (key, record) for key, record, _cache_hit, cacheable in resolved if cacheable
+        records = _resolution_records(resolved)
+        self._snapshot_records.update(_cacheable_records(resolved))
+        return records
+
+    def _append_rows(
+        self,
+        pending: list[tuple[Mapping[str, object], SourceReference]],
+        records: Mapping[ResolutionKey, ResolutionRecord],
+        sorter: DiskAssetSorter,
+    ) -> None:
+        chunk_rows = _asset_rows_for_pending(
+            pending, records, self._polygon_shard, self._resolver_contract_version
         )
-        chunk_rows = [
-            result_row
-            for row, reference in pending
-            for result_row in asset_rows(
-                row,
-                self._polygon_shard,
-                reference,
-                records[_key(reference, self._resolver_contract_version)],
-            )
-        ]
         sorter.add(chunk_rows)
-        self._statuses.update(str(row["status"]) for row in chunk_rows)
-        self._providers.update(str(row["provider"]) for row in chunk_rows)
-        self._direct_urls += sum(row["image_url"] is not None for row in chunk_rows)
+        self._record_row_counts(chunk_rows)
+
+    def _record_row_counts(self, rows: Sequence[Mapping[str, object]]) -> None:
+        self._statuses.update(str(row["status"]) for row in rows)
+        self._providers.update(str(row["provider"]) for row in rows)
+        self._direct_urls += sum(row["image_url"] is not None for row in rows)
+
+    def _emit_progress(self, pending: list[tuple[Mapping[str, object], SourceReference]]) -> None:
         for _row, _reference in pending:
             self._reference_index += 1
             self._progress(
@@ -217,6 +237,20 @@ class AssetBatchProcessor:
                     "reference_count": self._reference_count,
                 }
             )
+
+    async def process(
+        self,
+        pending: list[tuple[Mapping[str, object], SourceReference]],
+        sorter: DiskAssetSorter,
+    ) -> None:
+        if self._stop_requested():
+            raise AssetBuildStopped
+        unique = self._unique_pending(pending)
+        cached_records = self._cached_records(unique)
+        resolved = await self._resolve_unique(unique, cached_records)
+        records = self._record_resolutions(resolved)
+        self._append_rows(pending, records, sorter)
+        self._emit_progress(pending)
 
     def resolution_snapshot(self) -> ResolutionSnapshotIdentity:
         return self._cache.resolution_snapshot(
@@ -235,3 +269,63 @@ class AssetBatchProcessor:
             cache_hits=self._cache_hits,
             resolver_requests=self._resolver_requests,
         )
+
+
+def _cacheable_keys(
+    unique: Mapping[ResolutionKey, tuple[Mapping[str, object], SourceReference]],
+) -> tuple[ResolutionKey, ...]:
+    return tuple(
+        key
+        for key, (_row, reference) in unique.items()
+        if is_cacheable_canonical_reference(reference.canonical_reference)
+    )
+
+
+def _missing_snapshot_keys(
+    keys: tuple[ResolutionKey, ...], snapshots: Mapping[ResolutionKey, ResolutionRecord]
+) -> tuple[ResolutionKey, ...]:
+    return tuple(key for key in keys if key not in snapshots)
+
+
+def _cached_snapshot_values(
+    keys: tuple[ResolutionKey, ...], snapshots: Mapping[ResolutionKey, ResolutionRecord]
+) -> dict[ResolutionKey, ResolutionRecord]:
+    return {key: snapshots[key] for key in keys if key in snapshots}
+
+
+def _new_cache_records(
+    resolved: list[tuple[ResolutionKey, ResolutionRecord, bool, bool]],
+) -> tuple[ResolutionRecord, ...]:
+    return tuple(
+        record for _key, record, cache_hit, cacheable in resolved if cacheable and not cache_hit
+    )
+
+
+def _resolution_records(
+    resolved: list[tuple[ResolutionKey, ResolutionRecord, bool, bool]],
+) -> dict[ResolutionKey, ResolutionRecord]:
+    return {key: record for key, record, _cache_hit, _cacheable in resolved}
+
+
+def _cacheable_records(
+    resolved: list[tuple[ResolutionKey, ResolutionRecord, bool, bool]],
+) -> dict[ResolutionKey, ResolutionRecord]:
+    return {key: record for key, record, _cache_hit, cacheable in resolved if cacheable}
+
+
+def _asset_rows_for_pending(
+    pending: list[tuple[Mapping[str, object], SourceReference]],
+    records: Mapping[ResolutionKey, ResolutionRecord],
+    polygon_shard: str,
+    resolver_contract_version: int,
+) -> list[dict[str, object]]:
+    return [
+        result_row
+        for row, reference in pending
+        for result_row in asset_rows(
+            row,
+            polygon_shard,
+            reference,
+            records[_key(reference, resolver_contract_version)],
+        )
+    ]

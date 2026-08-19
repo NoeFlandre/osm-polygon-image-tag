@@ -35,23 +35,26 @@ def polygon_rows(
 
 
 def _panoramax_count(value: object, fallback: object) -> int:
-    if isinstance(value, Mapping):
-        pairs = tuple(value.items())
-    elif isinstance(value, list):
-        pairs = tuple(
-            (
-                (pair.get("key"), pair.get("value"))
-                if isinstance(pair, Mapping)
-                else (pair[0], pair[1])
-            )
-            for pair in value
-            if (isinstance(pair, Mapping) or (isinstance(pair, tuple | list) and len(pair) == 2))
-        )
-    else:
-        pairs = ()
+    pairs = _panoramax_pairs(value)
     if pairs:
         return sum(isinstance(item, str) and item != "" for _key, item in pairs)
     return int(isinstance(fallback, str) and fallback != "")
+
+
+def _panoramax_pairs(value: object) -> tuple[tuple[object, object], ...]:
+    if isinstance(value, Mapping):
+        return tuple(value.items())
+    if not isinstance(value, list):
+        return ()
+    return tuple(pair for item in value if (pair := _panoramax_pair(item)) is not None)
+
+
+def _panoramax_pair(value: object) -> tuple[object, object] | None:
+    if isinstance(value, Mapping):
+        return value.get("key"), value.get("value")
+    if isinstance(value, tuple | list) and len(value) == 2:
+        return value[0], value[1]
+    return None
 
 
 def count_polygon_references(path: Path, *, batch_size: int = 4096) -> int:
@@ -60,18 +63,26 @@ def count_polygon_references(path: Path, *, batch_size: int = 4096) -> int:
     total = 0
     for batch in parquet.iter_batches(batch_size=batch_size, columns=list(REFERENCE_COLUMNS)):
         columns = batch.to_pydict()
-        total += sum(
-            isinstance(value, str) and value != ""
-            for name in _REFERENCE_SCALAR_COLUMNS
-            for value in columns[name]
-        )
-        total += sum(
-            _panoramax_count(value, fallback)
-            for value, fallback in zip(
-                columns[PANORAMAX_VALUES_COLUMN], columns["panoramax"], strict=True
-            )
-        )
+        total += _count_scalar_references(columns)
+        total += _count_panoramax_references(columns)
     return total
+
+
+def _count_scalar_references(columns: Mapping[str, list[object]]) -> int:
+    return sum(
+        isinstance(value, str) and value != ""
+        for name in _REFERENCE_SCALAR_COLUMNS
+        for value in columns[name]
+    )
+
+
+def _count_panoramax_references(columns: Mapping[str, list[object]]) -> int:
+    return sum(
+        _panoramax_count(value, fallback)
+        for value, fallback in zip(
+            columns[PANORAMAX_VALUES_COLUMN], columns["panoramax"], strict=True
+        )
+    )
 
 
 def polygon_bbox(row: Mapping[str, object]) -> tuple[float, float, float, float]:

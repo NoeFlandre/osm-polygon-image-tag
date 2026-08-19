@@ -1,6 +1,7 @@
 """Cleanup of abandoned, application-owned temporary files."""
 
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 _ATOMIC_TEMP = re.compile(r"^\.(?P<target>.+)\.[A-Za-z0-9_]{8}\.tmp$")
@@ -35,36 +36,48 @@ def cleanup_stale_temps(data_root: Path) -> tuple[Path, ...]:
     invocation has stopped. Unknown files are intentionally left untouched so
     publication validation can continue to reject them.
     """
-    removed: list[Path] = []
-    for directory_name in _ATOMIC_LOCATIONS:
-        directory = data_root / directory_name if directory_name else data_root
-        if not directory.is_dir() or directory.is_symlink():
-            continue
-        for candidate in directory.iterdir():
-            if (
-                candidate.is_file()
-                and not candidate.is_symlink()
-                and (
-                    _is_owned_atomic_temp(candidate, directory_name)
-                    or (directory_name == "assets" and _ASSET_SORT_TEMP.fullmatch(candidate.name))
-                )
-            ):
-                candidate.unlink()
-                removed.append(candidate)
-    temporary_root = data_root / "tmp"
-    if temporary_root.is_dir() and not temporary_root.is_symlink():
-        for candidate in temporary_root.iterdir():
-            if (
-                candidate.is_file()
-                and not candidate.is_symlink()
-                and (
-                    _TAG_STORE_TEMP.fullmatch(candidate.name)
-                    or _PUBLIC_ASSET_LEGACY_TEMP.fullmatch(candidate.name)
-                )
-            ):
-                candidate.unlink()
-                removed.append(candidate)
+    removed = [
+        candidate
+        for directory_name in _ATOMIC_LOCATIONS
+        for candidate in _cleanup_directory(data_root, directory_name)
+    ]
+    removed.extend(_cleanup_directory(data_root, "tmp"))
     return tuple(sorted(removed, key=lambda path: path.as_posix()))
+
+
+def _cleanup_directory(data_root: Path, directory_name: str) -> list[Path]:
+    directory = data_root / directory_name if directory_name else data_root
+    if not directory.is_dir() or directory.is_symlink():
+        return []
+    if directory_name == "tmp":
+        return _remove_matching(directory, _is_tmp_temp)
+    return _remove_matching(directory, lambda path: _is_pipeline_temp(path, directory_name))
+
+
+def _remove_matching(directory: Path, predicate: Callable[[Path], bool]) -> list[Path]:
+    removed: list[Path] = []
+    for candidate in directory.iterdir():
+        if _is_real_file(candidate) and predicate(candidate):
+            candidate.unlink()
+            removed.append(candidate)
+    return removed
+
+
+def _is_real_file(path: Path) -> bool:
+    return path.is_file() and not path.is_symlink()
+
+
+def _is_pipeline_temp(path: Path, directory: str) -> bool:
+    return _is_owned_atomic_temp(path, directory) or (
+        directory == "assets" and _ASSET_SORT_TEMP.fullmatch(path.name) is not None
+    )
+
+
+def _is_tmp_temp(path: Path) -> bool:
+    return (
+        _TAG_STORE_TEMP.fullmatch(path.name) is not None
+        or _PUBLIC_ASSET_LEGACY_TEMP.fullmatch(path.name) is not None
+    )
 
 
 __all__ = ["cleanup_stale_temps"]

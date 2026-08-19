@@ -33,12 +33,13 @@ def has_target_tag(tags: Mapping[str, str]) -> bool:
 
 
 def panoramax_tag_values(tags: Mapping[str, str]) -> dict[str, str]:
-    return {
-        key: value
-        for key, value in sorted(tags.items())
-        if value != ""
-        and (key == "panoramax" or (is_target_tag_key(key) and key.startswith("panoramax:")))
-    }
+    return {key: value for key, value in sorted(tags.items()) if _is_panoramax_value(key, value)}
+
+
+def _is_panoramax_value(key: str, value: str) -> bool:
+    if value == "":
+        return False
+    return key == "panoramax" or (is_target_tag_key(key) and key.startswith("panoramax:"))
 
 
 class _SourceTagHandler(osmium.SimpleHandler):

@@ -25,6 +25,7 @@ from .cache import (
     CACHE_SCHEMA_VERSION,
     CACHE_STATS_FILENAME,
     PerShardCache,
+    ShardCacheEntry,
     cache_root,
     input_digest,
     load_shard_cache,
@@ -66,57 +67,71 @@ def _aggregate_per_shard(
     for index, (manifest, output) in enumerate(manifests, start=1):
         relative_path = manifest.output.relative_path
         cached_entry = cached.get(relative_path)
-        if (
-            cached_entry is not None
-            and cached_entry["sha256"] == manifest.output.sha256
-            and cached_entry["row_count"] == manifest.output.row_count
-        ):
-            per_shard[relative_path] = cached_entry
+        reusable = _reusable_shard(cached_entry, manifest)
+        if reusable is not None:
+            per_shard[relative_path] = reusable
             reused_shards.append(relative_path)
             polygon_rows += manifest.output.row_count
-            emit(
-                {
-                    "event": "metadata_geography_shard_reused",
-                    "shard": relative_path,
-                    "shard_index": index,
-                    "shard_count": len(manifests),
-                }
-            )
+            emit(_shard_event("metadata_geography_shard_reused", relative_path, index, manifests))
             continue
         emit(
-            {
-                "event": "metadata_geography_shard_started",
-                "shard": relative_path,
-                "shard_index": index,
-                "shard_count": len(manifests),
-                "row_count": manifest.output.row_count,
-            }
-        )
-        shard_counts: dict[str, int] = {}
-        for centroid in read_shard_polygon_centroids(output, relative_path):
-            cell = assign_h3_cell(centroid.lat, centroid.lon, resolution=DEFAULT_H3_RESOLUTION)
-            shard_counts[cell] = shard_counts.get(cell, 0) + 1
-        if sum(shard_counts.values()) != manifest.output.row_count:
-            raise GeographicMapError(
-                f"Centroid count {sum(shard_counts.values())} != manifest row count "
-                f"{manifest.output.row_count} for {relative_path}"
+            _shard_event(
+                "metadata_geography_shard_started", relative_path, index, manifests, manifest
             )
-        per_shard[relative_path] = {
-            "sha256": manifest.output.sha256,
-            "row_count": manifest.output.row_count,
-            "cells": shard_counts,
-        }
+        )
+        per_shard[relative_path] = _aggregate_shard(manifest, output, relative_path)
         polygon_rows += manifest.output.row_count
         emit(
-            {
-                "event": "metadata_geography_shard_completed",
-                "shard": relative_path,
-                "shard_index": index,
-                "shard_count": len(manifests),
-                "row_count": manifest.output.row_count,
-            }
+            _shard_event(
+                "metadata_geography_shard_completed", relative_path, index, manifests, manifest
+            )
         )
     return per_shard, reused_shards, polygon_rows
+
+
+def _reusable_shard(entry: ShardCacheEntry | None, manifest: Manifest) -> ShardCacheEntry | None:
+    if (
+        entry is not None
+        and entry["sha256"] == manifest.output.sha256
+        and entry["row_count"] == manifest.output.row_count
+    ):
+        return entry
+    return None
+
+
+def _shard_event(
+    event: str,
+    relative_path: str,
+    index: int,
+    manifests: list[tuple[Manifest, Path]],
+    manifest: Manifest | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "event": event,
+        "shard": relative_path,
+        "shard_index": index,
+        "shard_count": len(manifests),
+    }
+    if manifest is not None:
+        payload["row_count"] = manifest.output.row_count
+    return payload
+
+
+def _aggregate_shard(manifest: Manifest, output: Path, relative_path: str) -> ShardCacheEntry:
+    shard_counts: dict[str, int] = {}
+    for centroid in read_shard_polygon_centroids(output, relative_path):
+        cell = assign_h3_cell(centroid.lat, centroid.lon, resolution=DEFAULT_H3_RESOLUTION)
+        shard_counts[cell] = shard_counts.get(cell, 0) + 1
+    if sum(shard_counts.values()) != manifest.output.row_count:
+        raise GeographicMapError(
+            f"Centroid count {sum(shard_counts.values())} != manifest row count "
+            f"{manifest.output.row_count} for {relative_path}"
+        )
+    return {
+        "sha256": manifest.output.sha256,
+        "row_count": manifest.output.row_count,
+        "cells": shard_counts,
+    }
 
 
 def _aggregate_cells(
@@ -147,6 +162,83 @@ def _input_digest_and_meta(
     return input_digest(keys), keys
 
 
+def _cached_int(cached_stats: dict[str, object] | None, name: str, expected: int) -> bool:
+    value = cached_stats.get(name) if cached_stats is not None else None
+    return isinstance(value, int) and not isinstance(value, bool) and value == expected
+
+
+def _map_cache_is_valid(
+    cached_stats: dict[str, object] | None,
+    input_digest_value: str,
+    input_shard_count: int,
+    cell_count: int,
+    polygon_rows: int,
+    min_cell_count: int,
+    max_cell_count: int,
+    png_path: Path,
+) -> bool:
+    return (
+        _cache_identity_matches(cached_stats, input_digest_value, input_shard_count)
+        and _cache_dimensions_match(
+            cached_stats, cell_count, polygon_rows, min_cell_count, max_cell_count
+        )
+        and _png_is_valid(png_path)
+    )
+
+
+def _cache_identity_matches(
+    cached_stats: dict[str, object] | None, input_digest_value: str, input_shard_count: int
+) -> bool:
+    return (
+        cached_stats is not None
+        and cached_stats.get("input_digest") == input_digest_value
+        and _cached_int(cached_stats, "input_shard_count", input_shard_count)
+    )
+
+
+def _cache_dimensions_match(
+    cached_stats: dict[str, object] | None,
+    cell_count: int,
+    polygon_rows: int,
+    min_cell_count: int,
+    max_cell_count: int,
+) -> bool:
+    return cached_stats is not None and all(
+        _cached_int(cached_stats, name, expected)
+        for name, expected in (
+            ("cell_count", cell_count),
+            ("polygon_rows", polygon_rows),
+            ("min_cell_count", min_cell_count),
+            ("max_cell_count", max_cell_count),
+        )
+    )
+
+
+def _png_is_valid(path: Path) -> bool:
+    return (
+        path.is_file() and path.stat().st_size > 0 and path.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    )
+
+
+def _cell_count_range(cells: list[PolygonCountCell]) -> tuple[int, int]:
+    if not cells:
+        return 0, 0
+    counts = [cell.polygon_count for cell in cells]
+    return min(counts), max(counts)
+
+
+def _cached_render(png_path: Path, polygon_rows: int, cell_count: int) -> RenderResult:
+    caption = (
+        "Geographic OSM Polygon Density. Each H3 cell contains the raw count of "
+        "finalized `polygons` rows whose geometry centroid falls into the cell. "
+        f"Polygons are assigned by their geometry centroid at H3 resolution "
+        f"{DEFAULT_H3_RESOLUTION}. {polygon_rows:,} supplied polygon rows "
+        f"across {cell_count:,} H3 cells. Image rows and polygon-image links "
+        "are not counted in this map. Colour uses a logarithmic scale."
+    )
+    return RenderResult(output_path=png_path, caption=caption)
+
+
 def build_geographic_map(
     data_root: Path,
     *,
@@ -174,55 +266,27 @@ def build_geographic_map(
 
     cells = _aggregate_cells(per_shard)
     cell_count = len(cells)
-    if cells:
-        min_cell_count = min(cell.polygon_count for cell in cells)
-        max_cell_count = max(cell.polygon_count for cell in cells)
-    else:
-        min_cell_count = 0
-        max_cell_count = 0
+    min_cell_count, max_cell_count = _cell_count_range(cells)
 
     cached_row_total = sum(entry["row_count"] for entry in per_shard.values())
-    if cached_row_total != polygon_rows:
-        raise GeographicMapError(
-            f"Per-shard cache row count mismatch: got {cached_row_total}, expected {polygon_rows}"
-        )
+    _validate_cached_row_total(cached_row_total, polygon_rows)
 
     png_path = data_root / GEOGRAPHIC_PNG_RELATIVE
     cached_stats = load_stats_cache(cache_dir)
-
-    def cached_int(name: str, expected: int) -> bool:
-        value = cached_stats.get(name) if cached_stats is not None else None
-        return isinstance(value, int) and not isinstance(value, bool) and value == expected
-
-    cache_is_valid = (
-        cached_stats is not None
-        and cached_stats.get("input_digest") == input_digest
-        and cached_int("input_shard_count", len(selected_manifests))
-        and cached_int("cell_count", cell_count)
-        and cached_int("polygon_rows", polygon_rows)
-        and cached_int("min_cell_count", min_cell_count)
-        and cached_int("max_cell_count", max_cell_count)
-        and png_path.is_file()
-        and png_path.stat().st_size > 0
-        # Only trust the PNG signature when the file is structurally a PNG.
-        and png_path.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
-    )
-
-    if cache_is_valid:
-        # The PNG is already valid; render_count_map is intentionally not
-        # called here because a cache hit must avoid Matplotlib work. Keep a
-        # deterministic caption for callers inspecting the result.
-        caption = (
-            "Geographic OSM Polygon Density. Each H3 cell contains the raw count of "
-            "finalized `polygons` rows whose geometry centroid falls into the cell. "
-            f"Polygons are assigned by their geometry centroid at H3 resolution "
-            f"{DEFAULT_H3_RESOLUTION}. {polygon_rows:,} supplied polygon rows "
-            f"across {cell_count:,} H3 cells. Image rows and polygon-image links "
-            "are not counted in this map. Colour uses a logarithmic scale."
+    render = (
+        _cached_render(png_path, polygon_rows, cell_count)
+        if _map_cache_is_valid(
+            cached_stats,
+            input_digest,
+            len(selected_manifests),
+            cell_count,
+            polygon_rows,
+            min_cell_count,
+            max_cell_count,
+            png_path,
         )
-        render = RenderResult(output_path=png_path, caption=caption)
-    else:
-        render = render_count_map(cells, png_path, h3_resolution=DEFAULT_H3_RESOLUTION)
+        else render_count_map(cells, png_path, h3_resolution=DEFAULT_H3_RESOLUTION)
+    )
 
     # Persist caches for the next run.
     write_shard_cache(cache_dir, per_shard)
@@ -262,6 +326,13 @@ def build_geographic_map(
     )
 
     return MapResult(cells=tuple(cells), statistics=statistics, render=render)
+
+
+def _validate_cached_row_total(cached_rows: int, polygon_rows: int) -> None:
+    if cached_rows != polygon_rows:
+        raise GeographicMapError(
+            f"Per-shard cache row count mismatch: got {cached_rows}, expected {polygon_rows}"
+        )
 
 
 __all__ = [

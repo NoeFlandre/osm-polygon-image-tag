@@ -4,7 +4,7 @@ import tempfile
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -27,12 +27,11 @@ class WriteResult:
 def _schema_matches(actual: pa.Schema, expected: pa.Schema) -> bool:
     if actual.names != expected.names or actual.metadata != expected.metadata:
         return False
-    for actual_field, expected_field in zip(actual, expected, strict=True):
-        if actual_field.nullable != expected_field.nullable:
-            return False
-        if actual_field.type != expected_field.type:
-            return False
-    return True
+    return all(
+        actual_field.nullable == expected_field.nullable
+        and actual_field.type == expected_field.type
+        for actual_field, expected_field in zip(actual, expected, strict=True)
+    )
 
 
 def validate_geoparquet(path: Path) -> None:
@@ -43,21 +42,62 @@ def validate_geoparquet(path: Path) -> None:
     expected = dataset_schema()
     if not _schema_matches(parquet.schema_arrow, expected):
         raise StorageError("Parquet schema or metadata does not match the dataset schema")
-    metadata = parquet.schema_arrow.metadata
-    if metadata is None or b"geo" not in metadata:
+    _validate_geo_metadata(parquet.schema_arrow.metadata)
+    _read_geometry_groups(parquet)
+
+
+def _validate_geo_metadata(metadata: Mapping[bytes, bytes] | None) -> None:
+    raw_geo = _geo_metadata_bytes(metadata)
+    if raw_geo is None:
         raise StorageError("GeoParquet metadata is missing")
+    geo = _parse_geo_metadata(raw_geo)
+    if not _valid_geo_metadata(geo):
+        raise StorageError("GeoParquet geometry metadata does not match the contract")
+
+
+def _parse_geo_metadata(raw_geo: bytes) -> object:
     try:
-        geo = json.loads(metadata[b"geo"])
+        return json.loads(raw_geo)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise StorageError("GeoParquet metadata is malformed") from error
-    geometry = geo.get("columns", {}).get("geometry", {})
-    if (
-        geo.get("version") != GEOPARQUET_VERSION
-        or geo.get("primary_column") != "geometry"
-        or geometry.get("encoding") != "WKB"
-        or geometry.get("geometry_types") != ["Polygon", "MultiPolygon"]
-    ):
-        raise StorageError("GeoParquet geometry metadata does not match the contract")
+
+
+def _geo_metadata_bytes(metadata: Mapping[bytes, bytes] | None) -> bytes | None:
+    if metadata is None:
+        return None
+    return metadata.get(b"geo")
+
+
+def _valid_geo_metadata(geo: object) -> bool:
+    if not isinstance(geo, dict):
+        return False
+    columns = geo.get("columns")
+    if not isinstance(columns, dict):
+        return False
+    geometry = columns.get("geometry")
+    if not isinstance(geometry, dict):
+        return False
+    return _geo_fields_match(
+        cast(Mapping[object, object], geo), cast(Mapping[object, object], geometry)
+    )
+
+
+def _geo_fields_match(geo: Mapping[object, object], geometry: Mapping[object, object]) -> bool:
+    return _geo_version_matches(geo) and _geo_geometry_matches(geometry)
+
+
+def _geo_version_matches(geo: Mapping[object, object]) -> bool:
+    return geo.get("version") == GEOPARQUET_VERSION and geo.get("primary_column") == "geometry"
+
+
+def _geo_geometry_matches(geometry: Mapping[object, object]) -> bool:
+    return geometry.get("encoding") == "WKB" and geometry.get("geometry_types") == [
+        "Polygon",
+        "MultiPolygon",
+    ]
+
+
+def _read_geometry_groups(parquet: pq.ParquetFile) -> None:
     for row_group in range(parquet.metadata.num_row_groups):
         parquet.read_row_group(row_group, columns=["geometry"])
 
@@ -81,23 +121,35 @@ def _write_batches(
         write_statistics=True,
     ) as writer:
         for row in rows:
-            normalized = dict(row)
-            for name in ("tags", PANORAMAX_VALUES_COLUMN):
-                value = normalized.get(name)
-                if isinstance(value, Mapping):
-                    normalized[name] = [
-                        {"key": str(key), "value": str(item)}
-                        for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
-                    ]
-            batch.append(normalized)
+            batch.append(_normalize_storage_row(row))
             if len(batch) == batch_size:
-                writer.write_table(pa.Table.from_pylist(batch, schema=schema))
-                row_count += len(batch)
-                batch.clear()
+                row_count += _write_storage_batch(writer, batch, schema)
         if batch:
-            writer.write_table(pa.Table.from_pylist(batch, schema=schema))
-            row_count += len(batch)
+            row_count += _write_storage_batch(writer, batch, schema)
     return row_count
+
+
+def _normalize_storage_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = dict(row)
+    for name in ("tags", PANORAMAX_VALUES_COLUMN):
+        value = normalized.get(name)
+        if isinstance(value, Mapping):
+            normalized[name] = [
+                {"key": str(key), "value": str(item)}
+                for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            ]
+    return normalized
+
+
+def _write_storage_batch(
+    writer: pq.ParquetWriter,
+    batch: list[Mapping[str, Any]],
+    schema: pa.Schema,
+) -> int:
+    writer.write_table(pa.Table.from_pylist(batch, schema=schema))
+    size = len(batch)
+    batch.clear()
+    return size
 
 
 def write_geoparquet(

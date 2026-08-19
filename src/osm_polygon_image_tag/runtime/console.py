@@ -35,7 +35,7 @@ class ConsoleRenderer:
         human_error: HumanError | None = None,
     ) -> None:
         self._stderr = stderr or sys.stderr
-        self._human = log_format == "human" or (log_format == "auto" and self._stderr.isatty())
+        self._human = _is_human(log_format, self._stderr)
         self._console = Console(file=self._stderr, stderr=True)
         self._bar: tqdm[object] | None = None
         self._human_progress = human_progress or self._render_progress
@@ -65,22 +65,49 @@ class ConsoleRenderer:
 
     def _render_progress(self, event: dict[str, object]) -> None:
         name = str(event.get("event", "progress"))
-        if name == "asset_backfill_started":
-            count = event.get("asset_count", 0)
-            self._bar = tqdm(
-                total=count if isinstance(count, int) else 0,
-                desc="Image assets",
-                file=self._stderr,
-                dynamic_ncols=True,
-            )
+        if self._handle_bar_event(name, event):
             return
-        if name == "asset_shard_completed" and self._bar is not None:
+        self._console.print(f"[cyan]{name}[/cyan]{_event_details(event)}")
+
+    def _handle_bar_event(self, name: str, event: dict[str, object]) -> bool:
+        if _is_asset_start(name):
+            self._start_asset_bar(event)
+            return True
+        if _is_asset_completion(name, self._bar is not None):
+            assert self._bar is not None
             self._bar.update(1)
-            return
-        if name == "asset_backfill_completed" and self._bar is not None:
+            return True
+        if _is_asset_finish(name, self._bar is not None):
             self.close()
-            return
-        details = " ".join(
-            f"{key}={value}" for key, value in sorted(event.items()) if key != "event"
+            return True
+        return False
+
+    def _start_asset_bar(self, event: dict[str, object]) -> None:
+        count = event.get("asset_count", 0)
+        self._bar = tqdm(
+            total=count if isinstance(count, int) else 0,
+            desc="Image assets",
+            file=self._stderr,
+            dynamic_ncols=True,
         )
-        self._console.print(f"[cyan]{name}[/cyan]{' ' + details if details else ''}")
+
+
+def _is_asset_start(name: str) -> bool:
+    return name == "asset_backfill_started"
+
+
+def _is_asset_completion(name: str, has_bar: bool) -> bool:
+    return name == "asset_shard_completed" and has_bar
+
+
+def _is_asset_finish(name: str, has_bar: bool) -> bool:
+    return name == "asset_backfill_completed" and has_bar
+
+
+def _is_human(log_format: str, stderr: TextIO) -> bool:
+    return log_format == "human" or (log_format == "auto" and stderr.isatty())
+
+
+def _event_details(event: dict[str, object]) -> str:
+    details = " ".join(f"{key}={value}" for key, value in sorted(event.items()) if key != "event")
+    return f" {details}" if details else ""
