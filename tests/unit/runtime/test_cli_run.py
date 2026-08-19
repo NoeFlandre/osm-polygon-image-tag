@@ -6,6 +6,7 @@ from _pytest.capture import CaptureFixture
 from pytest import MonkeyPatch
 
 from osm_polygon_image_tag.artifacts.publication import EXPECTED_REPO, PublicationResult
+from osm_polygon_image_tag.artifacts.reporting import MetadataResult
 from osm_polygon_image_tag.cli import _emit_progress, _run_with_signals, run
 from osm_polygon_image_tag.core.config import PipelinePaths
 from osm_polygon_image_tag.runtime.orchestrator import RunSummary, VerifySummary
@@ -144,6 +145,41 @@ def test_json_log_format_remains_machine_readable(
     captured = capsys.readouterr()
     assert captured.out == json.dumps(expected.to_dict(), sort_keys=True) + "\n"
     assert "\x1b[" not in captured.out + captured.err
+
+
+def test_rebuild_metadata_forwards_external_asset_checkpoint(
+    tmp_path: Path, capsys: CaptureFixture[str]
+) -> None:
+    source = tmp_path / "raw"
+    source.mkdir()
+    expected = MetadataResult(tmp_path / "statistics.json", tmp_path / "README.md")
+    captured: dict[str, object] = {}
+
+    def execute_metadata(data_root: Path, checkpoint_root: Path | None) -> MetadataResult:
+        captured["data_root"] = data_root
+        captured["checkpoint_root"] = checkpoint_root
+        return expected
+
+    checkpoint = tmp_path / "scratch"
+    exit_code = run(
+        [
+            "rebuild-metadata",
+            "--source-root",
+            str(source),
+            "--data-root",
+            str(tmp_path / "output"),
+            "--asset-checkpoint-root",
+            str(checkpoint),
+        ],
+        execute_metadata_with_checkpoint=execute_metadata,
+    )
+
+    assert exit_code == 0
+    assert captured == {
+        "data_root": (tmp_path / "output").resolve(),
+        "checkpoint_root": checkpoint,
+    }
+    assert capsys.readouterr().out == json.dumps(expected.to_dict(), sort_keys=True) + "\n"
 
 
 def test_production_run_wires_the_enrichment_worker(

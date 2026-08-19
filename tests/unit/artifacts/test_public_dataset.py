@@ -320,6 +320,122 @@ def test_public_dataset_resumes_after_asset_checkpoint(
     assert not checkpoint.exists()
 
 
+def test_public_dataset_resumes_with_external_asset_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_polygon_manifest(tmp_path, "a-region.osm.pbf", [_polygon_row("a-region.osm.pbf")])
+    _write_polygon_manifest(
+        tmp_path,
+        "b-region.osm.pbf",
+        [_polygon_row("b-region.osm.pbf", osm_id=2)],
+    )
+    _write_asset_manifest(
+        tmp_path,
+        "a-region.osm.pbf",
+        "data/a-region.parquet",
+        [_asset_row("a-region.osm.pbf")],
+    )
+    _write_asset_manifest(
+        tmp_path,
+        "b-region.osm.pbf",
+        "data/b-region.parquet",
+        [_asset_row("b-region.osm.pbf", osm_id=2)],
+    )
+
+    scratch = tmp_path.parent / f"{tmp_path.name}-local-checkpoint"
+    original = public_assets_module._iter_batches
+    calls: list[str] = []
+
+    def interrupted(output: Path):
+        calls.append(output.name)
+        if len(calls) == 2:
+            raise RuntimeError("stop after first external source")
+        yield from original(output)
+
+    monkeypatch.setattr(public_assets_module, "_iter_batches", interrupted, raising=False)
+    with pytest.raises(RuntimeError, match="stop after first external source"):
+        build_public_dataset(tmp_path, asset_checkpoint_root=scratch)
+
+    checkpoint = scratch / ".public-assets.sqlite"
+    assert checkpoint.is_file()
+    assert not (tmp_path / "tmp" / ".public-assets.sqlite").exists()
+
+    calls.clear()
+    monkeypatch.setattr(
+        public_dataset_module,
+        "_write_polygon_rows",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("completed polygon output should be reused")
+        ),
+    )
+
+    def resumed(output: Path):
+        calls.append(output.name)
+        yield from original(output)
+
+    monkeypatch.setattr(public_assets_module, "_iter_batches", resumed, raising=False)
+    result = build_public_dataset(tmp_path, asset_checkpoint_root=scratch)
+
+    assert calls == ["b-region.osm.assets.parquet"]
+    assert result.image_rows == 1
+    assert result.link_rows == 2
+    assert not checkpoint.exists()
+
+
+def test_external_asset_checkpoint_is_seeded_from_durable_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_polygon_manifest(tmp_path, "a-region.osm.pbf", [_polygon_row("a-region.osm.pbf")])
+    _write_polygon_manifest(
+        tmp_path,
+        "b-region.osm.pbf",
+        [_polygon_row("b-region.osm.pbf", osm_id=2)],
+    )
+    _write_asset_manifest(
+        tmp_path,
+        "a-region.osm.pbf",
+        "data/a-region.parquet",
+        [_asset_row("a-region.osm.pbf")],
+    )
+    _write_asset_manifest(
+        tmp_path,
+        "b-region.osm.pbf",
+        "data/b-region.parquet",
+        [_asset_row("b-region.osm.pbf", osm_id=2)],
+    )
+
+    original = public_assets_module._iter_batches
+    calls: list[str] = []
+
+    def interrupted(output: Path):
+        calls.append(output.name)
+        if len(calls) == 2:
+            raise RuntimeError("stop after durable source")
+        yield from original(output)
+
+    monkeypatch.setattr(public_assets_module, "_iter_batches", interrupted, raising=False)
+    with pytest.raises(RuntimeError, match="stop after durable source"):
+        build_public_dataset(tmp_path)
+
+    durable = tmp_path / "tmp" / ".public-assets.sqlite"
+    scratch = tmp_path.parent / f"{tmp_path.name}-local-checkpoint"
+    assert durable.is_file()
+
+    calls.clear()
+
+    def resumed(output: Path):
+        calls.append(output.name)
+        yield from original(output)
+
+    monkeypatch.setattr(public_assets_module, "_iter_batches", resumed, raising=False)
+    result = build_public_dataset(tmp_path, asset_checkpoint_root=scratch)
+
+    assert calls == ["b-region.osm.assets.parquet"]
+    assert result.image_rows == 1
+    assert not durable.exists()
+    assert not (scratch / ".public-assets.sqlite").exists()
+
+
 def test_polygon_accumulator_keeps_latest_row_and_sources_on_disk(tmp_path: Path) -> None:
     accumulator = _PolygonAccumulator(tmp_path / "polygons.sqlite")
     try:
@@ -438,6 +554,17 @@ def test_asset_checkpoint_uses_bounded_page_cache(tmp_path: Path) -> None:
         accumulator.close()
 
 
+def test_asset_checkpoint_uses_bounded_mmap_window(tmp_path: Path) -> None:
+    accumulator = public_assets_module._Accumulator(
+        tmp_path / "assets.sqlite", input_hashes=["synthetic"]
+    )
+    try:
+        mmap_size = accumulator.connection.execute("PRAGMA mmap_size").fetchone()[0]
+        assert mmap_size == public_assets_module.PUBLIC_ASSET_SQLITE_MMAP_BYTES
+    finally:
+        accumulator.close()
+
+
 def test_asset_checkpoint_uses_large_pages_for_new_database(tmp_path: Path) -> None:
     accumulator = public_assets_module._Accumulator(
         tmp_path / "assets.sqlite", input_hashes=["synthetic"]
@@ -445,6 +572,54 @@ def test_asset_checkpoint_uses_large_pages_for_new_database(tmp_path: Path) -> N
     try:
         page_size = accumulator.connection.execute("PRAGMA page_size").fetchone()[0]
         assert page_size == 65_536
+    finally:
+        accumulator.close()
+
+
+def test_external_asset_checkpoint_has_a_conservative_storage_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gibibyte = 1024**3
+    monkeypatch.setattr(
+        public_assets_module.shutil,
+        "disk_usage",
+        lambda _path: type("Usage", (), {"free": 20 * gibibyte})(),
+    )
+    path = tmp_path / "assets.sqlite"
+
+    limit = public_assets_module._checkpoint_max_bytes(path)
+
+    assert limit == 6 * gibibyte
+
+
+def test_external_asset_limit_allows_existing_checkpoint_growth(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gibibyte = 1024**3
+    monkeypatch.setattr(
+        public_assets_module.shutil,
+        "disk_usage",
+        lambda _path: type("Usage", (), {"free": 20 * gibibyte})(),
+    )
+    path = tmp_path / "assets.sqlite"
+    with path.open("wb") as handle:
+        handle.truncate(5 * gibibyte)
+
+    limit = public_assets_module._checkpoint_max_bytes(path)
+
+    assert limit == public_assets_module.PUBLIC_ASSET_CHECKPOINT_MAX_FILE_BYTES
+
+
+def test_asset_checkpoint_applies_storage_limit_to_sqlite(
+    tmp_path: Path,
+) -> None:
+    limit = 128 * public_assets_module.PUBLIC_ASSET_SQLITE_PAGE_SIZE
+    accumulator = public_assets_module._Accumulator(
+        tmp_path / "assets.sqlite", input_hashes=["synthetic"], max_bytes=limit
+    )
+    try:
+        max_page_count = accumulator.connection.execute("PRAGMA max_page_count").fetchone()[0]
+        assert max_page_count == 128
     finally:
         accumulator.close()
 
@@ -478,6 +653,34 @@ def test_asset_checkpoint_preserves_page_size_when_resuming(tmp_path: Path) -> N
         assert page_size == 4096
     finally:
         accumulator.close()
+
+
+def test_asset_dedup_reader_skips_unused_source_shard_column(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import pyarrow.parquet as pq
+
+    output = tmp_path / "assets.parquet"
+    write_asset_parquet([_asset_row("region.osm.pbf")], output)
+    original_iter_batches = pq.ParquetFile.iter_batches
+    requested_columns: list[object] = []
+
+    def capture_iter_batches(parquet: pq.ParquetFile, *args: object, **kwargs: object) -> object:
+        requested_columns.append(kwargs.get("columns"))
+        return original_iter_batches(parquet, *args, **kwargs)
+
+    monkeypatch.setattr(pq.ParquetFile, "iter_batches", capture_iter_batches)
+    rows = list(public_assets_module._iter_batches(output))
+
+    assert rows and rows[0][0]["source_pbf"] == "region.osm.pbf"
+    assert requested_columns == [
+        tuple(
+            name
+            for name in public_assets_module.asset_schema().names
+            if name != "source_polygon_shard"
+        )
+    ]
+    assert "source_polygon_shard" not in rows[0][0]
 
 
 def test_asset_stable_json_serializes_nested_binary_and_timestamps() -> None:

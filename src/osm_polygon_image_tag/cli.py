@@ -65,6 +65,10 @@ def _build_enrichment_worker(
     )
 
 
+def _execute_metadata_with_checkpoint(data_root: Path, checkpoint_root: Path) -> MetadataResult:
+    return generate_metadata(data_root, asset_checkpoint_root=checkpoint_root)
+
+
 def _run_with_signals(paths: PipelinePaths) -> RunSummary:
     token = StopToken()
     with ProgressReporter(_emit_progress) as reporter, graceful_stop_signals(token):
@@ -112,6 +116,7 @@ class _Runtime:
     execute_run: Callable[[PipelinePaths], RunSummary]
     execute_verify: Callable[[PipelinePaths], VerifySummary]
     execute_metadata: Callable[[Path], MetadataResult]
+    execute_metadata_with_checkpoint: Callable[[Path, Path], MetadataResult]
     execute_publish: Callable[[PipelinePaths, str], PublicationResult]
     execute_run_publish: Callable[[PipelinePaths, str], RunSummary]
     renderer: ConsoleRenderer | None = None
@@ -123,6 +128,7 @@ class _Runtime:
         data_root: Path,
         confirmation: str | None,
         log_format: str,
+        asset_checkpoint_root: Path | None = None,
     ) -> None:
         self.renderer = ConsoleRenderer(log_format=log_format)
         token = _renderer.set(self.renderer)
@@ -138,7 +144,12 @@ class _Runtime:
             elif command == "verify":
                 report = self.execute_verify(paths)
             elif command == "rebuild-metadata":
-                report = self.execute_metadata(paths.data_root)
+                if asset_checkpoint_root is None:
+                    report = self.execute_metadata(paths.data_root)
+                else:
+                    report = self.execute_metadata_with_checkpoint(
+                        paths.data_root, asset_checkpoint_root
+                    )
             elif command == "publish":
                 report = self.execute_publish(paths, confirmation or "")
             else:
@@ -155,6 +166,8 @@ def run(
     execute_run: Callable[[PipelinePaths], RunSummary] = _run_with_signals,
     execute_verify: Callable[[PipelinePaths], VerifySummary] = verify_all,
     execute_metadata: Callable[[Path], MetadataResult] = generate_metadata,
+    execute_metadata_with_checkpoint: Callable[[Path, Path], MetadataResult]
+    | None = _execute_metadata_with_checkpoint,
     execute_publish: Callable[[PipelinePaths, str], PublicationResult] = _publish,
     execute_run_publish: Callable[[PipelinePaths, str], RunSummary] = _run_and_publish,
 ) -> int:
@@ -164,6 +177,7 @@ def run(
         execute_run,
         execute_verify,
         execute_metadata,
+        execute_metadata_with_checkpoint or _execute_metadata_with_checkpoint,
         execute_publish,
         execute_run_publish,
     )

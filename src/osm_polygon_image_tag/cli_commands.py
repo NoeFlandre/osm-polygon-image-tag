@@ -22,6 +22,7 @@ class CommandRuntime(Protocol):
         data_root: Path,
         confirmation: str | None,
         log_format: str,
+        asset_checkpoint_root: Path | None = None,
     ) -> None: ...
 
 
@@ -35,11 +36,19 @@ def _dispatch(
     data_root: Path,
     log_format: LogFormat,
     confirmation: str | None = None,
+    asset_checkpoint_root: Path | None = None,
 ) -> None:
     runtime = context.obj
     if not isinstance(runtime, CommandRuntime):
         raise RuntimeError("CLI runtime was not configured")
-    runtime.dispatch(command, source_root, data_root, confirmation, log_format.value)
+    runtime.dispatch(
+        command,
+        source_root,
+        data_root,
+        confirmation,
+        log_format.value,
+        asset_checkpoint_root,
+    )
 
 
 @app.command()
@@ -77,9 +86,23 @@ def rebuild_metadata(
     context: typer.Context,
     source_root: Annotated[Path, typer.Option("--source-root")],
     data_root: Annotated[Path, typer.Option("--data-root")],
+    asset_checkpoint_root: Annotated[
+        Path | None,
+        typer.Option(
+            "--asset-checkpoint-root",
+            help="Local directory for the resumable image-dedup SQLite checkpoint.",
+        ),
+    ] = None,
     log_format: Annotated[LogFormat, typer.Option("--log-format")] = LogFormat.AUTO,
 ) -> None:
-    _dispatch(context, "rebuild-metadata", source_root, data_root, log_format)
+    _dispatch(
+        context,
+        "rebuild-metadata",
+        source_root,
+        data_root,
+        log_format,
+        asset_checkpoint_root=asset_checkpoint_root,
+    )
 
 
 @app.command()

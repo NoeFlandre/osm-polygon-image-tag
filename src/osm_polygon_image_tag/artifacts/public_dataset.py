@@ -686,6 +686,7 @@ def build_public_dataset(
     *,
     manifests: Sequence[tuple[Any, Path]] | None = None,
     asset_manifests: Sequence[tuple[Any, Path]] | None = None,
+    asset_checkpoint_root: Path | None = None,
 ) -> PublicDatasetResult:
     """Materialize a deterministic deduplicated view without touching inputs."""
     root = data_root.resolve()
@@ -759,6 +760,7 @@ def build_public_dataset(
         source_assets,
         canonical_polygons,
         polygon_fingerprint=polygon_manifest.output.sha256,
+        checkpoint_root=asset_checkpoint_root,
     )
     payload = _manifest_payload(
         polygon_manifests,

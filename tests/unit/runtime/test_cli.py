@@ -53,6 +53,16 @@ def test_command_help_preserves_required_option_names(
     assert "--log-format" in help_text
 
 
+def test_rebuild_metadata_help_exposes_external_asset_checkpoint(
+    capsys: CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        run(["rebuild-metadata", "--help"])
+
+    assert exit_info.value.code == 0
+    assert "--asset-checkpoint-root" in capsys.readouterr().out
+
+
 def test_preflight_command_emits_canonical_json(
     tmp_path: Path, capsys: CaptureFixture[str]
 ) -> None:

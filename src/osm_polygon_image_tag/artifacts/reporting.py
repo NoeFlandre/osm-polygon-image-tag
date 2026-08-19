@@ -64,7 +64,12 @@ def _sync_citation(data_root: Path) -> None:
     _atomic_write(target, content)
 
 
-def generate_metadata(data_root: Path, *, progress: Progress | None = None) -> MetadataResult:
+def generate_metadata(
+    data_root: Path,
+    *,
+    progress: Progress | None = None,
+    asset_checkpoint_root: Path | None = None,
+) -> MetadataResult:
     emit = progress or (lambda _event: None)
     manifests = verified_manifests(data_root, progress=emit)
     asset_manifests = verified_asset_manifests(data_root, progress=emit)
@@ -72,6 +77,7 @@ def generate_metadata(data_root: Path, *, progress: Progress | None = None) -> M
         data_root,
         manifests=manifests,
         asset_manifests=asset_manifests,
+        asset_checkpoint_root=asset_checkpoint_root,
     )
     public_manifests = (
         [(public.polygon_manifest, public.polygon_path)] if public.polygon_rows else []

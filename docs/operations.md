@@ -106,6 +106,18 @@ The asset checkpoint uses a bounded 128 MiB SQLite page cache to reduce random
 disk reads while keeping memory use predictable. Each 8,192-row input batch is
 compacted and key-ordered before insertion; this improves locality without
 retaining the full dataset in memory.
+It also uses a 256 MiB on-demand SQLite mapping window; this is virtual address
+space, not a 256 MiB allocation that is reserved in RAM.
+
+For faster runs on a local SSD, pass `--asset-checkpoint-root LOCAL_DIR` to
+`rebuild-metadata`. The directory must be outside the data root and the same
+directory must be supplied after a stop. This is only a private SQLite
+checkpoint; raw PBFs and public outputs stay on their existing paths. The
+checkpoint enforces a conservative filesystem guard: it keeps at least 8 GiB
+free and uses only a fraction of the currently free space for growth. If that
+budget is not available, the command stops before copying or processing data.
+The checkpoint is removed after a successful build. Without this option, the
+durable checkpoint remains in `data-root/tmp` and behavior is unchanged.
 
 After metadata generation, refresh the optional Trackio metrics snapshot with:
 

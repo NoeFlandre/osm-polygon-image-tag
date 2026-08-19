@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import pickle
+import shutil
 import sqlite3
 import tempfile
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
@@ -19,16 +20,29 @@ import pyarrow.parquet as pq
 
 from osm_polygon_image_tag.artifacts.checkpoints import remove_checkpoint_files
 from osm_polygon_image_tag.assets.manifest import AssetManifest
+from osm_polygon_image_tag.assets.schema import asset_schema
 
 PUBLIC_IMAGE_SCHEMA_VERSION = 1
 PUBLIC_LINK_SCHEMA_VERSION = 1
-PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE = "tmp/.public-assets.sqlite"
+PUBLIC_ASSET_CHECKPOINT_FILENAME = ".public-assets.sqlite"
+PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE = f"tmp/{PUBLIC_ASSET_CHECKPOINT_FILENAME}"
 PUBLIC_ASSET_DEDUP_CHECKPOINT_SCHEMA_VERSION = 1
 # A larger bounded page cache reduces random B-tree I/O without unbounded RAM use.
 PUBLIC_ASSET_SQLITE_CACHE_KIB = 131_072
+# A bounded mapping window reduces syscall overhead for the large checkpoint;
+# pages are faulted on demand and do not reserve this amount of RAM.
+PUBLIC_ASSET_SQLITE_MMAP_BYTES = 256 * 1024**2
 # Larger pages reduce B-tree depth and random writes on new checkpoints. SQLite
 # keeps the existing page size when resuming a populated checkpoint.
 PUBLIC_ASSET_SQLITE_PAGE_SIZE = 65_536
+# External checkpoints are optional speed optimizations. Keep a large safety
+# margin so the local filesystem remains usable for the OS and other work.
+PUBLIC_ASSET_CHECKPOINT_MIN_FREE_BYTES = 8 * 1024**3
+PUBLIC_ASSET_CHECKPOINT_MAX_FILE_BYTES = (15 * 1024**3) // 2
+# The private source-shard pointer is not needed to build public image/link rows.
+_ASSET_DEDUP_COLUMNS = tuple(
+    field.name for field in asset_schema() if field.name != "source_polygon_shard"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,7 +230,10 @@ def _deduplicate_values[ValueTuple: tuple[Any, ...]](
 
 
 def _iter_batches(output: Path, *, batch_size: int = 8192) -> Iterator[list[dict[str, Any]]]:
-    for batch in pq.ParquetFile(output).iter_batches(batch_size=batch_size):
+    for batch in pq.ParquetFile(output).iter_batches(
+        columns=_ASSET_DEDUP_COLUMNS,
+        batch_size=batch_size,
+    ):
         yield batch.to_pylist()
 
 
@@ -224,6 +241,93 @@ def _remove_legacy_checkpoints(temporary_root: Path, current: Path) -> None:
     for path in temporary_root.glob(".public-assets.*.sqlite*"):
         if path != current:
             path.unlink(missing_ok=True)
+
+
+def _copy_clean_checkpoint(source: Path, destination: Path) -> None:
+    """Seed a local checkpoint from a clean durable database atomically."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent, delete=False
+    ) as temporary:
+        temporary_path = Path(temporary.name)
+    try:
+        shutil.copyfile(source, temporary_path)
+        with temporary_path.open("rb") as handle:
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, destination)
+        directory_fd = os.open(destination.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except BaseException:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
+def _prepare_checkpoint_paths(
+    data_root: Path, checkpoint_root: Path | None
+) -> tuple[Path, tuple[Path, ...]]:
+    """Choose the active checkpoint and all copies cleaned after success."""
+    durable = data_root.resolve() / PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE
+    if checkpoint_root is None:
+        return durable, (durable,)
+
+    if checkpoint_root.exists() and checkpoint_root.is_symlink():
+        raise ValueError("asset checkpoint root must not be a symlink")
+    scratch_root = checkpoint_root.expanduser().resolve()
+    data_resolved = data_root.resolve()
+    if (
+        scratch_root == data_resolved
+        or scratch_root in data_resolved.parents
+        or data_resolved in scratch_root.parents
+    ):
+        raise ValueError("asset checkpoint root must be separate from the data root")
+    scratch_root.mkdir(parents=True, exist_ok=True)
+    scratch = scratch_root / PUBLIC_ASSET_CHECKPOINT_FILENAME
+    if scratch.is_symlink():
+        raise ValueError("asset checkpoint file must not be a symlink")
+    scratch_family = tuple(
+        Path(f"{scratch}{suffix}") for suffix in ("", "-journal", "-wal", "-shm")
+    )
+    durable_family = tuple(
+        Path(f"{durable}{suffix}") for suffix in ("", "-journal", "-wal", "-shm")
+    )
+    if (
+        not any(path.exists() for path in scratch_family)
+        and durable.is_file()
+        and not any(path.exists() for path in durable_family[1:])
+    ):
+        _checkpoint_max_bytes(scratch, initial_bytes=durable.stat().st_size)
+        _copy_clean_checkpoint(durable, scratch)
+    active = (
+        scratch
+        if any(path.exists() for path in scratch_family)
+        or not any(path.exists() for path in durable_family[1:])
+        else durable
+    )
+    cleanup = (active, scratch if active != scratch else durable)
+    return active, cleanup
+
+
+def _checkpoint_max_bytes(path: Path, *, initial_bytes: int = 0) -> int:
+    """Return a conservative file limit for an external checkpoint."""
+    free_bytes = shutil.disk_usage(path.parent).free
+    reserved_bytes = max(PUBLIC_ASSET_CHECKPOINT_MIN_FREE_BYTES, free_bytes // 3)
+    growth_budget = (free_bytes - reserved_bytes) // 2
+    current_bytes = path.stat().st_size if path.is_file() else initial_bytes
+    max_bytes = min(PUBLIC_ASSET_CHECKPOINT_MAX_FILE_BYTES, current_bytes + growth_budget)
+    if max_bytes <= 0:
+        raise RuntimeError(
+            "asset checkpoint filesystem has insufficient free space; "
+            "at least 8 GiB must remain available"
+        )
+    if current_bytes > max_bytes:
+        raise RuntimeError(
+            "asset checkpoint is too large for the safe local-storage limit; "
+            "free local space or use the durable checkpoint"
+        )
+    return max_bytes
 
 
 class _Accumulator:
@@ -235,6 +339,7 @@ class _Accumulator:
         *,
         input_hashes: Sequence[str] | None = None,
         polygon_fingerprint: str | None = None,
+        max_bytes: int | None = None,
     ) -> None:
         self.path = path
         self.input_hashes = tuple(input_hashes) if input_hashes is not None else None
@@ -255,7 +360,10 @@ class _Accumulator:
         self.connection.execute("PRAGMA synchronous=NORMAL")
         self.connection.execute("PRAGMA temp_store=FILE")
         self.connection.execute(f"PRAGMA cache_size=-{PUBLIC_ASSET_SQLITE_CACHE_KIB}")
+        self.connection.execute(f"PRAGMA mmap_size={PUBLIC_ASSET_SQLITE_MMAP_BYTES}")
         self.connection.execute("PRAGMA locking_mode=EXCLUSIVE")
+        if max_bytes is not None:
+            self._set_max_size(max_bytes)
         self.connection.executescript(
             """
             CREATE TABLE IF NOT EXISTS images (
@@ -313,6 +421,17 @@ class _Accumulator:
             )
             self.connection.commit()
             self.input_rows, self.orphan_rows = self._completed_counts()
+
+    def _set_max_size(self, max_bytes: int) -> None:
+        page_size = int(self.connection.execute("PRAGMA page_size").fetchone()[0])
+        max_pages = max(1, max_bytes // page_size)
+        current_pages = int(self.connection.execute("PRAGMA page_count").fetchone()[0])
+        if current_pages > max_pages:
+            raise RuntimeError(
+                "asset checkpoint already exceeds the safe local-storage limit; "
+                "free local space or use the durable checkpoint"
+            )
+        self.connection.execute(f"PRAGMA max_page_count={max_pages}")
 
     @staticmethod
     def _is_compatible_checkpoint(
@@ -698,25 +817,32 @@ def build_public_asset_tables(
     canonical_polygons: Mapping[tuple[str, int], Mapping[str, object]],
     *,
     polygon_fingerprint: str | None = None,
+    checkpoint_root: Path | None = None,
 ) -> PublicAssetsResult:
     """Materialize unique images and deduplicated relationship links."""
     root = data_root.resolve()
     image_path = root / "public/images.parquet"
     link_path = root / "public/polygon_images.parquet"
     if not manifests:
-        remove_checkpoint_files(root / PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE)
+        _checkpoint, cleanup_paths = _prepare_checkpoint_paths(root, checkpoint_root)
+        for path in cleanup_paths:
+            remove_checkpoint_files(path)
         _write_parquet([], image_path, public_image_schema())
         _write_parquet([], link_path, public_link_schema())
         return PublicAssetsResult(image_path, link_path, 0, 0, 0, 0, 0)
-    temporary_root = root / "tmp"
-    temporary_root.mkdir(parents=True, exist_ok=True)
-    database_path = root / PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE
-    _remove_legacy_checkpoints(temporary_root, database_path)
+    database_path, cleanup_paths = _prepare_checkpoint_paths(root, checkpoint_root)
+    for path in cleanup_paths:
+        _remove_legacy_checkpoints(path.parent, path)
     input_hashes = [manifest.output.sha256 for manifest, _ in manifests]
+    external_checkpoint = (
+        checkpoint_root is not None
+        and database_path.parent == checkpoint_root.expanduser().resolve()
+    )
     accumulator = _Accumulator(
         database_path,
         input_hashes=input_hashes,
         polygon_fingerprint=polygon_fingerprint,
+        max_bytes=_checkpoint_max_bytes(database_path) if external_checkpoint else None,
     )
     succeeded = False
     try:
@@ -756,7 +882,8 @@ def build_public_asset_tables(
     finally:
         accumulator.close()
         if succeeded:
-            remove_checkpoint_files(database_path)
+            for path in cleanup_paths:
+                remove_checkpoint_files(path)
     return PublicAssetsResult(
         image_path=image_path,
         link_path=link_path,
@@ -769,6 +896,7 @@ def build_public_asset_tables(
 
 
 __all__ = [
+    "PUBLIC_ASSET_CHECKPOINT_FILENAME",
     "PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE",
     "PUBLIC_IMAGE_SCHEMA_VERSION",
     "PUBLIC_LINK_SCHEMA_VERSION",
