@@ -21,7 +21,9 @@ The single `quality-gate` job, on `ubuntu-latest`:
 2. Install `uv` and enable its built-in cache with `astral-sh/setup-uv`.
 3. Install Python 3.12 via `uv python install`.
 4. Install `osmium-tool` via `apt-get` so the integration tests can run
-   against the real extractor.
+   against the real extractor. The package update and install use IPv4,
+   bounded network timeouts, and retries; the quality job has a 20-minute
+   limit so a stalled package mirror cannot consume a runner indefinitely.
 5. Verify the lockfile matches `pyproject.toml` (`uv lock --check`).
 6. Install the exact locked environment (`uv sync --locked --dev`).
 7. Run `uv run ruff check .`.

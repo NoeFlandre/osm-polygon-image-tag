@@ -64,3 +64,13 @@ def test_ci_builds_and_smoke_tests_image_without_pipeline_inputs() -> None:
     assert "docker run --rm --read-only --tmpfs /tmp osm-polygon-image-tag:ci --help" in docker_job
     assert "HF_TOKEN" not in docker_job
     assert "*.osm.pbf" not in docker_job
+
+
+def test_ci_bounds_osmium_installation() -> None:
+    workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "timeout-minutes: 20" in workflow
+    assert "Acquire::Retries=3" in workflow
+    assert "Acquire::ForceIPv4=true" in workflow
+    assert "timeout --kill-after=30s 5m sudo apt-get" in workflow
+    assert "osmium --version" in workflow

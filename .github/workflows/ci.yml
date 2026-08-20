@@ -13,6 +13,7 @@ jobs:
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       UV_PYTHON: "3.12"
     steps:
@@ -29,7 +30,19 @@ jobs:
           version: "0.11.16"
 
       - name: Install osmium-tool for integration tests
-        run: sudo apt-get update && sudo apt-get install -y osmium-tool
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt_options=(
+            -o Acquire::Retries=3
+            -o Acquire::ForceIPv4=true
+            -o Acquire::http::Timeout=30
+            -o Acquire::https::Timeout=30
+          )
+          timeout --kill-after=30s 5m sudo apt-get "${apt_options[@]}" update
+          timeout --kill-after=30s 5m sudo apt-get "${apt_options[@]}" install \
+            -y --no-install-recommends osmium-tool
+          osmium --version
 
       - name: Install Just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
