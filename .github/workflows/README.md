@@ -26,12 +26,10 @@ The single `quality-gate` job, on `ubuntu-latest`:
    limit so a stalled package mirror cannot consume a runner indefinitely.
 5. Verify the lockfile matches `pyproject.toml` (`uv lock --check`).
 6. Install the exact locked environment (`uv sync --locked --dev`).
-7. Run `uv run ruff check .`.
-8. Run `uv run ruff format --check .`.
-9. Run `uv run ty check`.
-10. Run `uv run pytest -q`.
-11. Build the wheel and sdist (`uv build`).
-12. Verify no whitespace errors (`git diff --check`).
+7. Run `just ci`, which executes the deterministic
+   `baseline → ruff → ty → tests → acceptance → architecture → CRAP →
+   mutation → smoke → diff-review` gauntlet, then all-files pre-commit checks
+   and the strict documentation build.
 
 The `docker-smoke` job separately builds the pinned production image and runs
 its direct CLI entrypoint with `--help`. It does not mount PBFs or a data root

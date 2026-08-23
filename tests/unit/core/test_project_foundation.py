@@ -41,3 +41,32 @@ def test_required_project_toolchain_is_declared() -> None:
     assert "mypy" not in dev_dependencies
     assert Path(".pre-commit-config.yaml").is_file()
     assert Path("Justfile").is_file()
+
+
+def test_qa_recipe_has_the_required_deterministic_stage_order() -> None:
+    justfile = Path("Justfile").read_text(encoding="utf-8")
+    qa_body = justfile.split("\nqa:\n", maxsplit=1)[1].split("\n\n", maxsplit=1)[0]
+    stage_calls = [
+        line.strip() for line in qa_body.splitlines() if line.strip().startswith("just ")
+    ]
+
+    assert stage_calls == [
+        "just baseline",
+        "just ruff",
+        "just ty",
+        "just tests",
+        "just acceptance",
+        "just architecture",
+        "just crap-report",
+        "just mutation",
+        "just smoke",
+        "just diff-review",
+    ]
+
+
+def test_mutation_recipe_requires_every_mutant_to_be_killed() -> None:
+    justfile = Path("Justfile").read_text(encoding="utf-8")
+    mutation_body = justfile.split("\nmutation:\n", maxsplit=1)[1].split("\n\n", maxsplit=1)[0]
+
+    assert "mutmut results --all=true" in mutation_body
+    assert '$NF != "killed"' in mutation_body

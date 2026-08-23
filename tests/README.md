@@ -25,8 +25,8 @@ tests/
   processes. The structure mirrors `src/osm_polygon_image_tag/`.
 - `integration/`: tests marked with `@pytest.mark.integration`. They shell
   out to the real `osmium` binary and exercise the full pipeline end-to-end.
-  They are excluded from the default CI contract unless `osmium` is
-  explicitly available.
+  The CI quality job installs `osmium-tool` and runs them as the explicit
+  acceptance stage of `just qa`.
 - `fixtures/`: small, stable OSM XML fixtures that drive the integration
   tests. They are committed and treated as immutable inputs.
 
@@ -44,6 +44,7 @@ tests/
 uv run pytest tests/unit -q --no-cov
 uv run pytest tests/integration -q --no-cov
 uv run pytest -m integration -q --no-cov
+just qa
 ```
 
 ## Why the split

@@ -113,9 +113,10 @@ is never opened during metadata generation.
 - [Operations and credentials](docs/operations.md)
 - [Development and contribution](docs/development.md)
 
-Run the complete local quality gate with `just ci`; build the docs locally with
-`just docs`. The project uses `uv`, Ruff, ty, pytest, pre-commit, Just, Typer,
-Rich, tqdm, and GitHub Actions.
+Run the complete local quality gate with `just qa`; `just ci` is the CI
+compatibility wrapper that adds pre-commit and documentation checks. Build the
+docs locally with `just docs`. The project uses `uv`, Ruff, ty, pytest,
+pre-commit, Just, Typer, Rich, tqdm, and GitHub Actions.
 
 ## License
 

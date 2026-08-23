@@ -22,8 +22,10 @@ improvements, and documentation fixes.
 4. Implement the minimum change to make the test pass.
 5. Run the local quality gates:
    ```bash
-   just ci
+   just qa
    ```
+   Use `just ci` when you also want the all-files pre-commit checks and strict
+   documentation build.
 6. Open a pull request against `main`. Use a descriptive title and explain
    the change, the test that proves it, and any caveats. If your change
    touches behaviour covered by [`docs/data-contract.md`](docs/data-contract.md),

@@ -84,3 +84,14 @@ def test_pages_workflow_contract() -> None:
     action_refs = re.findall(r"uses:\s+[^\s@]+@([0-9a-f]{40})", workflow)
     assert action_refs
     assert len(action_refs) == workflow.count("uses:")
+
+
+def test_completion_paths_use_the_canonical_qa_gauntlet() -> None:
+    contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    pre_commit = (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+    assert "   just qa\n" in contributing
+    assert "entry: just qa" in pre_commit
+    assert "stages: [pre-push]" in pre_commit
+    assert "run: just ci" in ci_workflow

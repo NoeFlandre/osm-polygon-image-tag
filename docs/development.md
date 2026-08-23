@@ -26,25 +26,44 @@ uv run pre-commit install --hook-type pre-commit --hook-type pre-push
 `uv sync --locked` installs the exact lockfile-pinned environment,
 including the development dependencies.
 
-## Local quality gates
+## Deterministic completion gate
 
-Run these before opening a pull request. They mirror the CI contract.
+Before declaring work complete, run the one canonical gauntlet. It is the same
+command used by the pre-push hook and GitHub Actions:
 
 ```bash
-just check
-just test
-just build
+just qa
 ```
 
-`uv run pytest -q` runs the complete suite, including tests that require the
-real `osmium` binary. For the fast unit-only loop, run:
+The stages always run in this order and stop at the first failure:
+
+```text
+baseline → ruff → ty → tests → acceptance → architecture → CRAP → mutation → smoke → diff-review
+```
+
+`baseline` verifies the lockfile and recreates the locked development
+environment. `ruff` runs lint and formatting checks; `ty` runs the type check;
+`tests` runs the complete covered suite; `acceptance` runs the integration
+tests explicitly; and `architecture` runs the import-layer guard directly.
+`CRAP` requires every production function to remain below 6, while `mutation`
+requires every generated mutant to be killed. `smoke` builds the wheel in an
+isolated `/tmp` virtualenv and checks the CLI and packaged resources.
+`diff-review` runs whitespace checks over working, staged, and committed
+diffs. Coverage and mutation reports stay under `/tmp`.
+
+`just ci` is the CI compatibility wrapper: it runs `just qa`, all-files
+pre-commit validation, and the strict documentation build. The Docker smoke
+job runs separately on GitHub Actions.
+
+For the fast unit-only loop, run:
 
 ```bash
 uv run pytest tests/unit -q --no-cov
 ```
 
-`just ci` runs the locked checks, repository-local pre-commit hooks, tests,
-build, strict documentation build, and whitespace gate used by GitHub Actions.
+`just unit` runs only the unit tests. `just acceptance` runs only the
+integration/acceptance tests. These focused commands are for iteration; they do
+not replace `just qa` before completion.
 
 ## Advanced test-quality checks
 
