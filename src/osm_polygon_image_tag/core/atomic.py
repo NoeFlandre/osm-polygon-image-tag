@@ -7,6 +7,41 @@ import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from types import TracebackType
+
+
+class TemporaryPath:
+    """Own a temporary file path for an explicit object lifetime."""
+
+    def __init__(self, directory: Path, *, prefix: str = "tmp", suffix: str = "") -> None:
+        with tempfile.NamedTemporaryFile(
+            prefix=prefix,
+            suffix=suffix,
+            dir=directory,
+            delete=False,
+        ) as temporary:
+            self.path = Path(temporary.name)
+        self._closed = False
+
+    def close(self) -> None:
+        """Remove the temporary path once, tolerating prior removal."""
+        if self._closed:
+            return
+        try:
+            self.path.unlink(missing_ok=True)
+        finally:
+            self._closed = True
+
+    def __enter__(self) -> Path:
+        return self.path
+
+    def __exit__(
+        self,
+        _exception_type: type[BaseException] | None,
+        _exception: BaseException | None,
+        _traceback: TracebackType | None,
+    ) -> None:
+        self.close()
 
 
 def _sync_directory(path: Path) -> None:
@@ -25,17 +60,11 @@ def temporary_file_path(
     suffix: str = "",
 ) -> Iterator[Path]:
     """Yield an adjacent temporary file path and clean it up on exit."""
-    with tempfile.NamedTemporaryFile(
-        prefix=prefix,
-        suffix=suffix,
-        dir=directory,
-        delete=False,
-    ) as temporary:
-        path = Path(temporary.name)
+    temporary = TemporaryPath(directory, prefix=prefix, suffix=suffix)
     try:
-        yield path
+        yield temporary.path
     finally:
-        path.unlink(missing_ok=True)
+        temporary.close()
 
 
 def promote_temporary_file(

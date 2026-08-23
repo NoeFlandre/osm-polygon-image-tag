@@ -1,9 +1,10 @@
 import pickle
 import sqlite3
-import tempfile
 from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
 from types import TracebackType
+
+from osm_polygon_image_tag.core.atomic import TemporaryPath
 
 
 class DiskAssetSorter:
@@ -11,13 +12,12 @@ class DiskAssetSorter:
 
     def __init__(self, directory: Path) -> None:
         directory.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(
+        self._temporary_file = TemporaryPath(
+            directory,
             prefix=".asset-sort.",
             suffix=".sqlite",
-            dir=directory,
-            delete=False,
-        ) as temporary:
-            self._path = Path(temporary.name)
+        )
+        self._path = self._temporary_file.path
         try:
             self._connection = sqlite3.connect(self._path)
             self._connection.execute("PRAGMA cache_size=-2048")
@@ -37,7 +37,7 @@ class DiskAssetSorter:
                 """
             )
         except BaseException:
-            self._path.unlink(missing_ok=True)
+            self._temporary_file.close()
             raise
 
     def add(self, rows: Iterable[Mapping[str, object]]) -> None:
@@ -75,7 +75,7 @@ class DiskAssetSorter:
 
     def close(self) -> None:
         self._connection.close()
-        self._path.unlink(missing_ok=True)
+        self._temporary_file.close()
 
     def __enter__(self) -> "DiskAssetSorter":
         return self

@@ -1,4 +1,3 @@
-import tempfile
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -7,7 +6,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from osm_polygon_image_tag.assets.schema import asset_schema
-from osm_polygon_image_tag.core.atomic import promote_temporary_file
+from osm_polygon_image_tag.core.atomic import TemporaryPath, promote_temporary_file
 from osm_polygon_image_tag.core.errors import ImageTagPipelineError
 
 
@@ -65,13 +64,12 @@ class AtomicAssetWriter:
             raise AssetStorageError("asset Parquet directory must not be a symlink")
         self._final_path = final_path
         self._batch_size = batch_size
-        with tempfile.NamedTemporaryFile(
+        self._temporary_file = TemporaryPath(
+            final_path.parent,
             prefix=f".{final_path.name}.",
             suffix=".tmp",
-            dir=final_path.parent,
-            delete=False,
-        ) as temporary:
-            self._temporary_path = Path(temporary.name)
+        )
+        self._temporary_path = self._temporary_file.path
         self._schema = asset_schema()
         try:
             self._writer = pq.ParquetWriter(
@@ -82,7 +80,7 @@ class AtomicAssetWriter:
                 write_statistics=True,
             )
         except BaseException:
-            self._temporary_path.unlink(missing_ok=True)
+            self._temporary_file.close()
             raise
         self._row_count = 0
         self.result: AssetWriteResult | None = None
@@ -128,7 +126,7 @@ class AtomicAssetWriter:
                 size_bytes=self._final_path.stat().st_size,
             )
         finally:
-            self._temporary_path.unlink(missing_ok=True)
+            self._temporary_file.close()
 
 
 def write_asset_parquet(

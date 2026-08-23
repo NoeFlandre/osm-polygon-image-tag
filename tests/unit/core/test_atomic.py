@@ -100,3 +100,41 @@ def test_temporary_file_path_cleans_up_when_scope_raises(tmp_path: Path) -> None
         raise RuntimeError("scope failed")
 
     assert not path.exists()
+
+
+def test_temporary_path_owns_file_until_close(tmp_path: Path) -> None:
+    temporary_path = getattr(atomic, "TemporaryPath", None)
+    assert temporary_path is not None
+
+    owner = temporary_path(tmp_path, prefix=".asset.", suffix=".sqlite")
+    path = owner.path
+
+    assert path.parent == tmp_path
+    assert path.name.startswith(".asset.")
+    assert path.name.endswith(".sqlite")
+    assert path.exists()
+
+    owner.close()
+
+    assert not path.exists()
+
+
+def test_temporary_path_close_is_idempotent(tmp_path: Path) -> None:
+    temporary_path = getattr(atomic, "TemporaryPath", None)
+    assert temporary_path is not None
+
+    owner = temporary_path(tmp_path)
+    owner.close()
+    owner.close()
+
+    assert not owner.path.exists()
+
+
+def test_temporary_path_context_cleans_up(tmp_path: Path) -> None:
+    temporary_path = getattr(atomic, "TemporaryPath", None)
+    assert temporary_path is not None
+
+    with temporary_path(tmp_path) as path:
+        assert path.exists()
+
+    assert not path.exists()
