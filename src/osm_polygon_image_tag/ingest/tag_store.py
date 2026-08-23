@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 from types import TracebackType
 
+from osm_polygon_image_tag.core.serialization import canonical_json
 from osm_polygon_image_tag.ingest.extraction import SourceTagRecord
 
 
@@ -57,7 +58,7 @@ class TagStore:
             candidate.unlink(missing_ok=True)
 
     def add(self, record: SourceTagRecord) -> None:
-        encoded = json.dumps(record.tags, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        encoded = canonical_json(record.tags)
         try:
             self._connection.execute(
                 "INSERT INTO tags (osm_type, osm_id, tags_json) VALUES (?, ?, ?)",

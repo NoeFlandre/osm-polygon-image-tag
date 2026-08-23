@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from osm_polygon_image_tag.ingest import tag_store
 from osm_polygon_image_tag.ingest.extraction import SourceTagRecord
 from osm_polygon_image_tag.ingest.tag_store import TagStore
 
@@ -33,3 +34,23 @@ def test_context_cleans_database_after_exception(tmp_path: Path) -> None:
         raise RuntimeError("stop")
 
     assert not list((tmp_path / "tmp").glob("tag-store-*"))
+
+
+def test_store_delegates_tag_encoding_to_canonical_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    canonical_json = getattr(tag_store, "canonical_json", None)
+    assert canonical_json is not None
+    encoded_values: list[object] = []
+
+    def record_encoding(value: object) -> str:
+        encoded_values.append(value)
+        return canonical_json(value)
+
+    monkeypatch.setattr(tag_store, "canonical_json", record_encoding)
+    tags = {"image": "https://example.test/image.jpg", "name": "Café"}
+
+    with TagStore.create(tmp_path) as store:
+        store.add(SourceTagRecord("way", 1, tags))
+
+    assert encoded_values == [tags]
