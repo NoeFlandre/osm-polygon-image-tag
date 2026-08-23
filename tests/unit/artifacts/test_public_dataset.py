@@ -226,6 +226,34 @@ def test_public_dataset_deduplicates_identity_and_preserves_provenance(tmp_path:
         public_assets_module.validate_public_link_parquet(result.link_path, expected_rows=2)
 
 
+def test_public_dataset_keeps_fallback_identity_and_optional_asset_fields(tmp_path: Path) -> None:
+    _write_polygon_manifest(tmp_path, "region.osm.pbf", [_polygon_row("region.osm.pbf")])
+    row = _asset_row(
+        "region.osm.pbf",
+        source_tag_value="File:Example.jpg",
+        canonical_reference="File:Example.jpg",
+        provider_asset_id="example-id",
+        relation_kind="category_membership",
+        image_url=None,
+    ) | {"status": "resolved_page_only", "category_truncated": True}
+    _write_asset_manifest(
+        tmp_path,
+        "region.osm.pbf",
+        "data/region.parquet",
+        [row],
+    )
+
+    result = build_public_dataset(tmp_path)
+    image = pq.read_table(result.image_path).to_pylist()[0]
+    link = pq.read_table(result.link_path).to_pylist()[0]
+
+    assert image["image_id"] == public_assets_module.image_id(row)
+    assert image["image_url"] is None
+    assert image["provider_asset_id"] == "example-id"
+    assert image["category_truncated"] is True
+    assert link["relation_kind"] == "category_membership"
+
+
 def test_public_dataset_resumes_after_source_checkpoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -766,9 +794,11 @@ def test_asset_dedup_reader_skips_unused_source_shard_column(
         return original_iter_batches(parquet, *args, **kwargs)
 
     monkeypatch.setattr(pq.ParquetFile, "iter_batches", capture_iter_batches)
-    rows = list(public_assets_module._iter_batches(output))
+    batches = list(public_assets_module._iter_batches(output))
 
-    assert rows and rows[0][0]["source_pbf"] == "region.osm.pbf"
+    assert batches and batches[0].row_count == 1
+    assert batches[0].columns["source_pbf"] == ["region.osm.pbf"]
+    assert "source_polygon_shard" not in batches[0].columns
     assert requested_columns == [
         tuple(
             name
@@ -776,7 +806,6 @@ def test_asset_dedup_reader_skips_unused_source_shard_column(
             if name != "source_polygon_shard"
         )
     ]
-    assert "source_polygon_shard" not in rows[0][0]
 
 
 def test_asset_stable_json_serializes_nested_binary_and_timestamps() -> None:

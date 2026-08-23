@@ -67,6 +67,80 @@ class _BatchValues:
     link_version_values: list[tuple[bytes, int]]
 
 
+@dataclass(frozen=True, slots=True)
+class _AssetBatch:
+    """Column-oriented asset rows for bounded, allocation-light processing."""
+
+    columns: Mapping[str, Sequence[object]]
+    row_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class _AssetColumns:
+    """Typed column references used by the allocation-light row loop."""
+
+    osm_type: Sequence[object]
+    osm_id: Sequence[object]
+    osm_version: Sequence[object]
+    source_pbf: Sequence[object]
+    provider: Sequence[object]
+    source_tag_key: Sequence[object]
+    source_tag_value: Sequence[object]
+    canonical_reference: Sequence[object]
+    provider_asset_id: Sequence[object]
+    asset_index: Sequence[object]
+    relation_kind: Sequence[object]
+    page_url: Sequence[object]
+    image_url: Sequence[object]
+    thumbnail_url: Sequence[object]
+    image_url_expires_at: Sequence[object]
+    mime_type: Sequence[object]
+    width: Sequence[object]
+    height: Sequence[object]
+    license_id: Sequence[object]
+    license_url: Sequence[object]
+    author: Sequence[object]
+    status: Sequence[object]
+    reason: Sequence[object]
+    category_truncated: Sequence[object]
+    retry_after: Sequence[object]
+    resolver_contract_version: Sequence[object]
+    response_sha256: Sequence[object]
+
+    @classmethod
+    def from_batch(cls, batch: _AssetBatch) -> _AssetColumns:
+        column = batch.columns.__getitem__
+        return cls(
+            column("osm_type"),
+            column("osm_id"),
+            column("osm_version"),
+            column("source_pbf"),
+            column("provider"),
+            column("source_tag_key"),
+            column("source_tag_value"),
+            column("canonical_reference"),
+            column("provider_asset_id"),
+            column("asset_index"),
+            column("relation_kind"),
+            column("page_url"),
+            column("image_url"),
+            column("thumbnail_url"),
+            column("image_url_expires_at"),
+            column("mime_type"),
+            column("width"),
+            column("height"),
+            column("license_id"),
+            column("license_url"),
+            column("author"),
+            column("status"),
+            column("reason"),
+            column("category_truncated"),
+            column("retry_after"),
+            column("resolver_contract_version"),
+            column("response_sha256"),
+        )
+
+
 def public_image_schema() -> pa.Schema:
     """Return the one-row-per-image public schema."""
     utc_timestamp = pa.timestamp("ms", tz="UTC")
@@ -171,17 +245,30 @@ def image_identity(row: Mapping[str, object]) -> tuple[str, str, str]:
     itself. Provider IDs, canonical references, and page URLs are fallbacks for
     unresolved rows.
     """
-    provider = str(row["provider"])
-    image_url = row.get("image_url")
+    return _image_identity_values(
+        row["provider"],
+        row.get("image_url"),
+        row.get("provider_asset_id"),
+        row.get("canonical_reference"),
+        row.get("page_url"),
+    )
+
+
+def _image_identity_values(
+    provider_value: object,
+    image_url: object,
+    provider_asset_id: object,
+    reference: object,
+    page_url: object,
+) -> tuple[str, str, str]:
+    provider = str(provider_value)
     if image_url:
         return provider, "image_url", str(image_url)
-    provider_asset_id = row.get("provider_asset_id")
     if provider_asset_id:
         return provider, "provider_asset_id", str(provider_asset_id)
-    reference = row.get("canonical_reference")
     if reference:
         return provider, "canonical_reference", str(reference)
-    return provider, "page_url", str(row.get("page_url") or "")
+    return provider, "page_url", str(page_url or "")
 
 
 def image_id(row: Mapping[str, object]) -> str:
@@ -191,17 +278,40 @@ def image_id(row: Mapping[str, object]) -> str:
 
 def _quality_rank(row: Mapping[str, object]) -> int:
     """Prefer usable, resolved, stable, and richly described image rows."""
+    return _quality_rank_values(
+        row.get("image_url"),
+        row.get("status"),
+        row.get("image_url_expires_at"),
+        row.get("width"),
+        row.get("height"),
+        row.get("license_id"),
+        row.get("author"),
+        row.get("category_truncated"),
+    )
+
+
+def _quality_rank_values(
+    image_url: object,
+    status: object,
+    image_url_expires_at: object,
+    width: object,
+    height: object,
+    license_id: object,
+    author: object,
+    category_truncated: object,
+) -> int:
+    """Rank scalar asset values without constructing a row mapping."""
     return sum(
         weight
         for present, weight in (
-            (row.get("image_url") is not None, 1_000_000),
-            (row.get("status") == "resolved", 100_000),
-            (row.get("image_url_expires_at") is None, 10_000),
-            (row.get("width") is not None, 1_000),
-            (row.get("height") is not None, 500),
-            (row.get("license_id") is not None, 100),
-            (row.get("author") is not None, 10),
-            (not bool(row.get("category_truncated")), 1),
+            (image_url is not None, 1_000_000),
+            (status == "resolved", 100_000),
+            (image_url_expires_at is None, 10_000),
+            (width is not None, 1_000),
+            (height is not None, 500),
+            (license_id is not None, 100),
+            (author is not None, 10),
+            (not bool(category_truncated), 1),
         )
         if present
     )
@@ -248,12 +358,15 @@ def _deduplicate_values[ValueTuple: tuple[Any, ...]](
     return unique
 
 
-def _iter_batches(output: Path, *, batch_size: int = 8192) -> Iterator[list[dict[str, Any]]]:
+def _iter_batches(output: Path, *, batch_size: int = 8192) -> Iterator[_AssetBatch]:
     for batch in pq.ParquetFile(output).iter_batches(
         columns=_ASSET_DEDUP_COLUMNS,
         batch_size=batch_size,
     ):
-        yield batch.to_pylist()
+        yield _AssetBatch(
+            {name: batch.column(name).to_pylist() for name in _ASSET_DEDUP_COLUMNS},
+            batch.num_rows,
+        )
 
 
 def _remove_legacy_checkpoints(temporary_root: Path, current: Path) -> None:
@@ -436,6 +549,116 @@ def _prepare_batch_values(
             continue
         _append_batch_row(values, row, polygon)
     return values
+
+
+def _prepare_columnar_batch_values(
+    batch: _AssetBatch,
+    canonical_polygons: Mapping[tuple[str, int], Mapping[str, object]],
+) -> _BatchValues:
+    values = _BatchValues(0, 0, [], [], [], [], [])
+    columns = _AssetColumns.from_batch(batch)
+    for index in range(batch.row_count):
+        values.input_rows += 1
+        polygon = canonical_polygons.get(
+            (str(columns.osm_type[index]), int(str(columns.osm_id[index])))
+        )
+        if polygon is None:
+            values.orphan_rows += 1
+            continue
+        _append_columnar_batch_row(values, columns, index, polygon)
+    return values
+
+
+def _append_columnar_batch_row(
+    values: _BatchValues,
+    columns: _AssetColumns,
+    index: int,
+    polygon: Mapping[str, object],
+) -> None:
+    """Append one row without allocating a per-row mapping.
+
+    This mirrors ``_append_batch_row`` but reads the same fields directly from
+    the bounded column references. Keep both paths semantically identical.
+    """
+    source_pbf = str(columns.source_pbf[index])
+    provider = columns.provider[index]
+    image_url = columns.image_url[index]
+    provider_asset_id = columns.provider_asset_id[index]
+    canonical_reference = columns.canonical_reference[index]
+    page_url = columns.page_url[index]
+    identity = _image_identity_values(
+        provider, image_url, provider_asset_id, canonical_reference, page_url
+    )
+    image_key = _digest(identity)
+    public_id = f"img_{image_key.hex()}"
+    payload = {
+        "image_id": public_id,
+        "provider": provider,
+        "canonical_reference": canonical_reference,
+        "provider_asset_id": provider_asset_id,
+        "page_url": page_url,
+        "image_url": image_url,
+        "thumbnail_url": columns.thumbnail_url[index],
+        "image_url_expires_at": columns.image_url_expires_at[index],
+        "mime_type": columns.mime_type[index],
+        "width": columns.width[index],
+        "height": columns.height[index],
+        "license_id": columns.license_id[index],
+        "license_url": columns.license_url[index],
+        "author": columns.author[index],
+        "status": columns.status[index],
+        "reason": columns.reason[index],
+        "category_truncated": bool(columns.category_truncated[index]),
+        "retry_after": columns.retry_after[index],
+        "resolver_contract_version": columns.resolver_contract_version[index],
+        "response_sha256": columns.response_sha256[index],
+    }
+    values.image_values.append(
+        (
+            image_key,
+            sqlite3.Binary(pickle.dumps(payload, protocol=5)),
+            _quality_rank_values(
+                image_url,
+                columns.status[index],
+                columns.image_url_expires_at[index],
+                columns.width[index],
+                columns.height[index],
+                columns.license_id[index],
+                columns.author[index],
+                columns.category_truncated[index],
+            ),
+            _stable_json(payload),
+        )
+    )
+    values.image_source_values.append((image_key, source_pbf))
+    polygon_key = (str(polygon["osm_type"]), int(str(polygon["osm_id"])))
+    link_identity = (
+        polygon_key,
+        identity,
+        columns.source_tag_key[index],
+        columns.source_tag_value[index],
+        canonical_reference,
+        columns.asset_index[index],
+        columns.relation_kind[index],
+    )
+    link_key = _digest(link_identity)
+    link_payload = {
+        "osm_type": polygon["osm_type"],
+        "osm_id": polygon["osm_id"],
+        "osm_version": polygon.get("osm_version"),
+        "image_id": public_id,
+        "provider": provider,
+        "source_tag_key": columns.source_tag_key[index],
+        "source_tag_value": columns.source_tag_value[index],
+        "canonical_reference": canonical_reference,
+        "asset_index": columns.asset_index[index],
+        "relation_kind": columns.relation_kind[index],
+    }
+    values.link_values.append((link_key, sqlite3.Binary(pickle.dumps(link_payload, protocol=5))))
+    values.link_source_values.append((link_key, source_pbf))
+    version = columns.osm_version[index]
+    if version is not None:
+        values.link_version_values.append((link_key, int(str(version))))
 
 
 def _append_batch_row(
@@ -756,6 +979,17 @@ class _Accumulator:
     ) -> None:
         """Insert one Parquet batch with bulk SQLite operations."""
         prepared = _prepare_batch_values(rows)
+        self._add_prepared(prepared)
+
+    def add_batch(
+        self,
+        batch: _AssetBatch,
+        canonical_polygons: Mapping[tuple[str, int], Mapping[str, object]],
+    ) -> None:
+        """Insert a column-oriented Parquet batch without row-dict materialization."""
+        self._add_prepared(_prepare_columnar_batch_values(batch, canonical_polygons))
+
+    def _add_prepared(self, prepared: _BatchValues) -> None:
         self.input_rows += prepared.input_rows
         self._transaction_input_rows += prepared.input_rows
         self.orphan_rows += prepared.orphan_rows
@@ -1058,14 +1292,8 @@ def _process_asset_source(
     source_orphans_before = accumulator.orphan_rows
     try:
         for batch in _iter_batches(output):
-            source_rows += len(batch)
-            accumulator.add_many(
-                (
-                    row,
-                    canonical_polygons.get((str(row["osm_type"]), int(row["osm_id"]))),
-                )
-                for row in batch
-            )
+            source_rows += batch.row_count
+            accumulator.add_batch(batch, canonical_polygons)
         accumulator.complete_source(
             source_index,
             source_sha256,
