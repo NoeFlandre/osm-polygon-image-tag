@@ -75,3 +75,28 @@ def test_promote_temporary_file_cleans_source_when_replace_fails(
 
     assert destination.read_bytes() == b"previous"
     assert not temporary.exists()
+
+
+def test_temporary_file_path_yields_named_path_and_cleans_it(tmp_path: Path) -> None:
+    temporary_file_path = getattr(atomic, "temporary_file_path", None)
+    assert temporary_file_path is not None
+
+    with temporary_file_path(tmp_path, prefix=".artifact.", suffix=".tmp") as path:
+        assert path.parent == tmp_path
+        assert path.name.startswith(".artifact.")
+        assert path.name.endswith(".tmp")
+        path.write_bytes(b"payload")
+        assert path.exists()
+
+    assert not path.exists()
+
+
+def test_temporary_file_path_cleans_up_when_scope_raises(tmp_path: Path) -> None:
+    temporary_file_path = getattr(atomic, "temporary_file_path", None)
+    assert temporary_file_path is not None
+
+    with pytest.raises(RuntimeError, match="scope failed"), temporary_file_path(tmp_path) as path:
+        path.write_bytes(b"payload")
+        raise RuntimeError("scope failed")
+
+    assert not path.exists()

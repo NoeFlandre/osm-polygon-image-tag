@@ -1,9 +1,11 @@
-"""Durable atomic writes for small byte-oriented artifacts."""
+"""Durable atomic artifact writes and temporary-file lifecycle helpers."""
 
 from __future__ import annotations
 
 import os
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -13,6 +15,27 @@ def _sync_directory(path: Path) -> None:
         os.fsync(directory_fd)
     finally:
         os.close(directory_fd)
+
+
+@contextmanager
+def temporary_file_path(
+    directory: Path,
+    *,
+    prefix: str = "tmp",
+    suffix: str = "",
+) -> Iterator[Path]:
+    """Yield an adjacent temporary file path and clean it up on exit."""
+    with tempfile.NamedTemporaryFile(
+        prefix=prefix,
+        suffix=suffix,
+        dir=directory,
+        delete=False,
+    ) as temporary:
+        path = Path(temporary.name)
+    try:
+        yield path
+    finally:
+        path.unlink(missing_ok=True)
 
 
 def promote_temporary_file(
@@ -43,20 +66,9 @@ def atomic_write_bytes(
 ) -> None:
     """Replace ``path`` with ``content`` through an adjacent temporary file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            prefix=prefix,
-            suffix=suffix,
-            dir=path.parent,
-            delete=False,
-        ) as temporary:
-            temporary_path = Path(temporary.name)
+    with temporary_file_path(path.parent, prefix=prefix, suffix=suffix) as temporary_path:
+        with temporary_path.open("wb") as temporary:
             temporary.write(content)
             temporary.flush()
             os.fsync(temporary.fileno())
         promote_temporary_file(temporary_path, path, sync_directory=sync_directory)
-    except BaseException:
-        if temporary_path is not None:
-            temporary_path.unlink(missing_ok=True)
-        raise

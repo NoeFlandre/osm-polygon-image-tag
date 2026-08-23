@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import pickle
 import sqlite3
-import tempfile
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -25,7 +24,11 @@ from osm_polygon_image_tag.artifacts.public_assets import (
     validate_public_image_parquet,
     validate_public_link_parquet,
 )
-from osm_polygon_image_tag.core.atomic import atomic_write_bytes, promote_temporary_file
+from osm_polygon_image_tag.core.atomic import (
+    atomic_write_bytes,
+    promote_temporary_file,
+    temporary_file_path,
+)
 from osm_polygon_image_tag.core.manifest import (
     DATASET_SCHEMA_VERSION,
     MANIFEST_SCHEMA_VERSION,
@@ -496,12 +499,12 @@ def _write_polygon_rows(
 ) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
     schema = public_polygon_schema()
-    with tempfile.NamedTemporaryFile(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent, delete=False
-    ) as temporary:
-        temporary_path = Path(temporary.name)
     count = 0
-    try:
+    with temporary_file_path(
+        path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    ) as temporary_path:
         with pq.ParquetWriter(
             temporary_path, schema, compression="zstd", use_dictionary=True, write_statistics=True
         ) as writer:
@@ -517,9 +520,6 @@ def _write_polygon_rows(
                 count += len(batch)
         _validate_public_polygon(temporary_path, expected_rows=count)
         promote_temporary_file(temporary_path, path, sync_directory=True)
-    except BaseException:
-        temporary_path.unlink(missing_ok=True)
-        raise
     return count
 
 

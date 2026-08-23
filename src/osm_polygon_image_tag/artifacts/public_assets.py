@@ -7,7 +7,6 @@ import json
 import pickle
 import shutil
 import sqlite3
-import tempfile
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,7 +18,7 @@ import pyarrow.parquet as pq
 from osm_polygon_image_tag.artifacts.checkpoints import remove_checkpoint_files
 from osm_polygon_image_tag.assets.manifest import AssetManifest
 from osm_polygon_image_tag.assets.schema import asset_schema
-from osm_polygon_image_tag.core.atomic import promote_temporary_file
+from osm_polygon_image_tag.core.atomic import promote_temporary_file, temporary_file_path
 from osm_polygon_image_tag.core.serialization import canonical_json
 
 PUBLIC_IMAGE_SCHEMA_VERSION = 1
@@ -379,16 +378,13 @@ def _legacy_checkpoint_paths(temporary_root: Path, current: Path) -> Iterator[Pa
 def _copy_clean_checkpoint(source: Path, destination: Path) -> None:
     """Seed a local checkpoint from a clean durable database atomically."""
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent, delete=False
-    ) as temporary:
-        temporary_path = Path(temporary.name)
-    try:
+    with temporary_file_path(
+        destination.parent,
+        prefix=f".{destination.name}.",
+        suffix=".tmp",
+    ) as temporary_path:
         shutil.copyfile(source, temporary_path)
         promote_temporary_file(temporary_path, destination, sync_directory=True)
-    except BaseException:
-        temporary_path.unlink(missing_ok=True)
-        raise
 
 
 def _checkpoint_family(path: Path) -> tuple[Path, ...]:
@@ -1005,16 +1001,13 @@ class _Accumulator:
 
 def _write_parquet(rows: Iterable[Mapping[str, object]], path: Path, schema: pa.Schema) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent, delete=False
-    ) as temporary:
-        temporary_path = Path(temporary.name)
-    try:
+    with temporary_file_path(
+        path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    ) as temporary_path:
         count = _write_parquet_file(rows, temporary_path, schema)
         _promote_parquet(temporary_path, path)
-    except BaseException:
-        temporary_path.unlink(missing_ok=True)
-        raise
     return count
 
 

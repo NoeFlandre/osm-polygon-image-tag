@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import logging
 import os
-import tempfile
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
@@ -35,6 +34,8 @@ import matplotlib.colors as mcolors
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
+
+from osm_polygon_image_tag.core.atomic import temporary_file_path
 
 from .basemap import draw_landmasses, load_land_basemap
 from .h3 import cell_rings
@@ -104,14 +105,11 @@ def _build_caption(
 
 def _atomic_save_png(fig: Any, output_path: Path) -> None:
     """Save ``fig`` to ``output_path`` via a temporary file then atomic rename."""
-    with tempfile.NamedTemporaryFile(
+    with temporary_file_path(
+        output_path.parent,
         prefix=f".{output_path.name}.",
         suffix=".tmp",
-        dir=str(output_path.parent),
-        delete=False,
-    ) as tmp_file:
-        tmp_path = Path(tmp_file.name)
-    try:
+    ) as tmp_path:
         fig.savefig(
             str(tmp_path),
             format="png",
@@ -119,9 +117,6 @@ def _atomic_save_png(fig: Any, output_path: Path) -> None:
             metadata={"Software": "osm-polygon-image-tag"},
         )
         os.replace(tmp_path, output_path)
-    except BaseException:
-        tmp_path.unlink(missing_ok=True)
-        raise
 
 
 def _draw_cell(
