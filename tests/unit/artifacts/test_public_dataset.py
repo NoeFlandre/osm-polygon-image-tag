@@ -17,7 +17,6 @@ import osm_polygon_image_tag.artifacts.public_assets as public_assets_module
 import osm_polygon_image_tag.artifacts.public_dataset as public_dataset_module
 from osm_polygon_image_tag.artifacts.asset_inventory import verified_asset_manifests
 from osm_polygon_image_tag.artifacts.asset_statistics import public_asset_statistics
-from osm_polygon_image_tag.artifacts.canonical import canonical_json
 from osm_polygon_image_tag.artifacts.public_dataset import (
     LEGACY_PUBLIC_ASSET_RELATIVE,
     PUBLIC_IMAGE_RELATIVE,
@@ -51,6 +50,7 @@ from osm_polygon_image_tag.core.manifest import (
     file_sha256,
     write_manifest,
 )
+from osm_polygon_image_tag.core.serialization import canonical_json
 
 
 def _polygon_row(

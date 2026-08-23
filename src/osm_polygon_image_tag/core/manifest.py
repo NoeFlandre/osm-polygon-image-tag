@@ -6,6 +6,7 @@ from typing import Any
 
 from osm_polygon_image_tag.core.atomic import atomic_write_bytes
 from osm_polygon_image_tag.core.errors import ImageTagPipelineError
+from osm_polygon_image_tag.core.serialization import canonical_json_bytes
 
 MANIFEST_SCHEMA_VERSION = 1
 PROCESSING_CONTRACT_VERSION = 2
@@ -72,15 +73,7 @@ def source_identity(path: Path, *, relative_path: str) -> SourceIdentity:
 
 
 def _canonical_bytes(manifest: Manifest) -> bytes:
-    return (
-        json.dumps(
-            asdict(manifest),
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-        )
-        + "\n"
-    ).encode("utf-8")
+    return canonical_json_bytes(asdict(manifest), newline=True)
 
 
 def write_manifest(manifest: Manifest, path: Path) -> None:

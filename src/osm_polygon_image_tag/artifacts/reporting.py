@@ -1,4 +1,3 @@
-import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +16,7 @@ from osm_polygon_image_tag.artifacts.public_dataset import build_public_dataset
 from osm_polygon_image_tag.artifacts.statistics import dataset_statistics
 from osm_polygon_image_tag.core.atomic import atomic_write_bytes
 from osm_polygon_image_tag.core.progress import Progress
+from osm_polygon_image_tag.core.serialization import canonical_json_bytes
 
 PUBLIC_CATALOG_RELATIVE = "catalog/public.sqlite"
 
@@ -124,9 +124,7 @@ def generate_metadata(
     _sync_citation(data_root)
     statistics_path = data_root / "statistics" / "dataset-statistics.json"
     card_path = data_root / "README.md"
-    serialized = (
-        json.dumps(statistics, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"
-    ).encode("utf-8")
+    serialized = canonical_json_bytes(statistics, newline=True)
     emit({"event": "metadata_write_started"})
     _atomic_write(statistics_path, serialized)
     _atomic_write(card_path, dataset_card(statistics, examples=examples))

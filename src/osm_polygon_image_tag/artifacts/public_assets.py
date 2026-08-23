@@ -17,10 +17,10 @@ from typing import Any, cast
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from osm_polygon_image_tag.artifacts.canonical import canonical_json
 from osm_polygon_image_tag.artifacts.checkpoints import remove_checkpoint_files
 from osm_polygon_image_tag.assets.manifest import AssetManifest
 from osm_polygon_image_tag.assets.schema import asset_schema
+from osm_polygon_image_tag.core.serialization import canonical_json
 
 PUBLIC_IMAGE_SCHEMA_VERSION = 1
 PUBLIC_LINK_SCHEMA_VERSION = 1

@@ -17,7 +17,6 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from osm_polygon_image_tag.artifacts.asset_inventory import verified_asset_manifests
-from osm_polygon_image_tag.artifacts.canonical import canonical_json
 from osm_polygon_image_tag.artifacts.checkpoints import remove_checkpoint_files
 from osm_polygon_image_tag.artifacts.manifest_inventory import verified_manifests
 from osm_polygon_image_tag.artifacts.public_assets import (
@@ -39,6 +38,7 @@ from osm_polygon_image_tag.core.manifest import (
     file_sha256,
 )
 from osm_polygon_image_tag.core.schema import dataset_schema
+from osm_polygon_image_tag.core.serialization import canonical_json, canonical_json_bytes
 
 PUBLIC_SCHEMA_VERSION = 2
 PUBLIC_POLYGON_RELATIVE = "public/polygons.parquet"
@@ -1003,9 +1003,7 @@ def _write_public_dataset(
     )
     atomic_write_bytes(
         root / PUBLIC_MANIFEST_RELATIVE,
-        (
-            json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
-        ).encode(),
+        canonical_json_bytes(payload, newline=True),
         prefix=".public-manifest.",
         suffix=".tmp",
         sync_directory=True,

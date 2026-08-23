@@ -11,6 +11,7 @@ from osm_polygon_image_tag.assets.schema import (
 from osm_polygon_image_tag.core.atomic import atomic_write_bytes
 from osm_polygon_image_tag.core.errors import ImageTagPipelineError
 from osm_polygon_image_tag.core.manifest import OutputIdentity
+from osm_polygon_image_tag.core.serialization import canonical_json_bytes
 
 ASSET_MANIFEST_SCHEMA_VERSION = 2
 
@@ -65,13 +66,7 @@ class AssetManifestHeader:
 
 
 def _canonical_bytes(manifest: AssetManifest) -> bytes:
-    payload = json.dumps(
-        asdict(manifest),
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
-    return f"{payload}\n".encode()
+    return canonical_json_bytes(asdict(manifest), newline=True)
 
 
 def write_asset_manifest(manifest: AssetManifest, path: Path) -> None:

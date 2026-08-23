@@ -1,11 +1,11 @@
 import hashlib
-import json
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from urllib.parse import parse_qsl, urlparse
 
 from osm_polygon_image_tag.assets.schema import validate_status
 from osm_polygon_image_tag.core.errors import ImageTagPipelineError
+from osm_polygon_image_tag.core.serialization import canonical_json_bytes
 
 _SECRET_QUERY_KEYS = frozenset({"access_token", "api_key", "token", "key"})
 
@@ -58,15 +58,6 @@ class ResolutionRecord:
     @property
     def response_sha256(self) -> str:
         return hashlib.sha256(canonical_record_bytes(self)).hexdigest()
-
-
-def canonical_json_bytes(payload: object) -> bytes:
-    return json.dumps(
-        payload,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode()
 
 
 def record_payload(record: ResolutionRecord) -> dict[str, object]:
