@@ -11,12 +11,13 @@ from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 
 from osm_polygon_image_tag.artifacts.asset_inventory import verified_asset_manifests
+from osm_polygon_image_tag.artifacts.canonical import canonical_json
 from osm_polygon_image_tag.artifacts.checkpoints import remove_checkpoint_files
 from osm_polygon_image_tag.artifacts.manifest_inventory import verified_manifests
 from osm_polygon_image_tag.artifacts.public_assets import (
@@ -95,31 +96,8 @@ def _polygon_rank(row: Mapping[str, Any]) -> tuple[int, int, int, str]:
     )
 
 
-def _jsonable(value: object) -> object:
-    if isinstance(value, bytes):
-        return {"__bytes__": value.hex()}
-    if isinstance(value, datetime | date):
-        return value.isoformat()
-    if isinstance(value, dict):
-        return _jsonable_mapping(cast(dict[object, object], value))
-    if isinstance(value, list):
-        return _jsonable_list(value)
-    return value
-
-
-def _jsonable_mapping(value: dict[object, object]) -> dict[str, object]:
-    return {
-        str(key): _jsonable(item)
-        for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
-    }
-
-
-def _jsonable_list(value: Sequence[object]) -> list[object]:
-    return [_jsonable(item) for item in value]
-
-
 def _stable_row_key(row: dict[str, Any]) -> str:
-    return json.dumps(_jsonable(row), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return canonical_json(row)
 
 
 class _PolygonAccumulator:

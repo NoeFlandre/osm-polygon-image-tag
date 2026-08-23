@@ -17,6 +17,7 @@ import osm_polygon_image_tag.artifacts.public_assets as public_assets_module
 import osm_polygon_image_tag.artifacts.public_dataset as public_dataset_module
 from osm_polygon_image_tag.artifacts.asset_inventory import verified_asset_manifests
 from osm_polygon_image_tag.artifacts.asset_statistics import public_asset_statistics
+from osm_polygon_image_tag.artifacts.canonical import canonical_json
 from osm_polygon_image_tag.artifacts.public_dataset import (
     LEGACY_PUBLIC_ASSET_RELATIVE,
     PUBLIC_IMAGE_RELATIVE,
@@ -837,11 +838,9 @@ def test_asset_dedup_reader_skips_unused_source_shard_column(
     ]
 
 
-def test_asset_stable_json_serializes_nested_binary_and_timestamps() -> None:
+def test_canonical_json_serializes_nested_binary_and_timestamps() -> None:
     assert (
-        public_assets_module._stable_json(
-            {"bytes": b"\x01", "when": datetime(2024, 1, 2), "items": [b"\x02"]}
-        )
+        canonical_json({"bytes": b"\x01", "when": datetime(2024, 1, 2), "items": [b"\x02"]})
         == '{"bytes":{"__bytes__":"01"},"items":[{"__bytes__":"02"}],"when":"2024-01-02T00:00:00"}'
     )
 

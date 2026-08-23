@@ -11,13 +11,13 @@ import sqlite3
 import tempfile
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
 from pathlib import Path
 from typing import Any, cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from osm_polygon_image_tag.artifacts.canonical import canonical_json
 from osm_polygon_image_tag.artifacts.checkpoints import remove_checkpoint_files
 from osm_polygon_image_tag.assets.manifest import AssetManifest
 from osm_polygon_image_tag.assets.schema import asset_schema
@@ -230,35 +230,8 @@ def public_link_schema() -> pa.Schema:
     )
 
 
-def _jsonable(value: object) -> object:
-    if isinstance(value, bytes):
-        return {"__bytes__": value.hex()}
-    if isinstance(value, datetime | date):
-        return value.isoformat()
-    if isinstance(value, dict):
-        return _jsonable_mapping(cast(dict[object, object], value))
-    if isinstance(value, list):
-        return _jsonable_list(value)
-    return value
-
-
-def _jsonable_mapping(value: dict[object, object]) -> dict[str, object]:
-    return {
-        str(key): _jsonable(item)
-        for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
-    }
-
-
-def _jsonable_list(value: Sequence[object]) -> list[object]:
-    return [_jsonable(item) for item in value]
-
-
-def _stable_json(value: object) -> str:
-    return json.dumps(_jsonable(value), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
 def _digest(value: object) -> bytes:
-    return hashlib.sha256(_stable_json(value).encode("utf-8")).digest()
+    return hashlib.sha256(canonical_json(value).encode("utf-8")).digest()
 
 
 def image_identity(row: Mapping[str, object]) -> tuple[str, str, str]:
@@ -609,7 +582,7 @@ def _append_batch_row(
             image_key,
             sqlite3.Binary(pickle.dumps(payload, protocol=5)),
             _quality_rank(row),
-            _stable_json(payload),
+            canonical_json(payload),
         )
     )
     values.image_source_values.append((image_key, source_pbf))
