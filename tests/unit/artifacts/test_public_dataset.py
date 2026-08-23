@@ -254,6 +254,35 @@ def test_public_dataset_keeps_fallback_identity_and_optional_asset_fields(tmp_pa
     assert link["relation_kind"] == "category_membership"
 
 
+def test_columnar_asset_view_exposes_the_same_fields_as_an_asset_row() -> None:
+    row = _asset_row("region.osm.pbf")
+    batch = public_assets_module._AssetBatch(
+        {name: [row[name]] for name in public_assets_module._ASSET_DEDUP_COLUMNS},
+        1,
+    )
+    columns = public_assets_module._AssetColumns.from_batch(batch)
+    view = public_assets_module._ColumnarAssetRow(columns)
+    view.index = 0
+
+    assert dict(view) == {name: row[name] for name in public_assets_module._ASSET_DEDUP_COLUMNS}
+
+
+def test_columnar_asset_batch_values_match_mapping_asset_batch_values() -> None:
+    row = _asset_row("region.osm.pbf")
+    polygon = _polygon_row("region.osm.pbf")
+    batch = public_assets_module._AssetBatch(
+        {name: [row[name]] for name in public_assets_module._ASSET_DEDUP_COLUMNS},
+        1,
+    )
+
+    mapping_values = public_assets_module._prepare_batch_values([(row, polygon)])
+    columnar_values = public_assets_module._prepare_columnar_batch_values(
+        batch, {("way", 1): polygon}
+    )
+
+    assert columnar_values == mapping_values
+
+
 def test_public_dataset_resumes_after_source_checkpoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

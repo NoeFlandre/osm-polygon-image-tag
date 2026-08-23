@@ -141,6 +141,29 @@ class _AssetColumns:
         )
 
 
+class _ColumnarAssetRow(Mapping[str, object]):
+    """Mapping view over one row of column-oriented asset values."""
+
+    __slots__ = ("_columns", "index")
+
+    def __init__(self, columns: _AssetColumns) -> None:
+        self._columns = columns
+        self.index = 0
+
+    def __getitem__(self, name: str) -> object:
+        try:
+            column = getattr(self._columns, name)
+        except AttributeError as error:
+            raise KeyError(name) from error
+        return column[self.index]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(_ASSET_DEDUP_COLUMNS)
+
+    def __len__(self) -> int:
+        return len(_ASSET_DEDUP_COLUMNS)
+
+
 def public_image_schema() -> pa.Schema:
     """Return the one-row-per-image public schema."""
     utc_timestamp = pa.timestamp("ms", tz="UTC")
@@ -557,6 +580,7 @@ def _prepare_columnar_batch_values(
 ) -> _BatchValues:
     values = _BatchValues(0, 0, [], [], [], [], [])
     columns = _AssetColumns.from_batch(batch)
+    row = _ColumnarAssetRow(columns)
     for index in range(batch.row_count):
         values.input_rows += 1
         polygon = canonical_polygons.get(
@@ -565,100 +589,9 @@ def _prepare_columnar_batch_values(
         if polygon is None:
             values.orphan_rows += 1
             continue
-        _append_columnar_batch_row(values, columns, index, polygon)
+        row.index = index
+        _append_batch_row(values, row, polygon)
     return values
-
-
-def _append_columnar_batch_row(
-    values: _BatchValues,
-    columns: _AssetColumns,
-    index: int,
-    polygon: Mapping[str, object],
-) -> None:
-    """Append one row without allocating a per-row mapping.
-
-    This mirrors ``_append_batch_row`` but reads the same fields directly from
-    the bounded column references. Keep both paths semantically identical.
-    """
-    source_pbf = str(columns.source_pbf[index])
-    provider = columns.provider[index]
-    image_url = columns.image_url[index]
-    provider_asset_id = columns.provider_asset_id[index]
-    canonical_reference = columns.canonical_reference[index]
-    page_url = columns.page_url[index]
-    identity = _image_identity_values(
-        provider, image_url, provider_asset_id, canonical_reference, page_url
-    )
-    image_key = _digest(identity)
-    public_id = f"img_{image_key.hex()}"
-    payload = {
-        "image_id": public_id,
-        "provider": provider,
-        "canonical_reference": canonical_reference,
-        "provider_asset_id": provider_asset_id,
-        "page_url": page_url,
-        "image_url": image_url,
-        "thumbnail_url": columns.thumbnail_url[index],
-        "image_url_expires_at": columns.image_url_expires_at[index],
-        "mime_type": columns.mime_type[index],
-        "width": columns.width[index],
-        "height": columns.height[index],
-        "license_id": columns.license_id[index],
-        "license_url": columns.license_url[index],
-        "author": columns.author[index],
-        "status": columns.status[index],
-        "reason": columns.reason[index],
-        "category_truncated": bool(columns.category_truncated[index]),
-        "retry_after": columns.retry_after[index],
-        "resolver_contract_version": columns.resolver_contract_version[index],
-        "response_sha256": columns.response_sha256[index],
-    }
-    values.image_values.append(
-        (
-            image_key,
-            sqlite3.Binary(pickle.dumps(payload, protocol=5)),
-            _quality_rank_values(
-                image_url,
-                columns.status[index],
-                columns.image_url_expires_at[index],
-                columns.width[index],
-                columns.height[index],
-                columns.license_id[index],
-                columns.author[index],
-                columns.category_truncated[index],
-            ),
-            _stable_json(payload),
-        )
-    )
-    values.image_source_values.append((image_key, source_pbf))
-    polygon_key = (str(polygon["osm_type"]), int(str(polygon["osm_id"])))
-    link_identity = (
-        polygon_key,
-        identity,
-        columns.source_tag_key[index],
-        columns.source_tag_value[index],
-        canonical_reference,
-        columns.asset_index[index],
-        columns.relation_kind[index],
-    )
-    link_key = _digest(link_identity)
-    link_payload = {
-        "osm_type": polygon["osm_type"],
-        "osm_id": polygon["osm_id"],
-        "osm_version": polygon.get("osm_version"),
-        "image_id": public_id,
-        "provider": provider,
-        "source_tag_key": columns.source_tag_key[index],
-        "source_tag_value": columns.source_tag_value[index],
-        "canonical_reference": canonical_reference,
-        "asset_index": columns.asset_index[index],
-        "relation_kind": columns.relation_kind[index],
-    }
-    values.link_values.append((link_key, sqlite3.Binary(pickle.dumps(link_payload, protocol=5))))
-    values.link_source_values.append((link_key, source_pbf))
-    version = columns.osm_version[index]
-    if version is not None:
-        values.link_version_values.append((link_key, int(str(version))))
 
 
 def _append_batch_row(
