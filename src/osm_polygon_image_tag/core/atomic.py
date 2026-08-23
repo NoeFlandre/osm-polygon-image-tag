@@ -15,6 +15,24 @@ def _sync_directory(path: Path) -> None:
         os.close(directory_fd)
 
 
+def promote_temporary_file(
+    temporary_path: Path,
+    final_path: Path,
+    *,
+    sync_directory: bool = False,
+) -> None:
+    """Durably replace ``final_path`` with a prepared temporary file."""
+    try:
+        with temporary_path.open("rb") as temporary:
+            os.fsync(temporary.fileno())
+        os.replace(temporary_path, final_path)
+        if sync_directory:
+            _sync_directory(final_path.parent)
+    except BaseException:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
 def atomic_write_bytes(
     path: Path,
     content: bytes,
@@ -37,9 +55,7 @@ def atomic_write_bytes(
             temporary.write(content)
             temporary.flush()
             os.fsync(temporary.fileno())
-        os.replace(temporary_path, path)
-        if sync_directory:
-            _sync_directory(path.parent)
+        promote_temporary_file(temporary_path, path, sync_directory=sync_directory)
     except BaseException:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import pickle
 import shutil
 import sqlite3
@@ -20,6 +19,7 @@ import pyarrow.parquet as pq
 from osm_polygon_image_tag.artifacts.checkpoints import remove_checkpoint_files
 from osm_polygon_image_tag.assets.manifest import AssetManifest
 from osm_polygon_image_tag.assets.schema import asset_schema
+from osm_polygon_image_tag.core.atomic import promote_temporary_file
 from osm_polygon_image_tag.core.serialization import canonical_json
 
 PUBLIC_IMAGE_SCHEMA_VERSION = 1
@@ -385,14 +385,7 @@ def _copy_clean_checkpoint(source: Path, destination: Path) -> None:
         temporary_path = Path(temporary.name)
     try:
         shutil.copyfile(source, temporary_path)
-        with temporary_path.open("rb") as handle:
-            os.fsync(handle.fileno())
-        os.replace(temporary_path, destination)
-        directory_fd = os.open(destination.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        promote_temporary_file(temporary_path, destination, sync_directory=True)
     except BaseException:
         temporary_path.unlink(missing_ok=True)
         raise
@@ -1046,14 +1039,7 @@ def _write_parquet_file(rows: Iterable[Mapping[str, object]], path: Path, schema
 
 
 def _promote_parquet(temporary_path: Path, final_path: Path) -> None:
-    with temporary_path.open("rb") as handle:
-        os.fsync(handle.fileno())
-    os.replace(temporary_path, final_path)
-    directory_fd = os.open(final_path.parent, os.O_RDONLY)
-    try:
-        os.fsync(directory_fd)
-    finally:
-        os.close(directory_fd)
+    promote_temporary_file(temporary_path, final_path, sync_directory=True)
 
 
 def validate_public_image_parquet(path: Path, *, expected_rows: int | None = None) -> None:

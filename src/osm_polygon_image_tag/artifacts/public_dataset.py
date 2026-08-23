@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import pickle
 import sqlite3
 import tempfile
@@ -26,7 +25,7 @@ from osm_polygon_image_tag.artifacts.public_assets import (
     validate_public_image_parquet,
     validate_public_link_parquet,
 )
-from osm_polygon_image_tag.core.atomic import atomic_write_bytes
+from osm_polygon_image_tag.core.atomic import atomic_write_bytes, promote_temporary_file
 from osm_polygon_image_tag.core.manifest import (
     DATASET_SCHEMA_VERSION,
     MANIFEST_SCHEMA_VERSION,
@@ -517,14 +516,7 @@ def _write_polygon_rows(
                 writer.write_table(pa.Table.from_pylist(batch, schema=schema))
                 count += len(batch)
         _validate_public_polygon(temporary_path, expected_rows=count)
-        with temporary_path.open("rb") as handle:
-            os.fsync(handle.fileno())
-        os.replace(temporary_path, path)
-        directory_fd = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        promote_temporary_file(temporary_path, path, sync_directory=True)
     except BaseException:
         temporary_path.unlink(missing_ok=True)
         raise

@@ -1,4 +1,3 @@
-import os
 import tempfile
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -8,6 +7,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from osm_polygon_image_tag.assets.schema import asset_schema
+from osm_polygon_image_tag.core.atomic import promote_temporary_file
 from osm_polygon_image_tag.core.errors import ImageTagPipelineError
 
 
@@ -118,14 +118,11 @@ class AtomicAssetWriter:
                 self._temporary_path,
                 expected_rows=self._row_count,
             )
-            with self._temporary_path.open("rb") as file_handle:
-                os.fsync(file_handle.fileno())
-            os.replace(self._temporary_path, self._final_path)
-            directory_fd = os.open(self._final_path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+            promote_temporary_file(
+                self._temporary_path,
+                self._final_path,
+                sync_directory=True,
+            )
             self.result = AssetWriteResult(
                 row_count=self._row_count,
                 size_bytes=self._final_path.stat().st_size,

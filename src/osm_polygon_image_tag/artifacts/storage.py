@@ -1,5 +1,4 @@
 import json
-import os
 import tempfile
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -9,6 +8,7 @@ from typing import Any, cast
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from osm_polygon_image_tag.core.atomic import promote_temporary_file
 from osm_polygon_image_tag.core.contracts import PANORAMAX_VALUES_COLUMN
 from osm_polygon_image_tag.core.errors import ImageTagPipelineError
 from osm_polygon_image_tag.core.schema import GEOPARQUET_VERSION, dataset_schema
@@ -169,14 +169,7 @@ def write_geoparquet(
     try:
         row_count = _write_batches(rows, temporary_path, batch_size=batch_size)
         validate_geoparquet(temporary_path)
-        with temporary_path.open("rb") as file_handle:
-            os.fsync(file_handle.fileno())
-        os.replace(temporary_path, final_path)
-        directory_fd = os.open(final_path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        promote_temporary_file(temporary_path, final_path, sync_directory=True)
     except BaseException:
         temporary_path.unlink(missing_ok=True)
         raise
