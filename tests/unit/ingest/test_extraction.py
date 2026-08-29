@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+import osm_polygon_image_tag.ingest.copy_parser as copy_parser
 from osm_polygon_image_tag.ingest.extraction import (
     ExportRecord,
     export_command,
@@ -58,6 +59,21 @@ def test_copy_parser_handles_nulls_and_postgres_escaped_json() -> None:
     assert record.changeset is None
     assert record.timestamp is None
     assert record.tags == {"mapillary": value}
+
+
+def test_copy_parser_uses_direct_decode_for_unescaped_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_escape_decode(_field: bytes) -> str:
+        raise AssertionError("unescaped fields should not use the escape decoder")
+
+    monkeypatch.setattr(
+        copy_parser,
+        "_decode_escaped_copy_field",
+        unexpected_escape_decode,
+    )
+
+    assert copy_parser._decode_copy_field("Café".encode()) == "Café"
 
 
 def test_copy_parser_treats_empty_optional_metadata_as_null() -> None:

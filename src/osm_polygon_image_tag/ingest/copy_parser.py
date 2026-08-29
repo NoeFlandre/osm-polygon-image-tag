@@ -28,6 +28,12 @@ class ExportRecord:
 
 
 def _decode_copy_field(field: bytes) -> str:
+    if b"\\" not in field:
+        return field.decode("utf-8")
+    return _decode_escaped_copy_field(field)
+
+
+def _decode_escaped_copy_field(field: bytes) -> str:
     decoded = bytearray()
     index = 0
     while index < len(field):
