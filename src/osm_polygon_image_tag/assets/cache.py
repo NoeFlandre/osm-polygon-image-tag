@@ -15,7 +15,7 @@ from osm_polygon_image_tag.assets.resolution import (
     ResolutionRecord,
     canonical_json_bytes,
     canonical_record_bytes,
-    record_payload,
+    canonical_record_payload,
     validate_resolution_record,
 )
 
@@ -147,7 +147,8 @@ class ResolutionCache:
         values: list[tuple[object, ...]] = []
         for record in records:
             validate_resolution_record(record)
-            payload_json = canonical_record_bytes(record).decode()
+            payload_bytes = canonical_record_bytes(record)
+            payload_json = payload_bytes.decode()
             values.append(
                 (
                     record.provider,
@@ -155,7 +156,7 @@ class ResolutionCache:
                     record.resolver_contract_version,
                     record.status,
                     payload_json,
-                    hashlib.sha256(payload_json.encode()).hexdigest(),
+                    hashlib.sha256(payload_bytes).hexdigest(),
                     record.retry_after.isoformat() if record.retry_after is not None else None,
                 )
             )
@@ -192,7 +193,7 @@ class ResolutionCache:
         entries = []
         for key in _ordered_keys(keys):
             record = _snapshot_record(self, key, records)
-            entries.append(record_payload(record))
+            entries.append(canonical_record_payload(record))
         return ResolutionSnapshotIdentity(
             entry_count=len(entries),
             sha256=hashlib.sha256(canonical_json_bytes(entries)).hexdigest(),

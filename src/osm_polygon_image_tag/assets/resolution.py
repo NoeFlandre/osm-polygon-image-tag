@@ -62,12 +62,21 @@ class ResolutionRecord:
 
 
 def record_payload(record: ResolutionRecord) -> dict[str, object]:
+    return _record_payload(record, copy_assets=True)
+
+
+def canonical_record_payload(record: ResolutionRecord) -> dict[str, object]:
+    return _record_payload(record, copy_assets=False)
+
+
+def _record_payload(record: ResolutionRecord, *, copy_assets: bool) -> dict[str, object]:
+    assets = tuple(deepcopy(asset) for asset in record.assets) if copy_assets else record.assets
     return {
         "provider": record.provider,
         "canonical_reference": record.canonical_reference,
         "resolver_contract_version": record.resolver_contract_version,
         "status": record.status,
-        "assets": tuple(deepcopy(asset) for asset in record.assets),
+        "assets": assets,
         "retry_after": (record.retry_after.isoformat() if record.retry_after is not None else None),
         "reason": record.reason,
         "category_truncated": record.category_truncated,
@@ -76,7 +85,7 @@ def record_payload(record: ResolutionRecord) -> dict[str, object]:
 
 
 def canonical_record_bytes(record: ResolutionRecord) -> bytes:
-    return canonical_json_bytes(record_payload(record))
+    return canonical_json_bytes(canonical_record_payload(record))
 
 
 def validate_resolution_record(record: ResolutionRecord) -> None:

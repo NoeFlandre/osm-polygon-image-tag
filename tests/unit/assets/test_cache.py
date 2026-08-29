@@ -15,7 +15,8 @@ from osm_polygon_image_tag.assets.cache import (
     ResolutionKey,
     ResolutionRecord,
 )
-from osm_polygon_image_tag.assets.resolution import record_payload
+from osm_polygon_image_tag.assets.resolution import canonical_record_bytes, record_payload
+from osm_polygon_image_tag.core.serialization import canonical_json_bytes
 
 PANORAMAX_ID = "4492cea4-1018-4285-8074-cf3d37f3c673"
 
@@ -78,13 +79,48 @@ def test_record_payload_does_not_use_recursive_dataclass_traversal(
     assert record_payload(record)["canonical_reference"] == "reference"
 
 
+def test_canonical_record_bytes_match_detached_payload() -> None:
+    record = _record()
+
+    assert canonical_record_bytes(record) == canonical_json_bytes(record_payload(record))
+
+
+def test_canonical_paths_do_not_deepcopy_assets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    record = _record()
+    with ResolutionCache.open(tmp_path) as cache:
+        cache.put(record)
+        expected_snapshot = cache.resolution_snapshot((record.key,), records={record.key: record})
+        expected_bytes = canonical_json_bytes(record_payload(record))
+
+        def unexpected_deepcopy(_value: object) -> object:
+            raise AssertionError("canonical serialization copied assets")
+
+        monkeypatch.setattr(resolution, "deepcopy", unexpected_deepcopy)
+
+        assert (
+            cache.resolution_snapshot((record.key,), records={record.key: record})
+            == expected_snapshot
+        )
+        assert canonical_record_bytes(record) == expected_bytes
+
+
 def test_cache_creates_schema_and_round_trips_canonical_records(tmp_path: Path) -> None:
     with ResolutionCache.open(tmp_path) as cache:
         record = _record()
         cache.put(record)
+        payload_bytes = canonical_record_bytes(record)
+        stored = cache._connection.execute(
+            "SELECT payload_json, response_sha256 FROM resolutions"
+        ).fetchone()
         loaded = cache.get(record.key)
 
     assert (tmp_path / "cache" / "resolutions.sqlite").is_file()
+    assert stored == (
+        payload_bytes.decode(),
+        hashlib.sha256(payload_bytes).hexdigest(),
+    )
     assert loaded == record
     assert loaded is not None
     assert len(loaded.response_sha256) == 64
