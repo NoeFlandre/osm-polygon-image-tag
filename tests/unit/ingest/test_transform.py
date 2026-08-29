@@ -6,7 +6,12 @@ from shapely import to_wkb
 from shapely.geometry import LineString, MultiPolygon, Polygon
 
 from osm_polygon_image_tag.ingest.extraction import ExportRecord
-from osm_polygon_image_tag.ingest.transform import AcceptedRow, RejectedRow, transform_record
+from osm_polygon_image_tag.ingest.transform import (
+    AcceptedRow,
+    RejectedRow,
+    transform_record,
+    transform_records,
+)
 
 
 def _record(geometry: object, **overrides: object) -> ExportRecord:
@@ -113,6 +118,33 @@ def test_normalizes_single_part_way_multipolygon_to_polygon() -> None:
 
     assert isinstance(outcome, AcceptedRow)
     assert outcome.values["geometry_type"] == "Polygon"
+
+
+def test_transform_records_matches_scalar_transform_for_mixed_batches() -> None:
+    records = [
+        _record(Polygon([(0, 0), (0, 1), (1, 1), (1, 0)]), osm_id=1),
+        _record(
+            MultiPolygon([Polygon([(2, 2), (2, 3), (3, 3), (3, 2)])]),
+            osm_type="relation",
+            osm_id=2,
+            timestamp=None,
+        ),
+        _record(Polygon([(0, 0), (1, 1), (1, 0), (0, 1)]), osm_id=3),
+        _record(
+            Polygon([(0, 0), (0, 1), (1, 1), (1, 0)]),
+            osm_id=4,
+            tags={"name": "not an image"},
+        ),
+    ]
+
+    expected = [transform_record(record, source_pbf="region.osm.pbf") for record in records]
+
+    assert list(transform_records(records, source_pbf="region.osm.pbf", batch_size=2)) == expected
+
+
+def test_transform_records_rejects_nonpositive_batch_size() -> None:
+    with pytest.raises(ValueError, match="batch_size must be positive"):
+        list(transform_records([], source_pbf="region.osm.pbf", batch_size=0))
 
 
 @pytest.mark.parametrize(

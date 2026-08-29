@@ -32,7 +32,7 @@ from osm_polygon_image_tag.ingest.extraction import (
     stream_export,
 )
 from osm_polygon_image_tag.ingest.tag_store import TagStore
-from osm_polygon_image_tag.ingest.transform import AcceptedRow, RejectedRow, transform_record
+from osm_polygon_image_tag.ingest.transform import AcceptedRow, RejectedRow, transform_records
 from osm_polygon_image_tag.runtime.resources import osmium_export_config
 
 Scanner = Callable[..., None]
@@ -173,8 +173,7 @@ def build_one(
 
         def rows() -> Iterator[dict[str, object]]:
             nonlocal accepted_rows
-            for record in records:
-                outcome = transform_record(record, source_pbf=source.relative_path.as_posix())
+            for outcome in transform_records(records, source_pbf=source.relative_path.as_posix()):
                 if isinstance(outcome, RejectedRow):
                     rejections[outcome.reason] += 1
                     continue

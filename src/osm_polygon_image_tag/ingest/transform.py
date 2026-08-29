@@ -1,10 +1,12 @@
 import math
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from itertools import islice
 from typing import Any
 
 from pyproj import Geod
-from shapely import from_wkb, orient_polygons, to_wkb
+from shapely import bounds, from_wkb, get_type_id, is_empty, is_valid, orient_polygons, to_wkb
 from shapely.errors import GEOSException
 
 from osm_polygon_image_tag.core.contracts import PANORAMAX_VALUES_COLUMN
@@ -16,6 +18,7 @@ from osm_polygon_image_tag.ingest.extraction import (
 )
 
 _GEOD = Geod(ellps="WGS84")
+_DEFAULT_TRANSFORM_BATCH_SIZE = 512
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +55,106 @@ def transform_record(
     except ValueError:
         return RejectedRow(reason="invalid_timestamp")
     return AcceptedRow(values=_accepted_values(record, source_pbf, geometry, timestamp))
+
+
+def transform_records(
+    records: Iterable[ExportRecord],
+    *,
+    source_pbf: str,
+    batch_size: int = _DEFAULT_TRANSFORM_BATCH_SIZE,
+) -> Iterator[AcceptedRow | RejectedRow]:
+    """Transform records in bounded batches while preserving scalar semantics."""
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    iterator = iter(records)
+    while batch := list(islice(iterator, batch_size)):
+        outcomes = _try_transform_batch(batch, source_pbf)
+        if outcomes is None:
+            yield from _transform_scalar(batch, source_pbf)
+            continue
+        yield from outcomes
+
+
+def _try_transform_batch(records: list[ExportRecord], source_pbf: str) -> list[AcceptedRow] | None:
+    if not _batch_has_target_tags(records):
+        return None
+    geometries = _decode_batch(records)
+    if geometries is None:
+        return None
+    if not _batch_is_eligible(geometries):
+        return None
+    return _safe_transform_valid_batch(records, geometries, source_pbf)
+
+
+def _batch_has_target_tags(records: Iterable[ExportRecord]) -> bool:
+    return all(has_target_tag(record.tags) for record in records)
+
+
+def _safe_transform_valid_batch(
+    records: list[ExportRecord], geometries: Any, source_pbf: str
+) -> list[AcceptedRow] | None:
+    try:
+        return _transform_valid_batch(records, geometries, source_pbf)
+    except (ValueError, GEOSException):
+        return None
+
+
+def _decode_batch(records: list[ExportRecord]) -> Any | None:
+    try:
+        return from_wkb([bytes.fromhex(record.geometry_ewkb_hex) for record in records])
+    except (ValueError, GEOSException):
+        return None
+
+
+def _batch_is_eligible(geometries: Any) -> bool:
+    type_ids = get_type_id(geometries)
+    return bool((is_valid(geometries) & ~is_empty(geometries) & _polygon_type_mask(type_ids)).all())
+
+
+def _polygon_type_mask(type_ids: Any) -> Any:
+    return (type_ids == 3) | (type_ids == 6)
+
+
+def _transform_valid_batch(
+    records: list[ExportRecord], geometries: Any, source_pbf: str
+) -> list[AcceptedRow]:
+    normalized = [
+        _normalized_geometry(geometry, record.osm_type)
+        for record, geometry in zip(records, geometries, strict=True)
+    ]
+    oriented = orient_polygons(normalized, exterior_cw=False)
+    batch_bounds = bounds(oriented)
+    outcomes: list[AcceptedRow] = []
+    for record, geometry, bounds_row in zip(records, oriented, batch_bounds, strict=True):
+        outcomes.append(_transform_valid_row(record, geometry, bounds_row, source_pbf))
+    return outcomes
+
+
+def _transform_valid_row(
+    record: ExportRecord, geometry: Any, bounds_row: Any, source_pbf: str
+) -> AcceptedRow:
+    finite_bounds = _finite_bounds_values(bounds_row)
+    if finite_bounds is None:
+        raise ValueError("batch geometry bounds are not finite")
+    area_m2 = _positive_area(geometry)
+    if area_m2 is None:
+        raise ValueError("batch geometry area is not positive")
+    timestamp = _timestamp(record.timestamp)
+    return AcceptedRow(
+        values=_accepted_values(
+            record,
+            source_pbf,
+            (geometry, finite_bounds, area_m2),
+            timestamp,
+        )
+    )
+
+
+def _transform_scalar(
+    records: Iterable[ExportRecord], source_pbf: str
+) -> Iterator[AcceptedRow | RejectedRow]:
+    for record in records:
+        yield transform_record(record, source_pbf=source_pbf)
 
 
 def _validated_geometry(
@@ -91,13 +194,21 @@ def _geometry_rejection(geometry: Any) -> str | None:
 
 
 def _oriented_geometry(geometry: Any, osm_type: str) -> Any:
+    return orient_polygons(_normalized_geometry(geometry, osm_type), exterior_cw=False)
+
+
+def _normalized_geometry(geometry: Any, osm_type: str) -> Any:
     if osm_type == "way" and geometry.geom_type == "MultiPolygon" and len(geometry.geoms) == 1:
-        geometry = geometry.geoms[0]
-    return orient_polygons(geometry, exterior_cw=False)
+        return geometry.geoms[0]
+    return geometry
 
 
 def _finite_bounds(geometry: Any) -> tuple[float, ...] | None:
-    bounds = tuple(float(value) for value in geometry.bounds)
+    return _finite_bounds_values(geometry.bounds)
+
+
+def _finite_bounds_values(values: Iterable[float]) -> tuple[float, ...] | None:
+    bounds = tuple(float(value) for value in values)
     return bounds if len(bounds) == 4 and all(math.isfinite(value) for value in bounds) else None
 
 
