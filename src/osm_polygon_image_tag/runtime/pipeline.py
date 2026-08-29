@@ -26,6 +26,7 @@ from osm_polygon_image_tag.core.manifest import (
 from osm_polygon_image_tag.ingest.discovery import PbfSource
 from osm_polygon_image_tag.ingest.extraction import (
     ExportRecord,
+    SourceTagRecord,
     osmium_version,
     restore_original_tags,
     scan_target_source_tags,
@@ -38,6 +39,7 @@ from osm_polygon_image_tag.runtime.resources import osmium_export_config
 Scanner = Callable[..., None]
 Exporter = Callable[..., Iterable[ExportRecord]]
 VersionGetter = Callable[..., str]
+_TAG_STORE_BATCH_SIZE = 1000
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,7 +161,17 @@ def build_one(
     accepted_rows = 0
     rejections: Counter[str] = Counter()
     with TagStore.create(paths.data_root) as tags:
-        scanner(source.absolute_path, emit=tags.add)
+        pending_tags: list[SourceTagRecord] = []
+
+        def emit_tag(record: SourceTagRecord) -> None:
+            pending_tags.append(record)
+            if len(pending_tags) == _TAG_STORE_BATCH_SIZE:
+                tags.add_many(pending_tags)
+                pending_tags.clear()
+
+        scanner(source.absolute_path, emit=emit_tag)
+        if pending_tags:
+            tags.add_many(pending_tags)
         tags.flush()
         records = restore_original_tags(
             exporter(

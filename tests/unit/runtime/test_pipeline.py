@@ -55,6 +55,61 @@ def _version(**_kwargs: object) -> str:
     return "osmium version test"
 
 
+def test_build_one_batches_scanned_tags_before_storage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    pbf = raw / "region.osm.pbf"
+    pbf.write_bytes(b"source")
+    paths = PipelinePaths.build(source_root=raw, data_root=tmp_path / "generated")
+    source_tags = [
+        SourceTagRecord("way", osm_id, {"image": f"image-{osm_id}"}) for osm_id in range(2500)
+    ]
+    export_records = [_record(osm_id) for osm_id in range(2500)]
+
+    class RecordingStore:
+        def __init__(self) -> None:
+            self.batch_sizes: list[int] = []
+
+        def __enter__(self) -> "RecordingStore":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def add(self, _record: SourceTagRecord) -> None:
+            raise AssertionError("pipeline used the per-record tag-store path")
+
+        def add_many(self, records: Iterable[SourceTagRecord]) -> None:
+            self.batch_sizes.append(len(tuple(records)))
+
+        def flush(self) -> None:
+            return None
+
+        def lookup(self, _osm_type: str, _osm_id: int) -> dict[str, str] | None:
+            return None
+
+        def lookup_many(
+            self, identities: Iterable[tuple[str, int]]
+        ) -> dict[tuple[str, int], dict[str, str]]:
+            return {identity: {"image": f"image-{identity[1]}"} for identity in identities}
+
+    store = RecordingStore()
+    monkeypatch.setattr(pipeline.TagStore, "create", lambda _data_root: store)
+
+    result = build_one(
+        _source(pbf),
+        paths,
+        scanner=_scanner(source_tags, []),
+        exporter=_exporter(export_records, []),
+        version_getter=_version,
+    )
+
+    assert result.accepted_rows == 2500
+    assert store.batch_sizes == [1000, 1000, 500]
+
+
 def test_builds_then_skips_only_verified_identical_shard(tmp_path: Path) -> None:
     raw = tmp_path / "raw"
     raw.mkdir()

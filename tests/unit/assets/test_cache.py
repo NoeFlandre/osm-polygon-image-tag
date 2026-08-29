@@ -4,9 +4,11 @@ import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 import pytest
 
+import osm_polygon_image_tag.assets.resolution as resolution
 from osm_polygon_image_tag.assets.cache import (
     ResolutionCache,
     ResolutionCacheError,
@@ -32,6 +34,48 @@ def _record(
         assets=({"image_url": "https://cdn.test/picture.jpg"},),
         retry_after=retry_after,
     )
+
+
+def test_record_payload_preserves_shape_and_detaches_asset_values() -> None:
+    record = ResolutionRecord(
+        "panoramax",
+        "reference",
+        1,
+        "resolved",
+        ({"metadata": {"width": 1024}},),
+        None,
+    )
+
+    payload = record_payload(record)
+
+    assert payload == {
+        "provider": "panoramax",
+        "canonical_reference": "reference",
+        "resolver_contract_version": 1,
+        "status": "resolved",
+        "assets": ({"metadata": {"width": 1024}},),
+        "retry_after": None,
+        "reason": None,
+        "category_truncated": False,
+        "attempt_count": 1,
+    }
+    assets = cast(tuple[dict[str, object], ...], payload["assets"])
+    assert assets is not record.assets
+    assert assets[0] is not record.assets[0]
+    assert assets[0]["metadata"] is not record.assets[0]["metadata"]
+
+
+def test_record_payload_does_not_use_recursive_dataclass_traversal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = ResolutionRecord("panoramax", "reference", 1, "resolved", (), None)
+
+    def unexpected_asdict(_value: object) -> object:
+        raise AssertionError("record payload should not call dataclasses.asdict")
+
+    monkeypatch.setattr(resolution, "asdict", unexpected_asdict, raising=False)
+
+    assert record_payload(record)["canonical_reference"] == "reference"
 
 
 def test_cache_creates_schema_and_round_trips_canonical_records(tmp_path: Path) -> None:

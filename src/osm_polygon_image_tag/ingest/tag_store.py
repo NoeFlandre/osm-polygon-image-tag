@@ -11,6 +11,7 @@ from osm_polygon_image_tag.ingest.extraction import SourceTagRecord
 
 _SQLITE_MAX_VARIABLES = 999
 _MAX_LOOKUP_IDENTITIES = _SQLITE_MAX_VARIABLES // 2
+_INSERT_TAG_SQL = "INSERT INTO tags (osm_type, osm_id, tags_json) VALUES (?, ?, ?)"
 
 
 class TagStore:
@@ -62,17 +63,26 @@ class TagStore:
             candidate.unlink(missing_ok=True)
 
     def add(self, record: SourceTagRecord) -> None:
-        encoded = canonical_json(record.tags)
+        values = _tag_values(record)
         try:
-            self._connection.execute(
-                "INSERT INTO tags (osm_type, osm_id, tags_json) VALUES (?, ?, ?)",
-                (record.osm_type, record.osm_id, encoded),
-            )
+            self._connection.execute(_INSERT_TAG_SQL, values)
         except sqlite3.IntegrityError as error:
             raise ValueError(
                 f"duplicate source identity: {record.osm_type}/{record.osm_id}"
             ) from error
         self._pending += 1
+        if self._pending >= self._commit_interval:
+            self.flush()
+
+    def add_many(self, records: Iterable[SourceTagRecord]) -> None:
+        values = tuple(_tag_values(record) for record in records)
+        if not values:
+            return
+        try:
+            self._connection.executemany(_INSERT_TAG_SQL, values)
+        except sqlite3.IntegrityError as error:
+            raise ValueError("duplicate source identity in tag batch") from error
+        self._pending += len(values)
         if self._pending >= self._commit_interval:
             self.flush()
 
@@ -132,3 +142,7 @@ def _identity_batches(
 ) -> Iterable[tuple[tuple[str, int], ...]]:
     for start in range(0, len(identities), batch_size):
         yield identities[start : start + batch_size]
+
+
+def _tag_values(record: SourceTagRecord) -> tuple[str, int, str]:
+    return record.osm_type, record.osm_id, canonical_json(record.tags)

@@ -21,6 +21,22 @@ def test_store_round_trips_exact_tags_and_count(tmp_path: Path) -> None:
     assert not list((tmp_path / "tmp").glob("tag-store-*"))
 
 
+def test_store_add_many_round_trips_all_tags(tmp_path: Path) -> None:
+    records = [
+        SourceTagRecord("way", 1, {"image": "one"}),
+        SourceTagRecord("relation", 2, {"flickr": "two"}),
+    ]
+
+    with TagStore.create(tmp_path, commit_interval=2) as store:
+        store.add_many(records)
+
+        assert store.lookup_many((record.osm_type, record.osm_id) for record in records) == {
+            ("way", 1): {"image": "one"},
+            ("relation", 2): {"flickr": "two"},
+        }
+        assert store.count() == 2
+
+
 def test_store_looks_up_many_pending_rows_without_reordering(tmp_path: Path) -> None:
     with TagStore.create(tmp_path) as store:
         store.add(SourceTagRecord("way", 1, {"image": "one"}))

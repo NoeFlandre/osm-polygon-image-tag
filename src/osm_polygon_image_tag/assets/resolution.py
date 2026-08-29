@@ -1,5 +1,6 @@
 import hashlib
-from dataclasses import asdict, dataclass
+from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime
 from urllib.parse import parse_qsl, urlparse
 
@@ -61,10 +62,17 @@ class ResolutionRecord:
 
 
 def record_payload(record: ResolutionRecord) -> dict[str, object]:
-    payload = asdict(record)
-    retry_after = record.retry_after
-    payload["retry_after"] = retry_after.isoformat() if retry_after is not None else None
-    return payload
+    return {
+        "provider": record.provider,
+        "canonical_reference": record.canonical_reference,
+        "resolver_contract_version": record.resolver_contract_version,
+        "status": record.status,
+        "assets": tuple(deepcopy(asset) for asset in record.assets),
+        "retry_after": (record.retry_after.isoformat() if record.retry_after is not None else None),
+        "reason": record.reason,
+        "category_truncated": record.category_truncated,
+        "attempt_count": record.attempt_count,
+    }
 
 
 def canonical_record_bytes(record: ResolutionRecord) -> bytes:
