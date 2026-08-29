@@ -1,4 +1,5 @@
 import json
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from osm_polygon_image_tag.ingest.extraction import (
     is_target_tag_key,
     iter_records,
     parse_copy_record,
+    restore_original_tags,
 )
 
 
@@ -74,6 +76,43 @@ def test_copy_parser_uses_direct_decode_for_unescaped_fields(
     )
 
     assert copy_parser._decode_copy_field("Café".encode()) == "Café"
+
+
+def test_restore_original_tags_uses_bounded_batch_lookup_in_order() -> None:
+    records = [
+        parse_copy_record(f"0103\tway\t{osm_id}\t1\t1\t\\N\t{{}}\n".encode())
+        for osm_id in (1, 2, 3)
+    ]
+    calls: list[tuple[tuple[str, int], ...]] = []
+
+    def unexpected_lookup(_osm_type: str, _osm_id: int) -> None:
+        raise AssertionError("single-record lookup should not be used")
+
+    def lookup_many(
+        identities: Iterable[tuple[str, int]],
+    ) -> Mapping[tuple[str, int], Mapping[str, str]]:
+        batch = tuple(identities)
+        calls.append(batch)
+        return {
+            identity: {"image": f"image-{identity[1]}"}
+            for identity in batch
+            if identity != ("way", 2)
+        }
+
+    restored = list(
+        restore_original_tags(
+            records,
+            lookup=unexpected_lookup,
+            lookup_many=lookup_many,
+            batch_size=2,
+        )
+    )
+
+    assert calls == [(("way", 1), ("way", 2)), (("way", 3),)]
+    assert [(record.osm_id, record.tags) for record in restored] == [
+        (1, {"image": "image-1"}),
+        (3, {"image": "image-3"}),
+    ]
 
 
 def test_copy_parser_treats_empty_optional_metadata_as_null() -> None:

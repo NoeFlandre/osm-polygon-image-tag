@@ -21,6 +21,29 @@ def test_store_round_trips_exact_tags_and_count(tmp_path: Path) -> None:
     assert not list((tmp_path / "tmp").glob("tag-store-*"))
 
 
+def test_store_looks_up_many_pending_rows_without_reordering(tmp_path: Path) -> None:
+    with TagStore.create(tmp_path) as store:
+        store.add(SourceTagRecord("way", 1, {"image": "one"}))
+        store.add(SourceTagRecord("relation", 2, {"flickr": "two"}))
+
+        assert store.lookup_many([("relation", 2), ("way", 999), ("way", 1), ("relation", 2)]) == {
+            ("relation", 2): {"flickr": "two"},
+            ("way", 1): {"image": "one"},
+        }
+
+
+def test_store_splits_large_lookup_requests_at_sqlite_parameter_limit(tmp_path: Path) -> None:
+    with TagStore.create(tmp_path) as store:
+        for osm_id in range(500):
+            store.add(SourceTagRecord("way", osm_id, {"image": str(osm_id)}))
+
+        found = store.lookup_many(("way", osm_id) for osm_id in range(500))
+
+    assert len(found) == 500
+    assert found[("way", 0)] == {"image": "0"}
+    assert found[("way", 499)] == {"image": "499"}
+
+
 def test_store_rejects_duplicate_identity(tmp_path: Path) -> None:
     with TagStore.create(tmp_path) as store:
         store.add(SourceTagRecord("way", 1, {"image": "a"}))

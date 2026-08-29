@@ -2,11 +2,15 @@ import json
 import os
 import sqlite3
 import tempfile
+from collections.abc import Iterable
 from pathlib import Path
 from types import TracebackType
 
 from osm_polygon_image_tag.core.serialization import canonical_json
 from osm_polygon_image_tag.ingest.extraction import SourceTagRecord
+
+_SQLITE_MAX_VARIABLES = 999
+_MAX_LOOKUP_IDENTITIES = _SQLITE_MAX_VARIABLES // 2
 
 
 class TagStore:
@@ -87,8 +91,44 @@ class TagStore:
         value = json.loads(row[0])
         return dict(value)
 
+    def lookup_many(
+        self,
+        identities: Iterable[tuple[str, int]],
+    ) -> dict[tuple[str, int], dict[str, str]]:
+        unique_identities = tuple(dict.fromkeys(identities))
+        if not unique_identities:
+            return {}
+        self.flush()
+        found: dict[tuple[str, int], dict[str, str]] = {}
+        for batch in _identity_batches(unique_identities, _MAX_LOOKUP_IDENTITIES):
+            found.update(self._lookup_batch(batch))
+        return found
+
+    def _lookup_batch(
+        self,
+        identities: tuple[tuple[str, int], ...],
+    ) -> dict[tuple[str, int], dict[str, str]]:
+        placeholders = ", ".join("(?, ?)" for _ in identities)
+        parameters = tuple(value for identity in identities for value in identity)
+        rows = self._connection.execute(
+            "SELECT osm_type, osm_id, tags_json "  # noqa: S608 - placeholders are generated and values remain parameterized.
+            f"FROM tags WHERE (osm_type, osm_id) IN ({placeholders})",
+            parameters,
+        ).fetchall()
+        return {
+            (osm_type_value, osm_id_value): dict(json.loads(tags_json))
+            for osm_type_value, osm_id_value, tags_json in rows
+        }
+
     def count(self) -> int:
         self.flush()
         row = self._connection.execute("SELECT COUNT(*) FROM tags").fetchone()
         assert row is not None
         return int(row[0])
+
+
+def _identity_batches(
+    identities: tuple[tuple[str, int], ...], batch_size: int
+) -> Iterable[tuple[tuple[str, int], ...]]:
+    for start in range(0, len(identities), batch_size):
+        yield identities[start : start + batch_size]

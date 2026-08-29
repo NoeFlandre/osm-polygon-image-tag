@@ -168,6 +168,7 @@ def build_one(
                 executable=executable,
             ),
             lookup=tags.lookup,
+            lookup_many=tags.lookup_many,
         )
 
         def rows() -> Iterator[dict[str, object]]:

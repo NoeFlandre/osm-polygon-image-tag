@@ -2,6 +2,7 @@
 
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
+from itertools import islice
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,7 @@ from osm_polygon_image_tag.core.contracts import IMAGE_REFERENCE_KEYS
 from osm_polygon_image_tag.ingest.copy_parser import ExportRecord
 
 TARGET_TAG_KEYS = IMAGE_REFERENCE_KEYS
+_DEFAULT_RESTORE_BATCH_SIZE = 400
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,8 +79,53 @@ def restore_original_tags(
     records: Iterable[ExportRecord],
     *,
     lookup: Callable[[str, int], Mapping[str, str] | None],
+    lookup_many: Callable[[Iterable[tuple[str, int]]], Mapping[tuple[str, int], Mapping[str, str]]]
+    | None = None,
+    batch_size: int = _DEFAULT_RESTORE_BATCH_SIZE,
+) -> Iterator[ExportRecord]:
+    if lookup_many is None:
+        yield from _restore_one_by_one(records, lookup)
+        return
+    yield from _restore_in_batches(records, lookup_many, batch_size=batch_size)
+
+
+def _restore_one_by_one(
+    records: Iterable[ExportRecord],
+    lookup: Callable[[str, int], Mapping[str, str] | None],
 ) -> Iterator[ExportRecord]:
     for record in records:
         tags = lookup(record.osm_type, record.osm_id)
+        if tags is not None:
+            yield replace(record, tags=dict(tags))
+
+
+def _restore_in_batches(
+    records: Iterable[ExportRecord],
+    lookup_many: Callable[[Iterable[tuple[str, int]]], Mapping[tuple[str, int], Mapping[str, str]]],
+    *,
+    batch_size: int,
+) -> Iterator[ExportRecord]:
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    for batch in _record_batches(records, batch_size):
+        identities = ((record.osm_type, record.osm_id) for record in batch)
+        tags_by_identity = lookup_many(identities)
+        yield from _restore_batch(batch, tags_by_identity)
+
+
+def _record_batches(
+    records: Iterable[ExportRecord], batch_size: int
+) -> Iterator[list[ExportRecord]]:
+    iterator = iter(records)
+    while batch := list(islice(iterator, batch_size)):
+        yield batch
+
+
+def _restore_batch(
+    records: Iterable[ExportRecord],
+    tags_by_identity: Mapping[tuple[str, int], Mapping[str, str]],
+) -> Iterator[ExportRecord]:
+    for record in records:
+        tags = tags_by_identity.get((record.osm_type, record.osm_id))
         if tags is not None:
             yield replace(record, tags=dict(tags))
