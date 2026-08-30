@@ -10,10 +10,13 @@ integrations are wired together.
   deep verification.
 - The full-run orchestrator (`orchestrator`) that drives `run`,
   `run-and-publish`, and `verify`, including `SIGINT`/`SIGTERM` handling.
+- The immutable enrichment job and summary contracts (`enrichment_types`)
+  exchanged with the background worker.
 - The immutable run and verification result contracts (`results`) shared by
   the orchestrator and CLI.
 - The bounded background enrichment worker (`enrichment`) and TTY/JSON
-  rendering boundary (`console`).
+  rendering boundary (`console`). The worker module re-exports the enrichment
+  contracts for compatibility.
 - The read-only preflight (`preflight`) used by `osm-polygon-image-tag
   preflight`.
 - Startup cleanup of abandoned, application-owned temporary files from a
@@ -35,6 +38,8 @@ integrations are wired together.
   the orchestrator surface that the CLI wraps.
 - `RunSummary`, `VerifySummary`: immutable result contracts from `results`,
   also re-exported by `orchestrator` for compatibility.
+- `AssetJob`, `EnrichmentSummary`: immutable worker contracts from
+  `enrichment_types`, also re-exported by `enrichment` for compatibility.
 - `build_one`, `verify_one`: the per-PBF entry points used by integration
   tests and the orchestrator.
 - `run_preflight`, `probe_osmium`, `probe_capacity`: the read-only checks.

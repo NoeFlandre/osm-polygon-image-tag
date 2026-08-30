@@ -3,40 +3,21 @@ import queue
 import threading
 from collections import Counter, deque
 from collections.abc import Awaitable, Callable, Iterable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
 from osm_polygon_image_tag.assets.build_state import AssetBuildResult, asset_paths
 from osm_polygon_image_tag.assets.builder import build_asset_shard
-from osm_polygon_image_tag.core.manifest import Manifest
 from osm_polygon_image_tag.core.progress import Progress
+from osm_polygon_image_tag.runtime.enrichment_types import AssetJob, EnrichmentSummary
 
 AssetBuilder = Callable[..., Awaitable[AssetBuildResult]]
 Checkpoint = Callable[[], None]
 
 
-@dataclass(frozen=True, slots=True)
-class AssetJob:
-    manifest: Manifest
-    polygon_path: Path
-
-
 def _asset_artifacts_present(job: AssetJob, data_root: Path) -> bool:
     output, manifest = asset_paths(job.polygon_path, data_root)
     return all(path.is_file() and not path.is_symlink() for path in (output, manifest))
-
-
-@dataclass(frozen=True, slots=True)
-class EnrichmentSummary:
-    built: int = 0
-    skipped: int = 0
-    pending: int = 0
-    rows: int = 0
-    statuses: dict[str, int] | None = None
-
-    def status_counts(self) -> dict[str, int]:
-        return dict(self.statuses or {})
 
 
 class EnrichmentWorker:

@@ -27,7 +27,7 @@ src/osm_polygon_image_tag/
   resolvers/         # hardened HTTP boundary and provider adapters
   artifacts/         # storage, inventory, catalog, reporting, publication
   artifacts/geography/  # H3 + matplotlib map: models, cache, h3, inputs, basemap, render, pipeline
-  runtime/           # pipeline, enrichment, console, results, orchestration
+  runtime/           # pipeline, enrichment_types, enrichment, console, results, orchestration
   integrations/      # provider adapters (Hugging Face Hub)
 ```
 
@@ -86,6 +86,9 @@ selection, provenance, and checkpoint persistence.
 - A bounded enrichment worker overlaps asset backfill with sequential PBF
   extraction. Provider calls use a transactional cache, global concurrency
   bound, provider semaphores, and request pacing.
+- Enrichment job and summary contracts live in a lightweight types module;
+  worker lifecycle and concurrency remain isolated in `enrichment`, so result
+  and orchestration code need not depend on worker implementation details.
 - Asset shards keep the exact full-tag build pass, while their progress count
   uses only normalized reference columns. Cacheable resolutions are fetched in
   bounded SQLite batches and reused for the rest of the shard, avoiding

@@ -13,10 +13,7 @@ from osm_polygon_image_tag.core.config import PipelinePaths
 from osm_polygon_image_tag.core.manifest import read_manifest
 from osm_polygon_image_tag.ingest.discovery import PbfSource, discover_pbfs
 from osm_polygon_image_tag.runtime.cleanup import cleanup_stale_temps
-from osm_polygon_image_tag.runtime.enrichment import (
-    AssetJob,
-    EnrichmentSummary,
-)
+from osm_polygon_image_tag.runtime.enrichment_types import AssetJob, EnrichmentSummary
 from osm_polygon_image_tag.runtime.pipeline import BuildResult, build_one, verify_one
 from osm_polygon_image_tag.runtime.results import RunSummary, VerifySummary
 

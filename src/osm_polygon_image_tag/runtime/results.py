@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from osm_polygon_image_tag.runtime.enrichment import EnrichmentSummary
+from osm_polygon_image_tag.runtime.enrichment_types import EnrichmentSummary
 
 
 @dataclass(frozen=True, slots=True)
