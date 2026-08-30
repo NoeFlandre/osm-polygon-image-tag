@@ -24,9 +24,11 @@ that lives inside the managed data root.
   it commits each asset shard separately and resumes unfinished shards. Both
   checkpoints are removed only after their public outputs and manifest are
   written successfully.
-- The public asset materializer (`public_assets`) owns asset deduplication and
-  output assembly; its schema and checkpoint dependencies remain focused in
-  the modules above.
+- The public asset accumulator (`public_asset_accumulator`) owns asset-row
+  transformation, bounded SQLite deduplication, and provenance iteration.
+  The public asset materializer (`public_assets`) owns checkpoint selection,
+  source orchestration, and output assembly; its schema and checkpoint
+  dependencies remain focused in the modules above.
 - The public dataset materializer (`public_dataset`) owns release schemas,
   manifest validation, reuse, and orchestration; polygon persistence remains
   in `public_polygon_accumulator`.
