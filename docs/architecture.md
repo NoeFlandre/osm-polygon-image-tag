@@ -61,6 +61,10 @@ owns the release schema, manifest, digest, row-count, and reuse checks, while
 cleanup. `public_dataset_output` owns the immutable result contract and
 manifest/output serialization. `public_polygon_accumulator` owns SQLite
 polygon selection, provenance, and checkpoint persistence.
+Within the per-PBF runtime boundary, `runtime.pipeline` owns artifact paths,
+resume/deep verification, source/output identity, manifest assembly, and the
+public entry points. `runtime.pipeline_build` owns bounded source scanning,
+export restoration, row transformation, and GeoParquet writing.
 
 ## Why the layering matters
 

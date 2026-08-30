@@ -6,8 +6,10 @@ integrations are wired together.
 
 ## What belongs here
 
-- The per-PBF build pipeline (`pipeline`) that owns fast resume and explicit
-  deep verification.
+- The per-PBF build facade (`pipeline`) that owns artifact paths, fast resume,
+  explicit deep verification, and identity/manifest assembly. Source scanning,
+  export restoration, row transformation, and GeoParquet writing live in
+  `pipeline_build`.
 - The full-run orchestrator (`orchestrator`) that drives `run`,
   `run-and-publish`, and `verify`, including `SIGINT`/`SIGTERM` handling.
 - The immutable enrichment job and summary contracts (`enrichment_types`)

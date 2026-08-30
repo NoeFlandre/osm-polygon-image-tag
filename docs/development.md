@@ -155,6 +155,11 @@ contract.
   coordination, source execution, and signal lifecycle in
   `runtime/orchestrator`. The orchestrator retains compatibility imports for
   existing callers.
+- Keep the per-PBF runtime boundary focused: use `runtime/pipeline` for
+  artifact paths, resume/deep verification, identity, manifest assembly, and
+  public entry points; use `runtime/pipeline_build` for bounded source scan,
+  export restoration, row transformation, and GeoParquet writing. Keep artifact
+  naming and manifest persistence in `pipeline`.
 - Keep immutable enrichment contracts in `runtime/enrichment_types`; keep
   worker lifecycle and concurrency in `runtime/enrichment`. The worker retains
   compatibility imports for existing callers.

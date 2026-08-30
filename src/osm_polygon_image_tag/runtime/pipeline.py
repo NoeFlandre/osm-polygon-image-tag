@@ -1,14 +1,13 @@
 import hashlib
 import os
 import re
-from collections import Counter
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
 import pyarrow.parquet as pq
 
-from osm_polygon_image_tag.artifacts.storage import validate_geoparquet, write_geoparquet
+from osm_polygon_image_tag.artifacts.storage import validate_geoparquet
 from osm_polygon_image_tag.core.config import PipelinePaths
 from osm_polygon_image_tag.core.manifest import (
     DATASET_SCHEMA_VERSION,
@@ -17,7 +16,6 @@ from osm_polygon_image_tag.core.manifest import (
     Manifest,
     ManifestError,
     OutputIdentity,
-    RunCounts,
     file_sha256,
     read_manifest,
     source_identity,
@@ -26,20 +24,18 @@ from osm_polygon_image_tag.core.manifest import (
 from osm_polygon_image_tag.ingest.discovery import PbfSource
 from osm_polygon_image_tag.ingest.extraction import (
     ExportRecord,
-    SourceTagRecord,
     osmium_version,
-    restore_original_tags,
     scan_target_source_tags,
     stream_export,
 )
-from osm_polygon_image_tag.ingest.tag_store import TagStore
-from osm_polygon_image_tag.ingest.transform import AcceptedRow, RejectedRow, transform_records
-from osm_polygon_image_tag.runtime.resources import osmium_export_config
+from osm_polygon_image_tag.ingest.tag_store import TagStore  # noqa: F401 - compatibility import
+from osm_polygon_image_tag.runtime.pipeline_build import (
+    build_source_output as _build_source_output,
+)
 
 Scanner = Callable[..., None]
 Exporter = Callable[..., Iterable[ExportRecord]]
 VersionGetter = Callable[..., str]
-_TAG_STORE_BATCH_SIZE = 1000
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,52 +154,21 @@ def build_one(
         source.absolute_path,
         relative_path=source.relative_path.as_posix(),
     )
-    accepted_rows = 0
-    rejections: Counter[str] = Counter()
-    with TagStore.create(paths.data_root) as tags:
-        pending_tags: list[SourceTagRecord] = []
-
-        def emit_tag(record: SourceTagRecord) -> None:
-            pending_tags.append(record)
-            if len(pending_tags) == _TAG_STORE_BATCH_SIZE:
-                tags.add_many(pending_tags)
-                pending_tags.clear()
-
-        scanner(source.absolute_path, emit=emit_tag)
-        if pending_tags:
-            tags.add_many(pending_tags)
-        tags.flush()
-        records = restore_original_tags(
-            exporter(
-                source.absolute_path,
-                osmium_export_config(),
-                executable=executable,
-            ),
-            lookup=tags.lookup,
-            lookup_many=tags.lookup_many,
-        )
-
-        def rows() -> Iterator[dict[str, object]]:
-            nonlocal accepted_rows
-            for outcome in transform_records(records, source_pbf=source.relative_path.as_posix()):
-                if isinstance(outcome, RejectedRow):
-                    rejections[outcome.reason] += 1
-                    continue
-                assert isinstance(outcome, AcceptedRow)
-                accepted_rows += 1
-                yield outcome.values
-
-        write_result = write_geoparquet(rows(), output_path, batch_size=batch_size)
+    write_result, counts = _build_source_output(
+        source,
+        data_root=paths.data_root,
+        output_path=output_path,
+        scanner=scanner,
+        exporter=exporter,
+        executable=executable,
+        batch_size=batch_size,
+    )
 
     output = OutputIdentity(
         relative_path=output_path.relative_to(paths.data_root).as_posix(),
         size_bytes=write_result.size_bytes,
         sha256=file_sha256(output_path),
         row_count=write_result.row_count,
-    )
-    counts = RunCounts(
-        accepted_rows=accepted_rows,
-        rejections=dict(sorted(rejections.items())),
     )
     manifest = Manifest(
         manifest_schema_version=MANIFEST_SCHEMA_VERSION,
@@ -220,7 +185,7 @@ def build_one(
         source_pbf=source.relative_path.as_posix(),
         output_path=output_path,
         manifest_path=manifest_path,
-        accepted_rows=accepted_rows,
+        accepted_rows=counts.accepted_rows,
         rejections=counts.rejections,
     )
 
