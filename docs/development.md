@@ -151,6 +151,10 @@ contract.
   minimum change to make it pass.
 - Respect the layering rules in `architecture.md`. The dependency arrow
   flows downward; no upward imports are allowed.
+- Keep runtime result contracts in `runtime/results`; keep workflow
+  coordination, source execution, and signal lifecycle in
+  `runtime/orchestrator`. The orchestrator retains compatibility imports for
+  existing callers.
 - Keep public-asset responsibilities focused: use `public_asset_schema` for
   Arrow contracts and validators, `public_asset_checkpoint` for checkpoint
   policy, `public_asset_rows` for deterministic row transformation and

@@ -28,14 +28,13 @@ from osm_polygon_image_tag.resolvers.registry import ResolverRegistry
 from osm_polygon_image_tag.runtime.console import ConsoleRenderer
 from osm_polygon_image_tag.runtime.enrichment import EnrichmentWorker
 from osm_polygon_image_tag.runtime.orchestrator import (
-    RunSummary,
     StopToken,
-    VerifySummary,
     graceful_stop_signals,
     run_all,
     verify_all,
 )
 from osm_polygon_image_tag.runtime.preflight import PreflightReport, run_preflight
+from osm_polygon_image_tag.runtime.results import RunSummary, VerifySummary
 
 Report = PreflightReport | RunSummary | VerifySummary | MetadataResult | PublicationResult
 _renderer: ContextVar[ConsoleRenderer | None] = ContextVar("renderer", default=None)

@@ -2,7 +2,6 @@ import signal
 import threading
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager, suppress
-from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -19,6 +18,7 @@ from osm_polygon_image_tag.runtime.enrichment import (
     EnrichmentSummary,
 )
 from osm_polygon_image_tag.runtime.pipeline import BuildResult, build_one, verify_one
+from osm_polygon_image_tag.runtime.results import RunSummary, VerifySummary
 
 Build = Callable[[PbfSource, PipelinePaths], BuildResult]
 MetadataBuilder = Callable[[Path], MetadataResult]
@@ -44,32 +44,6 @@ class StopToken:
     @property
     def requested(self) -> bool:
         return self._event.is_set()
-
-
-@dataclass(frozen=True, slots=True)
-class RunSummary:
-    processed: int
-    built: int
-    skipped: int
-    accepted_rows: int
-    stopped: bool
-    enrichment: EnrichmentSummary = field(default_factory=EnrichmentSummary)
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass(frozen=True, slots=True)
-class VerifySummary:
-    checked: int
-    valid: int
-    invalid: int
-    asset_checked: int = 0
-    asset_valid: int = 0
-    asset_invalid: int = 0
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
 
 
 def _build_sources(

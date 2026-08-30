@@ -10,6 +10,8 @@ integrations are wired together.
   deep verification.
 - The full-run orchestrator (`orchestrator`) that drives `run`,
   `run-and-publish`, and `verify`, including `SIGINT`/`SIGTERM` handling.
+- The immutable run and verification result contracts (`results`) shared by
+  the orchestrator and CLI.
 - The bounded background enrichment worker (`enrichment`) and TTY/JSON
   rendering boundary (`console`).
 - The read-only preflight (`preflight`) used by `osm-polygon-image-tag
@@ -31,6 +33,8 @@ integrations are wired together.
 - `PipelinePaths` is built in `core.config` and consumed unchanged here.
 - `run_all`, `verify_all`, `StopToken`, `graceful_stop_signals`:
   the orchestrator surface that the CLI wraps.
+- `RunSummary`, `VerifySummary`: immutable result contracts from `results`,
+  also re-exported by `orchestrator` for compatibility.
 - `build_one`, `verify_one`: the per-PBF entry points used by integration
   tests and the orchestrator.
 - `run_preflight`, `probe_osmium`, `probe_capacity`: the read-only checks.
