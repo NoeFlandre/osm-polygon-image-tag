@@ -54,9 +54,11 @@ owns checkpoint selection, safety, limits, and compatibility,
 `public_asset_accumulator` owns asset-row transformation, bounded SQLite
 deduplication, and provenance iteration, and `public_assets` owns source
 orchestration, Parquet output assembly, and result construction.
-`public_dataset` uses the schema contracts directly when validating the final
-release, while `public_polygon_accumulator` owns SQLite polygon selection,
-provenance, and checkpoint persistence.
+Within the public-dataset materialization boundary, `public_dataset_validation`
+owns the release schema, manifest, digest, row-count, and reuse checks, while
+`public_dataset` owns polygon materialization, source orchestration, manifest
+assembly, and cleanup. `public_polygon_accumulator` owns SQLite polygon
+selection, provenance, and checkpoint persistence.
 
 ## Why the layering matters
 
@@ -71,6 +73,8 @@ provenance, and checkpoint persistence.
   behavior have one clear owner.
 - The polygon accumulator is independently testable from release validation
   and manifest reuse, so persisted selection behavior has one clear owner.
+- Public-dataset validation is independently testable from materialization, so
+  release-contract checks and source orchestration do not drift together.
 - Asset schema/resolver contracts are versioned independently from polygon
   extraction. Historical enrichment consumes finalized Parquet and never
   invalidates schema-v2 polygon shards.

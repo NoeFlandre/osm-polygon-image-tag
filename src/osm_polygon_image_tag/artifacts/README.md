@@ -29,9 +29,10 @@ that lives inside the managed data root.
   The public asset materializer (`public_assets`) owns checkpoint selection,
   source orchestration, and output assembly; its schema and checkpoint
   dependencies remain focused in the modules above.
-- The public dataset materializer (`public_dataset`) owns release schemas,
-  manifest validation, reuse, and orchestration; polygon persistence remains
-  in `public_polygon_accumulator`.
+- The public dataset validation boundary (`public_dataset_validation`) owns
+  release schemas, manifest/digest/row-count validation, and reuse checks.
+  The public dataset materializer (`public_dataset`) owns polygon persistence,
+  source orchestration, manifest assembly, and cleanup.
 - Publication types, inventory, planning, and receipt writing
   (`publication_types`, `publication_inventory`, `publication`).
 - The dataset-card geographic density map (`geography/`): typed models,
