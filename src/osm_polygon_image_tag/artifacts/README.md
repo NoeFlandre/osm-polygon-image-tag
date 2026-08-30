@@ -11,6 +11,8 @@ that lives inside the managed data root.
 - Public image/link Arrow schemas and Parquet validators (`public_asset_schema`).
 - Public-asset checkpoint selection, compatibility, and storage-safety policy
   (`public_asset_checkpoint`).
+- SQLite-backed polygon selection, provenance, and checkpoint persistence
+  (`public_polygon_accumulator`).
 - Deterministic metadata coordination (`reporting`) and card rendering
   (`dataset_card`).
 - A deterministic deduplicated release view (`public_dataset`) that keeps
@@ -25,6 +27,9 @@ that lives inside the managed data root.
 - The public asset materializer (`public_assets`) owns asset deduplication and
   output assembly; its schema and checkpoint dependencies remain focused in
   the modules above.
+- The public dataset materializer (`public_dataset`) owns release schemas,
+  manifest validation, reuse, and orchestration; polygon persistence remains
+  in `public_polygon_accumulator`.
 - Publication types, inventory, planning, and receipt writing
   (`publication_types`, `publication_inventory`, `publication`).
 - The dataset-card geographic density map (`geography/`): typed models,

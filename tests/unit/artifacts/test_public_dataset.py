@@ -22,13 +22,15 @@ from osm_polygon_image_tag.artifacts.public_dataset import (
     LEGACY_PUBLIC_ASSET_RELATIVE,
     PUBLIC_IMAGE_RELATIVE,
     PUBLIC_LINK_RELATIVE,
-    _advance_polygon_source_group,
-    _PolygonAccumulator,
     _public_polygon_schema_matches,
-    _remove_incompatible_polygon_checkpoint,
     _resolved_polygon_row_count,
     build_public_dataset,
     public_polygon_schema,
+)
+from osm_polygon_image_tag.artifacts.public_polygon_accumulator import (
+    _advance_polygon_source_group,
+    _PolygonAccumulator,
+    _remove_incompatible_polygon_checkpoint,
 )
 from osm_polygon_image_tag.artifacts.storage import write_geoparquet
 from osm_polygon_image_tag.assets.manifest import (

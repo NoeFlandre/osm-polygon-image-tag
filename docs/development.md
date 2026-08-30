@@ -154,6 +154,9 @@ contract.
 - Keep public-asset responsibilities focused: use `public_asset_schema` for
   Arrow contracts and validators, `public_asset_checkpoint` for checkpoint
   policy, and `public_assets` for deduplication and output assembly.
+- Use `public_polygon_accumulator` for SQLite polygon selection, provenance,
+  and checkpoint persistence; keep release validation and orchestration in
+  `public_dataset`.
 - Do not weaken coverage. The configured minimum is 90%. Add focused
   regression coverage rather than lowering the threshold.
 - When refactoring, run the focused tests first, then the full suite.

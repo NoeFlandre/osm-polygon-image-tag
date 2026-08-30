@@ -1,13 +1,27 @@
 import signal
+import threading
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
 import pytest
 
 from osm_polygon_image_tag.artifacts.publication import PublicationResult
-from osm_polygon_image_tag.artifacts.reporting import MetadataResult
+from osm_polygon_image_tag.artifacts.publication_inventory import publication_inventory
+from osm_polygon_image_tag.artifacts.reporting import MetadataResult, generate_metadata
+from osm_polygon_image_tag.artifacts.storage import write_geoparquet
 from osm_polygon_image_tag.core.config import PipelinePaths
+from osm_polygon_image_tag.core.manifest import (
+    DATASET_SCHEMA_VERSION,
+    PROCESSING_CONTRACT_VERSION,
+    Manifest,
+    OutputIdentity,
+    RunCounts,
+    SourceIdentity,
+    file_sha256,
+    write_manifest,
+)
 from osm_polygon_image_tag.ingest.discovery import PbfSource
 from osm_polygon_image_tag.runtime.enrichment import AssetJob, EnrichmentSummary
 from osm_polygon_image_tag.runtime.orchestrator import StopToken, graceful_stop_signals, run_all
@@ -444,63 +458,35 @@ def test_asset_publication_checkpoints_are_enabled_before_pbf_scan(tmp_path: Pat
     ]
 
 
-def test_checkpoint_publication_race_with_active_pbf_build(tmp_path: Path) -> None:
-    """
-    Regression test for the checkpoint/publication race.
+@dataclass(slots=True)
+class _CheckpointRaceFixture:
+    paths: PipelinePaths
+    data_root: Path
+    data_dir: Path
+    manifests_dir: Path
+    temporary_dir: Path
+    worker: FakeEnrichmentWorker
+    build: Callable[[PbfSource, PipelinePaths], BuildResult]
+    metadata: Callable[[Path], MetadataResult]
+    publish: Callable[[Path], PublicationResult]
+    data_temp: Path
+    tag_store_temp: Path
+    build_started: threading.Event
+    build_can_finish: threading.Event
+    publish_called: threading.Event
+    publish_can_proceed: threading.Event
+    callback_completed: threading.Event
+    race_observed: threading.Event
+    callback_started: threading.Barrier
 
-    The race occurs when:
-    1. Main thread is building a PBF (creates temporary files in data/ and tmp/)
-    2. The enrichment worker's periodic checkpoint callback invokes publication
-       while those temporary files still exist
-    3. publication_inventory correctly rejects the temporary files as unexpected
 
-    With the per-run refresh_lock, the periodic checkpoint callback blocks until
-    the build releases the lock. Without it, the callback runs while temp files
-    exist and publication_inventory raises.
-
-    The test models the race deterministically using threading.Event and a
-    threading.Barrier (no time.sleep, no arbitrary polling):
-    A. The fake build creates representative owned temp files and blocks.
-    B. The build signals temp files are present.
-    C. The periodic checkpoint callback is invoked from a separate thread.
-    D. A barrier synchronizes the callback's start with the test's release.
-    E. The publish spy signals when it is invoked and blocks until the test
-       allows it to call publication_inventory. This ensures the inventory
-       check runs while temp files are still present (or after the build
-       has finalized them, depending on lock presence).
-    F. With the lock, publish is never reached because the callback blocks on
-       refresh_lock; without the lock, publish runs and observes temp files.
-    G. Publication inventory must not observe the temporary files after the fix.
-    """
-    import threading
-    from pathlib import Path
-
-    from osm_polygon_image_tag.artifacts.publication import PublicationResult
-    from osm_polygon_image_tag.artifacts.publication_inventory import publication_inventory
-    from osm_polygon_image_tag.artifacts.reporting import generate_metadata
-    from osm_polygon_image_tag.artifacts.storage import write_geoparquet
-    from osm_polygon_image_tag.core.config import PipelinePaths
-    from osm_polygon_image_tag.core.manifest import (
-        DATASET_SCHEMA_VERSION,
-        PROCESSING_CONTRACT_VERSION,
-        Manifest,
-        OutputIdentity,
-        RunCounts,
-        SourceIdentity,
-        file_sha256,
-        write_manifest,
-    )
-    from osm_polygon_image_tag.ingest.discovery import PbfSource
-    from osm_polygon_image_tag.runtime.orchestrator import run_all
-    from osm_polygon_image_tag.runtime.pipeline import BuildResult
-
+def _checkpoint_race_fixture(tmp_path: Path) -> _CheckpointRaceFixture:
     source = tmp_path / "raw"
     source.mkdir()
     (source / "region.osm.pbf").write_bytes(b"source")
     data_root = tmp_path / "generated"
     paths = PipelinePaths.build(source_root=source, data_root=data_root)
 
-    # Build a minimal valid dataset so publication_inventory succeeds when clean
     data_dir = data_root / "data"
     manifests_dir = data_root / "manifests"
     temporary_dir = data_root / "tmp"
@@ -527,32 +513,21 @@ def test_checkpoint_publication_race_with_active_pbf_build(tmp_path: Path) -> No
     write_manifest(manifest, manifests_dir / "region.manifest.json")
     generate_metadata(data_root)
 
-    # Deterministic synchronization primitives (no time.sleep, no polling)
     build_started = threading.Event()
     build_can_finish = threading.Event()
     publish_called = threading.Event()
     publish_can_proceed = threading.Event()
     callback_completed = threading.Event()
     race_observed = threading.Event()
-    # Barrier: ensures the callback thread is executing before the test
-    # proceeds to observe the race or release the build.
     callback_started = threading.Barrier(2)
-
-    pipeline_exception: list[BaseException] = []
-    callback_exception: list[BaseException] = []
+    data_temp = data_dir / ".region-latest-abcdef12.parquet.xyz789.tmp"
+    tag_store_temp = temporary_dir / "tag-store-abc123.sqlite"
 
     def build(pbf: PbfSource, _paths: PipelinePaths) -> BuildResult:
-        # Create representative owned temporary files like the real PBF build
-        data_temp = data_dir / ".region-latest-abcdef12.parquet.xyz789.tmp"
-        tag_store_temp = temporary_dir / "tag-store-abc123.sqlite"
         data_temp.write_bytes(b"partial parquet write")
         tag_store_temp.write_bytes(b"active tag store")
         build_started.set()
-
-        # Block until the test releases us
         assert build_can_finish.wait(timeout=5.0), "Build timed out waiting for release"
-
-        # Finalize: remove temporary files (real build does atomic rename)
         data_temp.unlink(missing_ok=True)
         tag_store_temp.unlink(missing_ok=True)
         return BuildResult(
@@ -565,15 +540,10 @@ def test_checkpoint_publication_race_with_active_pbf_build(tmp_path: Path) -> No
         )
 
     def metadata(root: Path) -> MetadataResult:
-        # Fast no-op metadata builder so publish is reached immediately
-        # after the callback acquires the lock (or immediately without it).
         del root
         return MetadataResult(data_root / "statistics.json", data_root / "README.md")
 
     def publish(root: Path) -> PublicationResult:
-        # Signal that publish was reached and block until the test allows
-        # the inventory check. This guarantees the test can observe whether
-        # temp files are present at the moment publication_inventory runs.
         publish_called.set()
         assert publish_can_proceed.wait(timeout=5.0), (
             "publish spy timed out waiting for test to allow proceed"
@@ -587,110 +557,122 @@ def test_checkpoint_publication_race_with_active_pbf_build(tmp_path: Path) -> No
             raise
         return PublicationResult("published", "commit", len(inventory))
 
-    worker = FakeEnrichmentWorker()
+    return _CheckpointRaceFixture(
+        paths=paths,
+        data_root=data_root,
+        data_dir=data_dir,
+        manifests_dir=manifests_dir,
+        temporary_dir=temporary_dir,
+        worker=FakeEnrichmentWorker(),
+        build=build,
+        metadata=metadata,
+        publish=publish,
+        data_temp=data_temp,
+        tag_store_temp=tag_store_temp,
+        build_started=build_started,
+        build_can_finish=build_can_finish,
+        publish_called=publish_called,
+        publish_can_proceed=publish_can_proceed,
+        callback_completed=callback_completed,
+        race_observed=race_observed,
+        callback_started=callback_started,
+    )
 
-    # Run the pipeline in a separate thread so we can coordinate with it
+
+def _start_pipeline_thread(
+    fixture: _CheckpointRaceFixture,
+    pipeline_exception: list[BaseException],
+) -> threading.Thread:
     def run_pipeline() -> None:
         try:
             run_all(
-                paths,
-                build=build,
-                metadata_builder=metadata,
-                publisher=publish,
-                enrichment_worker=worker,
+                fixture.paths,
+                build=fixture.build,
+                metadata_builder=fixture.metadata,
+                publisher=fixture.publish,
+                enrichment_worker=fixture.worker,
             )
         except BaseException as exc:
             pipeline_exception.append(exc)
 
     pipeline_thread = threading.Thread(target=run_pipeline, daemon=True)
     pipeline_thread.start()
+    return pipeline_thread
+
+
+def _start_callback_thread(
+    fixture: _CheckpointRaceFixture,
+    callback_exception: list[BaseException],
+) -> threading.Thread:
+    callback = fixture.worker.periodic_callback
+    assert callback is not None, "Periodic checkpoint callback was not registered"
+
+    def invoke_callback() -> None:
+        fixture.callback_started.wait(timeout=5.0)
+        try:
+            callback()
+        except BaseException as exc:
+            callback_exception.append(exc)
+        finally:
+            fixture.callback_completed.set()
+
+    callback_thread = threading.Thread(target=invoke_callback, daemon=True)
+    callback_thread.start()
+    fixture.callback_started.wait(timeout=2.0)
+    return callback_thread
+
+
+def _assert_unserialized_publication_race(
+    fixture: _CheckpointRaceFixture,
+    callback_thread: threading.Thread,
+) -> None:
+    assert fixture.data_temp.exists(), "Temp files were removed before publish could observe them"
+    assert fixture.tag_store_temp.exists()
+    fixture.publish_can_proceed.set()
+    assert fixture.callback_completed.wait(timeout=5.0), "Callback did not complete"
+    callback_thread.join(timeout=2.0)
+    assert fixture.race_observed.is_set(), (
+        "Race not observed: publication_inventory should have rejected temp files but didn't."
+    )
+    fixture.build_can_finish.set()
+
+
+def _assert_serialized_publication(
+    fixture: _CheckpointRaceFixture,
+    callback_thread: threading.Thread,
+) -> None:
+    fixture.build_can_finish.set()
+    assert fixture.publish_called.wait(timeout=5.0), (
+        "publish was not called after build released lock"
+    )
+    assert not fixture.data_temp.exists(), "Temp files still present after build release"
+    assert not fixture.tag_store_temp.exists()
+    fixture.publish_can_proceed.set()
+    assert fixture.callback_completed.wait(timeout=5.0), (
+        "Callback did not complete after lock release"
+    )
+    callback_thread.join(timeout=2.0)
+    assert not fixture.race_observed.is_set(), (
+        "Race was observed: publication_inventory saw temp files."
+    )
+
+
+def _run_checkpoint_race(fixture: _CheckpointRaceFixture) -> None:
+    pipeline_exception: list[BaseException] = []
+    callback_exception: list[BaseException] = []
+    pipeline_thread = _start_pipeline_thread(fixture, pipeline_exception)
     try:
-        # A. Wait for the build to start and create temp files
-        assert build_started.wait(timeout=2.0), "Build did not start in time"
-
-        # Verify temp files are present (the precondition for the race)
-        assert (data_dir / ".region-latest-abcdef12.parquet.xyz789.tmp").exists()
-        assert (temporary_dir / "tag-store-abc123.sqlite").exists()
-
-        # C. Invoke the periodic checkpoint callback from a separate thread.
-        callback = worker.periodic_callback
-        assert callback is not None, "Periodic checkpoint callback was not registered"
-
-        def invoke_callback() -> None:
-            # Barrier: signal that the callback thread is executing and wait
-            # for the test thread to also reach this point. This guarantees
-            # the test proceeds only after the callback has started.
-            callback_started.wait(timeout=5.0)
-            try:
-                callback()
-            except BaseException as exc:
-                callback_exception.append(exc)
-            finally:
-                callback_completed.set()
-
-        callback_thread = threading.Thread(target=invoke_callback, daemon=True)
-        callback_thread.start()
-
-        # D. Barrier: synchronize with the callback thread so we know it is
-        # executing (either blocked on the lock or running publish).
-        callback_started.wait(timeout=2.0)
-
-        # E/F. Wait for publish to be called. If the callback is blocked on
-        # the refresh_lock (with the fix), publish is never reached and this
-        # wait times out — the callback is correctly serialized. If the lock
-        # is absent, publish runs immediately and signals here.
-        publish_reached = publish_called.wait(timeout=1.0)
-        if publish_reached:
-            # Without the lock: publish was reached while temp files exist.
-            # The callback thread is now blocked on publish_can_proceed.
-            # Verify temp files are still present, then allow publish to
-            # proceed so the inventory check observes them.
-            assert (data_dir / ".region-latest-abcdef12.parquet.xyz789.tmp").exists(), (
-                "Temp files were removed before publish could observe them"
-            )
-            assert (temporary_dir / "tag-store-abc123.sqlite").exists()
-            # Allow the inventory check to run while temp files are present
-            publish_can_proceed.set()
-            # Wait for the callback to complete (it should fail)
-            assert callback_completed.wait(timeout=5.0), "Callback did not complete"
-            callback_thread.join(timeout=2.0)
-            # The race must have been observed
-            assert race_observed.is_set(), (
-                "Race not observed: publication_inventory should have rejected "
-                "temp files but didn't."
-            )
-            # Clean up: release the build so the pipeline can finish
-            build_can_finish.set()
+        assert fixture.build_started.wait(timeout=2.0), "Build did not start in time"
+        assert fixture.data_temp.exists()
+        assert fixture.tag_store_temp.exists()
+        callback_thread = _start_callback_thread(fixture, callback_exception)
+        if fixture.publish_called.wait(timeout=1.0):
+            _assert_unserialized_publication_race(fixture, callback_thread)
         else:
-            # With the lock: the callback is blocked on refresh_lock and
-            # publish was never reached. Release the build so the lock
-            # becomes available, then wait for the callback to complete.
-            build_can_finish.set()
-            assert publish_called.wait(timeout=5.0), (
-                "publish was not called after build released lock"
-            )
-            # Now publish is blocked on publish_can_proceed. Temp files are
-            # gone (build already finalized). Allow publish to proceed.
-            assert not (data_dir / ".region-latest-abcdef12.parquet.xyz789.tmp").exists(), (
-                "Temp files still present after build release"
-            )
-            assert not (temporary_dir / "tag-store-abc123.sqlite").exists()
-            publish_can_proceed.set()
-            assert callback_completed.wait(timeout=5.0), (
-                "Callback did not complete after lock release"
-            )
-            callback_thread.join(timeout=2.0)
-            # No race should have been observed
-            assert not race_observed.is_set(), (
-                "Race was observed: publication_inventory saw temp files."
-            )
-
+            _assert_serialized_publication(fixture, callback_thread)
         assert not callback_thread.is_alive(), "Callback thread did not terminate"
-
-        # Wait for the pipeline to complete
         pipeline_thread.join(timeout=5.0)
         assert not pipeline_thread.is_alive(), "Pipeline thread did not terminate"
-
         assert not callback_exception, (
             f"Callback raised an unexpected exception: {callback_exception[0]!r}"
         )
@@ -698,8 +680,12 @@ def test_checkpoint_publication_race_with_active_pbf_build(tmp_path: Path) -> No
             f"Pipeline raised an unexpected exception: {pipeline_exception[0]!r}"
         )
     finally:
-        # Ensure all threads are cleaned up even if an assertion fails
-        build_can_finish.set()
-        publish_can_proceed.set()
+        fixture.build_can_finish.set()
+        fixture.publish_can_proceed.set()
         if pipeline_thread.is_alive():
             pipeline_thread.join(timeout=5.0)
+
+
+def test_checkpoint_publication_race_with_active_pbf_build(tmp_path: Path) -> None:
+    """The refresh lock prevents publication from observing PBF build temps."""
+    _run_checkpoint_race(_checkpoint_race_fixture(tmp_path))
