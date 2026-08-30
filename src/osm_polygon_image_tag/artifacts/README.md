@@ -33,7 +33,9 @@ that lives inside the managed data root.
 - The public dataset validation boundary (`public_dataset_validation`) owns
   release schemas, manifest/digest/row-count validation, and reuse checks.
   The public dataset materializer (`public_dataset`) owns polygon persistence,
-  source orchestration, manifest assembly, and cleanup.
+  source orchestration, reuse, and cleanup. Public result construction and
+  manifest/output serialization live in `public_dataset_output`; the
+  materializer retains compatibility imports for existing callers.
 - Publication types, inventory, planning, and receipt writing
   (`publication_types`, `publication_inventory`, `publication`).
 - The dataset-card geographic density map (`geography/`): typed models,

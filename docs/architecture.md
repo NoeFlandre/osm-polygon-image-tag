@@ -57,9 +57,10 @@ provenance iteration, and `public_assets` owns source orchestration, Parquet
 output assembly, and result construction.
 Within the public-dataset materialization boundary, `public_dataset_validation`
 owns the release schema, manifest, digest, row-count, and reuse checks, while
-`public_dataset` owns polygon materialization, source orchestration, manifest
-assembly, and cleanup. `public_polygon_accumulator` owns SQLite polygon
-selection, provenance, and checkpoint persistence.
+`public_dataset` owns polygon materialization, source orchestration, reuse, and
+cleanup. `public_dataset_output` owns the immutable result contract and
+manifest/output serialization. `public_polygon_accumulator` owns SQLite
+polygon selection, provenance, and checkpoint persistence.
 
 ## Why the layering matters
 

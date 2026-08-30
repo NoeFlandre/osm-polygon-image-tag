@@ -166,8 +166,9 @@ contract.
   and output assembly.
 - Use `public_polygon_accumulator` for SQLite polygon selection, provenance,
   and checkpoint persistence; use `public_dataset_validation` for release
-  schema, manifest, digest, row-count, and reuse checks; keep materialization
-  and orchestration in `public_dataset`.
+  schema, manifest, digest, row-count, and reuse checks; use
+  `public_dataset_output` for result construction and manifest/output
+  serialization; keep materialization and orchestration in `public_dataset`.
 - Do not weaken coverage. The configured minimum is 90%. Add focused
   regression coverage rather than lowering the threshold.
 - When refactoring, run the focused tests first, then the full suite.
