@@ -8,6 +8,7 @@ import pytest
 from shapely import to_wkb
 from shapely.geometry import Polygon
 
+import osm_polygon_image_tag.artifacts.storage as storage_module
 from osm_polygon_image_tag.artifacts.storage import (
     StorageError,
     _valid_geo_metadata,
@@ -17,6 +18,26 @@ from osm_polygon_image_tag.artifacts.storage import (
 )
 from osm_polygon_image_tag.ingest.extraction import ExportRecord
 from osm_polygon_image_tag.ingest.transform import AcceptedRow, transform_record
+
+
+def test_write_geoparquet_uses_default_batch_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "data.parquet"
+    seen: list[int] = []
+
+    def capture_write_batches(_rows: object, path: Path, *, batch_size: int) -> int:
+        seen.append(batch_size)
+        path.write_bytes(b"")
+        return 0
+
+    monkeypatch.setattr(storage_module, "_write_batches", capture_write_batches)
+    monkeypatch.setattr(storage_module, "validate_geoparquet", lambda _path: None)
+
+    result = storage_module.write_geoparquet([], output)
+
+    assert seen == [4096]
+    assert result.row_count == 0
 
 
 def _row(osm_id: int) -> dict[str, Any]:

@@ -67,20 +67,22 @@ not replace `just qa` before completion.
 
 ## Advanced test-quality checks
 
-The advanced checks focus on the two highest-risk small boundaries: asset
-catalog synchronization and Flickr size parsing. They do not process
-production PBFs or data-root files.
+The advanced checks run mutation testing over every covered production line
+under `src` using the full pytest suite. The run is capped at two workers and
+copies the repository contract files needed by tests executed from mutmut's
+isolated `mutants/` tree. It does not process production PBFs or data-root
+files.
 
 ```bash
 just mutation
 ```
 
-`just mutation` runs mutmut against those modules and their focused tests. The
-scope is explicit so mutation testing stays practical on a developer laptop;
-the configured run must leave no surviving mutants. The configuration excludes
-only known equivalent mutations: SQL keyword casing, runtime-no-op typing casts,
-and the return value of a progress fallback callback. These changes cannot
-alter behavior, so testing them would add noise rather than protection.
+`just mutation` must leave no surviving mutants. The configuration excludes only
+known equivalent mutations: SQL keyword casing, runtime-no-op typing casts, and
+the return value of a progress fallback callback. These changes cannot alter
+behavior, so testing them would add noise rather than protection. Native
+geospatial extensions remain loaded between mutmut's coverage and stats passes
+through the small runner wrapper.
 
 ```bash
 just crap

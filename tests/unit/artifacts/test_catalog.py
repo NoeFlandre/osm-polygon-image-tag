@@ -1,15 +1,18 @@
 """Catalog indexes keep metadata migration proportional to rows, not shards."""
 
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
 import osm_polygon_image_tag.artifacts.asset_catalog as asset_catalog_module
+import osm_polygon_image_tag.artifacts.catalog as catalog_module
 from osm_polygon_image_tag.artifacts.asset_catalog import (
     _observation_values,
     asset_catalog_columns,
@@ -27,7 +30,7 @@ from osm_polygon_image_tag.assets.schema import (
     ASSET_SCHEMA_VERSION,
     RESOLVER_CONTRACT_VERSION,
 )
-from osm_polygon_image_tag.core.manifest import OutputIdentity, file_sha256
+from osm_polygon_image_tag.core.manifest import Manifest, OutputIdentity, file_sha256
 
 
 def test_catalog_indexes_shard_cleanup_columns(tmp_path: Path) -> None:
@@ -50,6 +53,30 @@ def test_catalog_path_can_be_isolated_for_public_views(tmp_path: Path) -> None:
 
     assert sync_catalog(tmp_path, manifests=[], catalog_path=custom) == custom
     assert custom.is_file()
+
+
+def test_polygon_catalog_uses_default_batch_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, output = _asset_manifest(tmp_path, [_asset_row(1)], "region")
+    seen: list[int] = []
+
+    def capture_sync(
+        _connection: sqlite3.Connection,
+        _selected: Sequence[tuple[object, Path]],
+        *,
+        existing: dict[str, str],
+        batch_size: int,
+        emit: object,
+    ) -> tuple[int, int, int]:
+        del existing, emit
+        seen.append(batch_size)
+        return 0, 0, 0
+
+    monkeypatch.setattr(catalog_module, "_sync_catalog_shards", capture_sync)
+    sync_catalog(tmp_path, manifests=[(cast(Manifest, manifest), output)])
+
+    assert seen == [8192]
 
 
 def test_catalog_projection_and_row_conversion_are_stable() -> None:

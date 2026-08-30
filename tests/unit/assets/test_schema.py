@@ -45,6 +45,24 @@ def test_asset_schema_matches_the_public_contract() -> None:
     assert schema.field("asset_index").nullable is False
     assert schema.field("image_url_expires_at").type == pa.timestamp("ms", tz="UTC")
     assert schema.field("retry_after").type == pa.timestamp("ms", tz="UTC")
+    required_names = {
+        "source_pbf",
+        "source_polygon_shard",
+        "osm_type",
+        "osm_id",
+        "provider",
+        "source_tag_key",
+        "source_tag_value",
+        "canonical_reference",
+        "asset_index",
+        "relation_kind",
+        "status",
+        "category_truncated",
+        "resolver_contract_version",
+    }
+    assert {
+        field.name: field.nullable for field in schema if field.name in required_names
+    } == dict.fromkeys(required_names, False)
     assert schema.metadata[b"osm_polygon_image_asset_schema_version"] == b"1"
     assert b"geo" not in schema.metadata
 

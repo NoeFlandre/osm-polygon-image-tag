@@ -37,7 +37,7 @@ docs:
     uv run mkdocs build --strict --site-dir site
 
 mutation:
-    uv run mutmut run --max-children 2
+    uv run python scripts/run_mutmut.py run --max-children 2
     uv run mutmut results --all=true | tee /tmp/osm-polygon-image-tag-mutmut.txt
     awk 'NF && $NF != "killed" { print; failed=1 } END { exit failed }' /tmp/osm-polygon-image-tag-mutmut.txt
 

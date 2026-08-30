@@ -4,11 +4,54 @@ from pathlib import Path
 import pyarrow.parquet as pq
 import pytest
 
+import osm_polygon_image_tag.assets.storage as storage_module
 from osm_polygon_image_tag.assets.storage import (
     AssetStorageError,
+    AssetWriteResult,
+    AtomicAssetWriter,
     validate_asset_parquet,
     write_asset_parquet,
 )
+
+
+def test_atomic_asset_writer_uses_default_batch_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(pq, "ParquetWriter", lambda *_args, **_kwargs: object())
+
+    writer = AtomicAssetWriter(tmp_path / "asset.parquet")
+    try:
+        assert writer._batch_size == 4096
+    finally:
+        writer._temporary_file.close()
+
+
+def test_write_asset_parquet_uses_default_batch_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[int] = []
+
+    class FakeWriter:
+        result = AssetWriteResult(row_count=0, size_bytes=0)
+
+        def __init__(self, _path: Path, *, batch_size: int) -> None:
+            seen.append(batch_size)
+
+        def __enter__(self) -> "FakeWriter":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def write(self, _rows: object) -> None:
+            return None
+
+    monkeypatch.setattr(storage_module, "AtomicAssetWriter", FakeWriter)
+
+    result = storage_module.write_asset_parquet([], tmp_path / "asset.parquet")
+
+    assert seen == [4096]
+    assert result == FakeWriter.result
 
 
 def asset_row(index: int) -> dict[str, object]:

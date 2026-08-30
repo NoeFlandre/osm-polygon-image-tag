@@ -68,5 +68,29 @@ def test_mutation_recipe_requires_every_mutant_to_be_killed() -> None:
     justfile = Path("Justfile").read_text(encoding="utf-8")
     mutation_body = justfile.split("\nmutation:\n", maxsplit=1)[1].split("\n\n", maxsplit=1)[0]
 
+    assert "uv run python scripts/run_mutmut.py run --max-children 2" in mutation_body
     assert "mutmut results --all=true" in mutation_body
     assert '$NF != "killed"' in mutation_body
+    assert Path("scripts/run_mutmut.py").is_file()
+
+
+def test_mutation_configuration_covers_all_covered_source() -> None:
+    pyproject = loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    mutation = pyproject["tool"]["mutmut"]
+
+    assert mutation["source_paths"] == ["src"]
+    assert mutation["mutate_only_covered_lines"] is True
+    assert "only_mutate" not in mutation
+    assert "pytest_add_cli_args_test_selection" not in mutation
+    assert set(mutation["also_copy"]) >= {
+        ".github",
+        ".pre-commit-config.yaml",
+        ".dockerignore",
+        "CONTRIBUTING.md",
+        "Dockerfile",
+        "Justfile",
+        "README.md",
+        "citation.cff",
+        "mkdocs.yml",
+        "scripts",
+    }

@@ -6,6 +6,32 @@ from osm_polygon_image_tag.core import atomic
 from osm_polygon_image_tag.core.atomic import atomic_write_bytes
 
 
+def test_temporary_path_uses_stable_default_name_parts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeTemporary:
+        name = str(tmp_path / "tmp-random")
+
+        def __enter__(self) -> "FakeTemporary":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    def fake_named_temporary_file(**kwargs: object) -> FakeTemporary:
+        calls.append(kwargs)
+        return FakeTemporary()
+
+    monkeypatch.setattr(atomic.tempfile, "NamedTemporaryFile", fake_named_temporary_file)
+
+    owner = atomic.TemporaryPath(tmp_path)
+    owner.close()
+
+    assert calls == [{"prefix": "tmp", "suffix": "", "dir": tmp_path, "delete": False}]
+
+
 def test_atomic_write_bytes_creates_parent_and_replaces_destination(tmp_path: Path) -> None:
     path = tmp_path / "nested" / "artifact.json"
 
@@ -53,6 +79,55 @@ def test_promote_temporary_file_replaces_destination_and_removes_source(tmp_path
 
     assert destination.read_bytes() == b"payload"
     assert not temporary.exists()
+
+
+def test_promote_temporary_file_does_not_sync_directory_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    temporary = tmp_path / ".artifact.tmp"
+    destination = tmp_path / "artifact.json"
+    temporary.write_bytes(b"payload")
+    calls: list[Path] = []
+    monkeypatch.setattr(atomic, "_sync_directory", calls.append)
+
+    atomic.promote_temporary_file(temporary, destination)
+
+    assert destination.read_bytes() == b"payload"
+    assert calls == []
+
+
+def test_atomic_write_bytes_uses_stable_default_temporary_options(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "artifact.json"
+    temporary = tmp_path / "fake-temp"
+    options: dict[str, object] = {}
+
+    class FakeTemporaryContext:
+        def __enter__(self) -> Path:
+            return temporary
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    def fake_temporary_file_path(
+        _directory: Path, *, prefix: str, suffix: str
+    ) -> FakeTemporaryContext:
+        options.update(prefix=prefix, suffix=suffix)
+        return FakeTemporaryContext()
+
+    def fake_promote(temporary_path: Path, final_path: Path, *, sync_directory: bool) -> None:
+        options["sync_directory"] = sync_directory
+        final_path.write_bytes(temporary_path.read_bytes())
+        temporary_path.unlink()
+
+    monkeypatch.setattr(atomic, "temporary_file_path", fake_temporary_file_path)
+    monkeypatch.setattr(atomic, "promote_temporary_file", fake_promote)
+
+    atomic_write_bytes(path, b"payload")
+
+    assert path.read_bytes() == b"payload"
+    assert options == {"prefix": "tmp", "suffix": "", "sync_directory": False}
 
 
 def test_promote_temporary_file_cleans_source_when_replace_fails(

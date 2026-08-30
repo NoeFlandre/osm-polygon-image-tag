@@ -1,8 +1,11 @@
+import io
+import os
 import sys
 from pathlib import Path
 
 import pytest
 
+import osm_polygon_image_tag.ingest.osmium as osmium_module
 from osm_polygon_image_tag.ingest.extraction import (
     STDERR_CAP_BYTES,
     OsmiumExportError,
@@ -12,6 +15,84 @@ from osm_polygon_image_tag.ingest.extraction import (
 
 RECORD_1 = b"0103\tway\t1\t1\t1\t2026-01-01T00:00:00Z\t{}\n"
 RECORD_2 = b"0103\trelation\t2\t1\t1\t2026-01-01T00:00:00Z\t{}\n"
+
+
+def test_osmium_defaults_to_the_osmium_path_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    program = tmp_path / "osmium"
+    program.write_text(
+        "\n".join(
+            [
+                f"#!{sys.executable}",
+                "import sys",
+                "if len(sys.argv) > 1 and sys.argv[1] == '--version':",
+                "    sys.stdout.buffer.write(b'osmium version 1.19.1\\n')",
+                "else:",
+                f"    sys.stdout.buffer.write({RECORD_1!r})",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    program.chmod(0o755)
+    monkeypatch.setenv("PATH", os.pathsep.join((str(tmp_path), os.environ.get("PATH", ""))))
+
+    records = list(stream_export(Path("input.osm.pbf"), Path("policy.json")))
+
+    assert [(record.osm_type, record.osm_id) for record in records] == [("way", 1)]
+    assert osmium_version() == "osmium version 1.19.1"
+
+
+def test_default_osmium_command_name_is_lowercase(monkeypatch: pytest.MonkeyPatch) -> None:
+    popen_commands: list[tuple[str, ...]] = []
+    version_commands: list[list[str]] = []
+
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.stdout = io.BytesIO()
+            self.stderr = io.BytesIO()
+
+        def poll(self) -> int:
+            return 0
+
+        def wait(self, timeout: float | None = None) -> int:
+            del timeout
+            return 0
+
+        def terminate(self) -> None:
+            return None
+
+        def kill(self) -> None:
+            return None
+
+    def fake_popen(command: tuple[str, ...], **_kwargs: object) -> FakeProcess:
+        popen_commands.append(command)
+        return FakeProcess()
+
+    def fake_run(command: list[str], **_kwargs: object) -> object:
+        version_commands.append(command)
+        return osmium_module.subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=b"osmium version 1.19.1\n",
+            stderr=b"",
+        )
+
+    monkeypatch.setattr(osmium_module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(osmium_module.subprocess, "run", fake_run)
+
+    list(stream_export(Path("input.osm.pbf"), Path("policy.json")))
+    assert osmium_version() == "osmium version 1.19.1"
+
+    assert popen_commands[0][0] == "osmium"
+    assert version_commands == [["osmium", "--version"]]
+
+
+def test_osmium_export_error_defaults_to_empty_stderr() -> None:
+    error = OsmiumExportError("export failed")
+
+    assert error.stderr == b""
 
 
 def _fake_osmium(

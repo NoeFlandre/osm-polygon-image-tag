@@ -17,8 +17,9 @@ def test_resolve_managed_output_returns_existing_path_inside_root(tmp_path: Path
 def test_resolve_managed_output_rejects_paths_outside_root(
     tmp_path: Path, relative_path: str
 ) -> None:
-    with pytest.raises(ValueError, match="escapes data root"):
+    with pytest.raises(ValueError) as captured:
         resolve_managed_output(tmp_path, relative_path)
+    assert str(captured.value) == f"managed output escapes data root: {relative_path}"
 
 
 def test_resolve_managed_output_rejects_symlinked_file(tmp_path: Path) -> None:
@@ -28,8 +29,9 @@ def test_resolve_managed_output_rejects_symlinked_file(tmp_path: Path) -> None:
     linked.parent.mkdir()
     linked.symlink_to(target)
 
-    with pytest.raises(ValueError, match="symlink"):
+    with pytest.raises(ValueError) as captured:
         resolve_managed_output(tmp_path, "data/region.parquet")
+    assert str(captured.value) == "managed output is a symlink: data/region.parquet"
 
 
 def test_resolve_managed_output_rejects_symlinked_parent(tmp_path: Path) -> None:

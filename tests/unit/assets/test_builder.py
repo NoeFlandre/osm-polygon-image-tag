@@ -10,6 +10,7 @@ import pytest
 from shapely import to_wkb
 from shapely.geometry import Polygon
 
+import osm_polygon_image_tag.assets.build_state as build_state_module
 from osm_polygon_image_tag.artifacts.storage import write_geoparquet
 from osm_polygon_image_tag.assets.builder import build_asset_shard
 from osm_polygon_image_tag.assets.cache import (
@@ -201,7 +202,9 @@ async def test_builder_prunes_progress_count_to_reference_columns(
     assert seen_columns[:2] == [REFERENCE_COLUMNS, POLYGON_COLUMNS]
 
 
-def test_count_polygon_references_matches_normalized_asset_references(tmp_path: Path) -> None:
+def test_count_polygon_references_matches_normalized_asset_references(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _manifest, polygon_path, _data_root = polygon_fixture(
         tmp_path,
         tags={
@@ -211,7 +214,39 @@ def test_count_polygon_references_matches_normalized_asset_references(tmp_path: 
         },
     )
 
+    original_iter_batches = pq.ParquetFile.iter_batches
+    seen_batch_sizes: list[object] = []
+
+    def capture_iter_batches(parquet: pq.ParquetFile, *args: object, **kwargs: object) -> object:
+        seen_batch_sizes.append(kwargs.get("batch_size"))
+        return original_iter_batches(parquet, *args, **kwargs)
+
+    monkeypatch.setattr(pq.ParquetFile, "iter_batches", capture_iter_batches)
+
     assert count_polygon_references(polygon_path) == 3
+    assert seen_batch_sizes == [4096]
+
+
+def test_needs_refresh_does_not_check_retry_after_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    requested_columns: list[object] = []
+
+    class FakeParquetFile:
+        def __init__(self, _path: Path) -> None:
+            return None
+
+        def iter_batches(self, **kwargs: object) -> object:
+            requested_columns.append(kwargs["columns"])
+            return iter(())
+
+    monkeypatch.setattr(build_state_module.pq, "ParquetFile", FakeParquetFile)
+
+    assert (
+        build_state_module._needs_refresh(tmp_path / "assets.parquet", lambda _provider: "public")
+        is False
+    )
+    assert requested_columns == [["provider", "status", "image_url_expires_at"]]
 
 
 @pytest.mark.asyncio

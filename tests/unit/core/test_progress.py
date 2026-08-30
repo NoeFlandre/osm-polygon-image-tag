@@ -3,6 +3,12 @@ import time
 from osm_polygon_image_tag.core.progress import ProgressReporter
 
 
+def test_reporter_uses_default_heartbeat_interval() -> None:
+    reporter = ProgressReporter(lambda _event: None)
+
+    assert reporter._heartbeat_seconds == 30.0
+
+
 def test_reporter_emits_heartbeat_with_last_stage() -> None:
     events: list[dict[str, object]] = []
 

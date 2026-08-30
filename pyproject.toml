@@ -107,16 +107,21 @@ show_missing = true
 
 [tool.mutmut]
 source_paths = ["src"]
-only_mutate = [
-    "src/osm_polygon_image_tag/artifacts/asset_catalog.py",
-    "src/osm_polygon_image_tag/resolvers/flickr.py",
+also_copy = [
+    ".github",
+    ".pre-commit-config.yaml",
+    ".dockerignore",
+    "CONTRIBUTING.md",
+    "Dockerfile",
+    "Justfile",
+    "README.md",
+    "citation.cff",
+    "mkdocs.yml",
+    "scripts",
 ]
 pytest_add_cli_args = ["--no-cov"]
-pytest_add_cli_args_test_selection = [
-    "tests/unit/artifacts/test_catalog.py",
-    "tests/unit/resolvers/test_flickr.py",
-]
 mutate_only_covered_lines = true
+on_dependency_change = "rerun"
 do_not_mutate_patterns = [
     "CREATE TABLE IF NOT EXISTS",
     "CREATE INDEX IF NOT EXISTS",

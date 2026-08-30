@@ -821,9 +821,11 @@ def test_asset_dedup_reader_skips_unused_source_shard_column(
     write_asset_parquet([_asset_row("region.osm.pbf")], output)
     original_iter_batches = pq.ParquetFile.iter_batches
     requested_columns: list[object] = []
+    requested_batch_sizes: list[object] = []
 
     def capture_iter_batches(parquet: pq.ParquetFile, *args: object, **kwargs: object) -> object:
         requested_columns.append(kwargs.get("columns"))
+        requested_batch_sizes.append(kwargs.get("batch_size"))
         return original_iter_batches(parquet, *args, **kwargs)
 
     monkeypatch.setattr(pq.ParquetFile, "iter_batches", capture_iter_batches)
@@ -839,6 +841,43 @@ def test_asset_dedup_reader_skips_unused_source_shard_column(
             if name != "source_polygon_shard"
         )
     ]
+    assert requested_batch_sizes == [8192]
+
+
+def test_public_polygon_source_reader_uses_default_batch_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "source.parquet"
+    pq.write_table(pa.table({"value": [1]}), output)
+    original_iter_batches = public_dataset_module.pq.ParquetFile.iter_batches
+    calls: list[dict[str, object]] = []
+
+    def capture_iter_batches(parquet: pq.ParquetFile, *args: object, **kwargs: object) -> object:
+        calls.append(kwargs)
+        return original_iter_batches(parquet, *args, **kwargs)
+
+    monkeypatch.setattr(public_dataset_module.pq.ParquetFile, "iter_batches", capture_iter_batches)
+
+    assert list(public_dataset_module._iter_source_batches(output)) == [[{"value": 1}]]
+    assert calls == [{"batch_size": 8192}]
+
+
+def test_public_polygon_writer_uses_default_batch_size(tmp_path: Path) -> None:
+    output = tmp_path / "public.parquet"
+    row = {**_polygon_row("region.osm.pbf"), "source_pbfs": ["region.osm.pbf"]}
+    tags = row["tags"]
+    assert isinstance(tags, dict)
+    row["tags"] = [{"key": key, "value": value} for key, value in tags.items()]
+    row["panoramax_values"] = []
+
+    count = public_dataset_module._write_polygon_rows(
+        (row.copy() for _ in range(8192)),
+        output,
+    )
+
+    parquet = pq.ParquetFile(output)
+    assert count == 8192
+    assert [parquet.metadata.row_group(index).num_rows for index in range(2)] == [4096, 4096]
 
 
 def test_canonical_json_serializes_nested_binary_and_timestamps() -> None:
@@ -1119,3 +1158,14 @@ def test_public_dataset_keeps_latest_object_and_unique_images_with_links(tmp_pat
         "category_membership": 1,
         "direct_reference": 1,
     }
+
+    default_statistics = public_asset_statistics(
+        result.image_path,
+        result.link_path,
+        verified_asset_manifests(tmp_path),
+    )
+    assert default_statistics["duplicate_assets"] == 0
+    assert default_statistics["duplicate_assets_removed"] == 0
+    assert default_statistics["duplicate_images_removed"] == 0
+    assert default_statistics["duplicate_links_removed"] == 0
+    assert default_statistics["orphan_rows"] == 0
