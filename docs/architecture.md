@@ -51,9 +51,10 @@ provider SDK failures into project errors.
 Within the public-asset materialization boundary, `public_asset_schema` owns
 the public image/link Arrow contracts and validators, `public_asset_checkpoint`
 owns checkpoint selection, safety, limits, and compatibility,
-`public_asset_accumulator` owns asset-row transformation, bounded SQLite
-deduplication, and provenance iteration, and `public_assets` owns source
-orchestration, Parquet output assembly, and result construction.
+`public_asset_rows` owns asset-row transformation and bounded-batch
+deduplication, `public_asset_accumulator` owns SQLite persistence and
+provenance iteration, and `public_assets` owns source orchestration, Parquet
+output assembly, and result construction.
 Within the public-dataset materialization boundary, `public_dataset_validation`
 owns the release schema, manifest, digest, row-count, and reuse checks, while
 `public_dataset` owns polygon materialization, source orchestration, manifest
@@ -68,9 +69,9 @@ selection, provenance, and checkpoint persistence.
 - Focused public-asset modules keep persisted contracts and checkpoint policy
   independently testable without coupling them to the SQLite deduplication
   loop.
-- The public asset accumulator is independently testable from checkpoint-path
-  policy and Parquet release assembly, so bounded persistence and provenance
-  behavior have one clear owner.
+- Public asset row transformation is independently testable from SQLite
+  persistence, checkpoint-path policy, and Parquet release assembly, so each
+  bounded processing concern has one clear owner.
 - The polygon accumulator is independently testable from release validation
   and manifest reuse, so persisted selection behavior has one clear owner.
 - Public-dataset validation is independently testable from materialization, so

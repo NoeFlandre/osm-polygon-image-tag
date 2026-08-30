@@ -24,11 +24,12 @@ that lives inside the managed data root.
   it commits each asset shard separately and resumes unfinished shards. Both
   checkpoints are removed only after their public outputs and manifest are
   written successfully.
-- The public asset accumulator (`public_asset_accumulator`) owns asset-row
-  transformation, bounded SQLite deduplication, and provenance iteration.
-  The public asset materializer (`public_assets`) owns checkpoint selection,
-  source orchestration, and output assembly; its schema and checkpoint
-  dependencies remain focused in the modules above.
+- The public asset row module (`public_asset_rows`) owns deterministic
+  columnar/mapping transformation and bounded-batch deduplication. The public
+  asset accumulator (`public_asset_accumulator`) owns SQLite persistence and
+  provenance iteration. The public asset materializer (`public_assets`) owns
+  checkpoint selection, source orchestration, and output assembly; its schema
+  and checkpoint dependencies remain focused in the modules above.
 - The public dataset validation boundary (`public_dataset_validation`) owns
   release schemas, manifest/digest/row-count validation, and reuse checks.
   The public dataset materializer (`public_dataset`) owns polygon persistence,

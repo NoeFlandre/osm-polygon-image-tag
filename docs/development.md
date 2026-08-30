@@ -153,9 +153,10 @@ contract.
   flows downward; no upward imports are allowed.
 - Keep public-asset responsibilities focused: use `public_asset_schema` for
   Arrow contracts and validators, `public_asset_checkpoint` for checkpoint
-  policy, `public_asset_accumulator` for bounded SQLite transformation and
-  provenance, and `public_assets` for source orchestration and output
-  assembly.
+  policy, `public_asset_rows` for deterministic row transformation and
+  bounded-batch deduplication, `public_asset_accumulator` for SQLite
+  persistence and provenance, and `public_assets` for source orchestration
+  and output assembly.
 - Use `public_polygon_accumulator` for SQLite polygon selection, provenance,
   and checkpoint persistence; use `public_dataset_validation` for release
   schema, manifest, digest, row-count, and reuse checks; keep materialization
