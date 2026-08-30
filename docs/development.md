@@ -151,6 +151,9 @@ contract.
   minimum change to make it pass.
 - Respect the layering rules in `architecture.md`. The dependency arrow
   flows downward; no upward imports are allowed.
+- Keep public-asset responsibilities focused: use `public_asset_schema` for
+  Arrow contracts and validators, `public_asset_checkpoint` for checkpoint
+  policy, and `public_assets` for deduplication and output assembly.
 - Do not weaken coverage. The configured minimum is 90%. Add focused
   regression coverage rather than lowering the threshold.
 - When refactoring, run the focused tests first, then the full suite.

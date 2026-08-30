@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-import osm_polygon_image_tag.artifacts.public_assets as public_assets
+import osm_polygon_image_tag.artifacts.public_asset_checkpoint as checkpoint_module
 from osm_polygon_image_tag.artifacts.public_assets import (
     PUBLIC_ASSET_CHECKPOINT_FILENAME,
     PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE,
@@ -60,7 +60,7 @@ def test_checkpoint_seeds_external_copy_from_durable_checkpoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        public_assets.shutil,
+        checkpoint_module.shutil,
         "disk_usage",
         lambda _path: type("Usage", (), {"free": 20 * 1024**3})(),
     )
@@ -115,7 +115,7 @@ def test_checkpoint_seed_calls_storage_limit_guard(
     seen: list[tuple[Path, int]] = []
 
     monkeypatch.setattr(
-        public_assets,
+        checkpoint_module,
         "_checkpoint_max_bytes",
         lambda path, *, initial_bytes: seen.append((path, initial_bytes)) or 123,
     )

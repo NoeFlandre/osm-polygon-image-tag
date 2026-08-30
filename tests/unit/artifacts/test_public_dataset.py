@@ -13,6 +13,7 @@ import pytest
 from shapely import to_wkb
 from shapely.geometry import Polygon
 
+import osm_polygon_image_tag.artifacts.public_asset_checkpoint as checkpoint_module
 import osm_polygon_image_tag.artifacts.public_assets as public_assets_module
 import osm_polygon_image_tag.artifacts.public_dataset as public_dataset_module
 from osm_polygon_image_tag.artifacts.asset_inventory import verified_asset_manifests
@@ -392,7 +393,7 @@ def test_public_dataset_resumes_with_external_asset_checkpoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        public_assets_module.shutil,
+        checkpoint_module.shutil,
         "disk_usage",
         lambda _path: type("Usage", (), {"free": 20 * 1024**3})(),
     )
@@ -459,7 +460,7 @@ def test_external_asset_checkpoint_is_seeded_from_durable_checkpoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        public_assets_module.shutil,
+        checkpoint_module.shutil,
         "disk_usage",
         lambda _path: type("Usage", (), {"free": 20 * 1024**3})(),
     )
@@ -735,7 +736,7 @@ def test_external_asset_checkpoint_has_a_conservative_storage_limit(
 ) -> None:
     gibibyte = 1024**3
     monkeypatch.setattr(
-        public_assets_module.shutil,
+        checkpoint_module.shutil,
         "disk_usage",
         lambda _path: type("Usage", (), {"free": 20 * gibibyte})(),
     )
@@ -751,7 +752,7 @@ def test_external_asset_limit_allows_existing_checkpoint_growth(
 ) -> None:
     gibibyte = 1024**3
     monkeypatch.setattr(
-        public_assets_module.shutil,
+        checkpoint_module.shutil,
         "disk_usage",
         lambda _path: type("Usage", (), {"free": 20 * gibibyte})(),
     )

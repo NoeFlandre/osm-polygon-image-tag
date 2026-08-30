@@ -8,6 +8,9 @@ that lives inside the managed data root.
 - Atomic GeoParquet shard writing and validation (`storage`).
 - Finalized-manifest discovery (`manifest_inventory`).
 - Rebuildable polygon and asset catalogs and factual aggregate queries.
+- Public image/link Arrow schemas and Parquet validators (`public_asset_schema`).
+- Public-asset checkpoint selection, compatibility, and storage-safety policy
+  (`public_asset_checkpoint`).
 - Deterministic metadata coordination (`reporting`) and card rendering
   (`dataset_card`).
 - A deterministic deduplicated release view (`public_dataset`) that keeps
@@ -19,6 +22,9 @@ that lives inside the managed data root.
   it commits each asset shard separately and resumes unfinished shards. Both
   checkpoints are removed only after their public outputs and manifest are
   written successfully.
+- The public asset materializer (`public_assets`) owns asset deduplication and
+  output assembly; its schema and checkpoint dependencies remain focused in
+  the modules above.
 - Publication types, inventory, planning, and receipt writing
   (`publication_types`, `publication_inventory`, `publication`).
 - The dataset-card geographic density map (`geography/`): typed models,

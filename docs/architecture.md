@@ -48,11 +48,20 @@ No layer may import upward. Provider-neutral publication types live in
 `artifacts`; the Hugging Face adapter implements that boundary and translates
 provider SDK failures into project errors.
 
+Within the public-asset materialization boundary, `public_asset_schema` owns
+the public image/link Arrow contracts and validators, `public_asset_checkpoint`
+owns checkpoint selection, safety, limits, and compatibility, and
+`public_assets` owns deduplication and output assembly. `public_dataset` uses
+the schema contracts directly when validating the final release.
+
 ## Why the layering matters
 
 - The PBF source tree is treated as immutable input; only `ingest` reads it.
 - The managed data root is the only place any artifact is written; only
   `artifacts` and `runtime` write to it.
+- Focused public-asset modules keep persisted contracts and checkpoint policy
+  independently testable without coupling them to the SQLite deduplication
+  loop.
 - Asset schema/resolver contracts are versioned independently from polygon
   extraction. Historical enrichment consumes finalized Parquet and never
   invalidates schema-v2 polygon shards.

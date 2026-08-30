@@ -17,12 +17,16 @@ import pyarrow.parquet as pq
 from osm_polygon_image_tag.artifacts.asset_inventory import verified_asset_manifests
 from osm_polygon_image_tag.artifacts.checkpoints import remove_checkpoint_files
 from osm_polygon_image_tag.artifacts.manifest_inventory import verified_manifests
-from osm_polygon_image_tag.artifacts.public_assets import (
+from osm_polygon_image_tag.artifacts.public_asset_checkpoint import (
     PUBLIC_ASSET_DEDUP_CHECKPOINT_RELATIVE,
-    PublicAssetsResult,
-    build_public_asset_tables,
+)
+from osm_polygon_image_tag.artifacts.public_asset_schema import (
     validate_public_image_parquet,
     validate_public_link_parquet,
+)
+from osm_polygon_image_tag.artifacts.public_assets import (
+    PublicAssetsResult,
+    build_public_asset_tables,
 )
 from osm_polygon_image_tag.core.atomic import (
     atomic_write_bytes,
