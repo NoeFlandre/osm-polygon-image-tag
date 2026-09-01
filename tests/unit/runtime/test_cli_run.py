@@ -5,11 +5,37 @@ import pytest
 from _pytest.capture import CaptureFixture
 from pytest import MonkeyPatch
 
+import osm_polygon_image_tag.core.config as config
 from osm_polygon_image_tag.artifacts.publication import EXPECTED_REPO, PublicationResult
 from osm_polygon_image_tag.artifacts.reporting import MetadataResult
 from osm_polygon_image_tag.cli import _emit_progress, _run_with_signals, run
 from osm_polygon_image_tag.core.config import PipelinePaths
 from osm_polygon_image_tag.runtime.orchestrator import RunSummary, VerifySummary
+
+
+def test_run_command_defaults_data_root_to_external_project_root(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    source = tmp_path / "raw"
+    source.mkdir()
+    preferred = tmp_path / "external" / "osm-polygon-image-tag"
+    preferred.parent.mkdir()
+    monkeypatch.setattr(config, "DEFAULT_DATA_ROOT", preferred)
+    monkeypatch.delenv(config.DATA_ROOT_ENVIRONMENT_VARIABLE, raising=False)
+    expected = RunSummary(processed=0, built=0, skipped=0, accepted_rows=0, stopped=False)
+    captured: dict[str, Path] = {}
+
+    def execute(paths: PipelinePaths) -> RunSummary:
+        captured["data_root"] = paths.data_root
+        return expected
+
+    exit_code = run(
+        ["run", "--source-root", str(source)],
+        execute_run=execute,
+    )
+
+    assert exit_code == 0
+    assert captured == {"data_root": preferred}
 
 
 def test_run_command_emits_canonical_local_summary(

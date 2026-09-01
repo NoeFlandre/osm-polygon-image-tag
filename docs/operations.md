@@ -20,19 +20,21 @@ for complete build and run commands. Mount the whole data root rather than
 individual subdirectories so SQLite databases, atomic renames, checkpoints,
 and resumable artifacts remain on one filesystem.
 
-## Real-world path examples (not portable defaults)
+## Real-world path examples
 
-These are the paths used by the live production pipeline on this machine.
-They are concrete examples, not portable defaults. Substitute your own
-paths when running locally.
+These are the paths used by the live production pipeline on this machine. The
+CLI selects the managed data root automatically when this external volume is
+mounted; substitute your own paths on other machines.
 
 - Read-only PBF source root:
   `/Volumes/Seagate M3/projects/osm-polygon-wikidata-only/raw`
 - Managed data root:
   `/Volumes/Seagate M3/projects/osm-polygon-image-tag`
 
-When you are not running against the live production data, prefer small
-throwaway paths under your home directory.
+When you are not running against the live production data, pass a separate
+throwaway data root explicitly. Set
+`OSM_POLYGON_IMAGE_TAG_DATA_ROOT` for a different durable location; the CLI
+never falls back to a repository-local data directory.
 
 ## Managed data-root layout
 

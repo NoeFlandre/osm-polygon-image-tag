@@ -37,7 +37,7 @@ def test_help_lists_exactly_the_public_commands(capsys: CaptureFixture[str]) -> 
         ("run-and-publish", True),
     ],
 )
-def test_command_help_preserves_required_option_names(
+def test_command_help_preserves_option_names(
     command: str,
     requires_confirmation: bool,
     capsys: CaptureFixture[str],
@@ -49,6 +49,7 @@ def test_command_help_preserves_required_option_names(
     help_text = capsys.readouterr().out
     assert "--source-root" in help_text
     assert "--data-root" in help_text
+    assert "OSM_POLYGON_IMAGE_TAG_DATA_ROOT" in help_text
     assert ("--confirm-repo" in help_text) is requires_confirmation
     assert "--log-format" in help_text
 

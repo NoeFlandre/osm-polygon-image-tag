@@ -1,7 +1,29 @@
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 from osm_polygon_image_tag.core.errors import ConfigurationError
+
+DATA_ROOT_ENVIRONMENT_VARIABLE = "OSM_POLYGON_IMAGE_TAG_DATA_ROOT"
+DEFAULT_DATA_ROOT = Path("/Volumes/Seagate M3/projects/osm-polygon-image-tag")
+
+
+def resolve_data_root(data_root: Path | None) -> Path:
+    """Resolve an explicit root or the mounted external project root."""
+    if data_root is not None:
+        return data_root
+
+    configured = os.environ.get(DATA_ROOT_ENVIRONMENT_VARIABLE)
+    if configured:
+        return Path(configured).expanduser()
+
+    if DEFAULT_DATA_ROOT.parent.is_dir():
+        return DEFAULT_DATA_ROOT
+
+    raise ConfigurationError(
+        f"--data-root is required when external storage is unavailable; "
+        f"pass --data-root or set {DATA_ROOT_ENVIRONMENT_VARIABLE}"
+    )
 
 
 def _overlaps(left: Path, right: Path) -> bool:

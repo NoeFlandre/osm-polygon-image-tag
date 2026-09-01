@@ -6,6 +6,12 @@ from typing import Annotated, Protocol, runtime_checkable
 
 import typer
 
+from osm_polygon_image_tag.core.config import (
+    DATA_ROOT_ENVIRONMENT_VARIABLE,
+    DEFAULT_DATA_ROOT,
+    resolve_data_root,
+)
+
 
 class LogFormat(str, Enum):
     AUTO = "auto"
@@ -33,7 +39,7 @@ def _dispatch(
     context: typer.Context,
     command: str,
     source_root: Path,
-    data_root: Path,
+    data_root: Path | None,
     log_format: LogFormat,
     confirmation: str | None = None,
     asset_checkpoint_root: Path | None = None,
@@ -44,18 +50,25 @@ def _dispatch(
     runtime.dispatch(
         command,
         source_root,
-        data_root,
+        resolve_data_root(data_root),
         confirmation,
         log_format.value,
         asset_checkpoint_root,
     )
 
 
+_DATA_ROOT_HELP = (
+    "Writable directory for resumable shards, caches, metadata, and receipts. "
+    f"Defaults to {DEFAULT_DATA_ROOT} when its external volume is mounted; "
+    f"override with {DATA_ROOT_ENVIRONMENT_VARIABLE} or --data-root."
+)
+
+
 @app.command()
 def preflight(
     context: typer.Context,
     source_root: Annotated[Path, typer.Option("--source-root")],
-    data_root: Annotated[Path, typer.Option("--data-root")],
+    data_root: Annotated[Path | None, typer.Option("--data-root", help=_DATA_ROOT_HELP)] = None,
     log_format: Annotated[LogFormat, typer.Option("--log-format")] = LogFormat.AUTO,
 ) -> None:
     _dispatch(context, "preflight", source_root, data_root, log_format)
@@ -65,7 +78,7 @@ def preflight(
 def run_command(
     context: typer.Context,
     source_root: Annotated[Path, typer.Option("--source-root")],
-    data_root: Annotated[Path, typer.Option("--data-root")],
+    data_root: Annotated[Path | None, typer.Option("--data-root", help=_DATA_ROOT_HELP)] = None,
     log_format: Annotated[LogFormat, typer.Option("--log-format")] = LogFormat.AUTO,
 ) -> None:
     _dispatch(context, "run", source_root, data_root, log_format)
@@ -75,7 +88,7 @@ def run_command(
 def verify(
     context: typer.Context,
     source_root: Annotated[Path, typer.Option("--source-root")],
-    data_root: Annotated[Path, typer.Option("--data-root")],
+    data_root: Annotated[Path | None, typer.Option("--data-root", help=_DATA_ROOT_HELP)] = None,
     log_format: Annotated[LogFormat, typer.Option("--log-format")] = LogFormat.AUTO,
 ) -> None:
     _dispatch(context, "verify", source_root, data_root, log_format)
@@ -85,7 +98,7 @@ def verify(
 def rebuild_metadata(
     context: typer.Context,
     source_root: Annotated[Path, typer.Option("--source-root")],
-    data_root: Annotated[Path, typer.Option("--data-root")],
+    data_root: Annotated[Path | None, typer.Option("--data-root", help=_DATA_ROOT_HELP)] = None,
     asset_checkpoint_root: Annotated[
         Path | None,
         typer.Option(
@@ -109,8 +122,8 @@ def rebuild_metadata(
 def publish(
     context: typer.Context,
     source_root: Annotated[Path, typer.Option("--source-root")],
-    data_root: Annotated[Path, typer.Option("--data-root")],
     confirm_repo: Annotated[str, typer.Option("--confirm-repo")],
+    data_root: Annotated[Path | None, typer.Option("--data-root", help=_DATA_ROOT_HELP)] = None,
     log_format: Annotated[LogFormat, typer.Option("--log-format")] = LogFormat.AUTO,
 ) -> None:
     _dispatch(context, "publish", source_root, data_root, log_format, confirm_repo)
@@ -120,8 +133,8 @@ def publish(
 def run_and_publish(
     context: typer.Context,
     source_root: Annotated[Path, typer.Option("--source-root")],
-    data_root: Annotated[Path, typer.Option("--data-root")],
     confirm_repo: Annotated[str, typer.Option("--confirm-repo")],
+    data_root: Annotated[Path | None, typer.Option("--data-root", help=_DATA_ROOT_HELP)] = None,
     log_format: Annotated[LogFormat, typer.Option("--log-format")] = LogFormat.AUTO,
 ) -> None:
     _dispatch(context, "run-and-publish", source_root, data_root, log_format, confirm_repo)

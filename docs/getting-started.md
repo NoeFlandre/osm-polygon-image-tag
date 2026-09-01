@@ -21,7 +21,12 @@ uv sync --locked --dev
 ## First run
 
 Use a small test tree first, then move to the production paths. The source
-tree is read-only; all writes go below `--data-root`.
+tree is read-only; all writes go below the selected data root. On the configured
+macOS workspace, omitting `--data-root` selects
+`/Volumes/Seagate M3/projects/osm-polygon-image-tag` when the volume is
+mounted. On other machines, pass `--data-root` or set
+`OSM_POLYGON_IMAGE_TAG_DATA_ROOT`; the CLI does not write a fallback directory
+inside the repository.
 
 ```bash
 uv run osm-polygon-image-tag preflight \

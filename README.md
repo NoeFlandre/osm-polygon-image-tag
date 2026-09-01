@@ -71,7 +71,12 @@ uv run osm-polygon-image-tag run-and-publish \
 Run the same `run-and-publish` command to resume. Fast resume reuses finalized
 shards and historical asset enrichment without reopening completed PBFs. Press
 Ctrl-C once and wait; the next run continues from the last finalized boundary.
-The source tree is always read-only, and all writes stay under `--data-root`.
+The source tree is always read-only, and all writes stay under the selected
+data root.
+On this macOS workspace, omitting `--data-root` uses
+`/Volumes/Seagate M3/projects/osm-polygon-image-tag` while that volume is
+mounted. Set `OSM_POLYGON_IMAGE_TAG_DATA_ROOT` or pass `--data-root` to select
+another writable root; the CLI never silently falls back to the repository.
 
 Authenticate with `hf auth login` before publishing. Mapillary direct URLs need
 `MAPILLARY_ACCESS_TOKEN`; Flickr keys are optional and unavailable to free

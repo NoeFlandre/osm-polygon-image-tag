@@ -27,6 +27,7 @@ def test_repository_readme_is_a_public_landing_page() -> None:
     assert "run-and-publish" in readme
     assert "--source-root" in readme
     assert "--data-root" in readme
+    assert "OSM_POLYGON_IMAGE_TAG_DATA_ROOT" in readme
     assert "just ci" in readme
 
 

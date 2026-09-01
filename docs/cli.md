@@ -1,8 +1,8 @@
 # CLI reference
 
 The installed command is `osm-polygon-image-tag`. Every command accepts a
-source PBF root, a managed data root, and an optional `--log-format` of
-`auto`, `json`, or `human`.
+source PBF root, an optional managed data root, and an optional `--log-format`
+of `auto`, `json`, or `human`.
 
 ## Shared options
 
@@ -11,13 +11,17 @@ These options have the same meaning on every command:
 | Option | Meaning |
 | --- | --- |
 | `--source-root PATH` | Directory containing the read-only Geofabrik `.osm.pbf` files. |
-| `--data-root PATH` | Writable directory for resumable shards, caches, metadata, and receipts. |
+| `--data-root PATH` | Writable directory for resumable shards, caches, metadata, and receipts. If omitted, the CLI uses the mounted project storage root or the environment override. |
 | `--log-format auto\|json\|human` | `auto` uses a readable TTY display; `json` emits machine-readable progress; `human` forces the readable display. |
 
-Both paths are required. The source root must be a real directory, and the
-source and data roots may not overlap. Publication also rejects symlinks or
-unexpected entries inside the managed data root. `--confirm-repo` is required
-by `publish` and `run-and-publish` and must be exactly
+The source root is required and must be a real directory. The data root is
+resolved in this order: explicit `--data-root`,
+`OSM_POLYGON_IMAGE_TAG_DATA_ROOT`, then
+`/Volumes/Seagate M3/projects/osm-polygon-image-tag` when its external volume
+is mounted. If none is available, the command exits with an error rather than
+writing inside the repository. The source and data roots may not overlap.
+Publication also rejects symlinks or unexpected entries inside the managed data
+root. `--confirm-repo` is required by `publish` and `run-and-publish` and must be exactly
 `NoeFlandre/osm-polygon-image-tag`.
 
 ## Choose a command

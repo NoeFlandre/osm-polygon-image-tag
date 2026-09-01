@@ -8,6 +8,9 @@ in this package may import from `ingest`, `artifacts`, `runtime`, or
 
 - The typed configuration object (`PipelinePaths`) that enforces immutable
   source/output boundaries.
+- `resolve_data_root(...)`, which prefers an explicit path, then the
+  `OSM_POLYGON_IMAGE_TAG_DATA_ROOT` override, and finally the mounted external
+  project root without falling back to repository-local storage.
 - The error hierarchy (`ImageTagPipelineError`, `ConfigurationError`,
   `PreflightError`, `PublicationError`).
 - The PyArrow GeoParquet schema and the manifest shape plus its versioning

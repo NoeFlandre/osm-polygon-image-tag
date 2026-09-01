@@ -2,8 +2,48 @@ from pathlib import Path
 
 import pytest
 
-from osm_polygon_image_tag.core.config import PipelinePaths
+import osm_polygon_image_tag.core.config as config
+from osm_polygon_image_tag.core.config import PipelinePaths, resolve_data_root
 from osm_polygon_image_tag.core.errors import ConfigurationError
+
+
+def test_resolve_data_root_prefers_an_explicit_path(tmp_path: Path) -> None:
+    explicit = tmp_path / "explicit"
+
+    assert resolve_data_root(explicit) == explicit
+
+
+def test_resolve_data_root_uses_external_project_root_when_available(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    preferred = tmp_path / "external" / "osm-polygon-image-tag"
+    preferred.parent.mkdir()
+    monkeypatch.setattr(config, "DEFAULT_DATA_ROOT", preferred)
+    monkeypatch.delenv(config.DATA_ROOT_ENVIRONMENT_VARIABLE, raising=False)
+
+    assert resolve_data_root(None) == preferred
+
+
+def test_resolve_data_root_honors_environment_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    preferred = tmp_path / "external" / "osm-polygon-image-tag"
+    configured = tmp_path / "configured"
+    preferred.parent.mkdir()
+    monkeypatch.setattr(config, "DEFAULT_DATA_ROOT", preferred)
+    monkeypatch.setenv(config.DATA_ROOT_ENVIRONMENT_VARIABLE, str(configured))
+
+    assert resolve_data_root(None) == configured
+
+
+def test_resolve_data_root_requires_an_explicit_path_without_external_storage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(config, "DEFAULT_DATA_ROOT", tmp_path / "unmounted" / "data")
+    monkeypatch.delenv(config.DATA_ROOT_ENVIRONMENT_VARIABLE, raising=False)
+
+    with pytest.raises(ConfigurationError, match="--data-root"):
+        resolve_data_root(None)
 
 
 def test_accepts_separate_existing_source_and_output(tmp_path: Path) -> None:
