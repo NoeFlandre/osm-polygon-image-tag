@@ -11,6 +11,7 @@ from osm_polygon_image_tag.artifacts.geography.cache import (
     CACHE_SCHEMA_VERSION,
     PerShardCache,
     _parse_cell_entry,
+    _parse_shards,
     input_digest,
     load_shard_cache,
     load_stats_cache,
@@ -33,6 +34,21 @@ def _shards() -> PerShardCache:
             "cells": {"89283082807ffff": 1},
         },
     }
+
+
+def _shard_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "schema_version": CACHE_SCHEMA_VERSION,
+        "h3_resolution": DEFAULT_H3_RESOLUTION,
+        "shards": {},
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _write_json(cache_root: Path, filename: str, payload: object) -> None:
+    cache_root.mkdir(exist_ok=True)
+    (cache_root / filename).write_text(json.dumps(payload), encoding="utf-8")
 
 
 def test_cache_digest_is_order_independent() -> None:
@@ -86,6 +102,88 @@ def test_shard_cache_rejects_empty_shard_path(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    ("payload", "reason"),
+    [
+        ([], "non-object root"),
+        (_shard_payload(schema_version=CACHE_SCHEMA_VERSION - 1), "schema version"),
+        (_shard_payload(h3_resolution=DEFAULT_H3_RESOLUTION + 1), "H3 resolution"),
+        (_shard_payload(shards=[]), "non-object shards"),
+        (
+            _shard_payload(
+                shards={"data/a.parquet": []},
+            ),
+            "non-object shard entry",
+        ),
+        (
+            _shard_payload(
+                shards={"data/a.parquet": {"sha256": "invalid", "row_count": 1, "cells": []}},
+            ),
+            "invalid SHA-256",
+        ),
+        (
+            _shard_payload(
+                shards={"data/a.parquet": {"sha256": "a" * 64, "row_count": True, "cells": []}},
+            ),
+            "boolean row count",
+        ),
+        (
+            _shard_payload(
+                shards={"data/a.parquet": {"sha256": "a" * 64, "row_count": 1, "cells": "bad"}},
+            ),
+            "non-list cells",
+        ),
+        (
+            _shard_payload(
+                shards={
+                    "data/a.parquet": {
+                        "sha256": "a" * 64,
+                        "row_count": 1,
+                        "cells": [{"h3_cell": "cell", "polygon_count": -1}],
+                    }
+                },
+            ),
+            "malformed cell entry",
+        ),
+        (
+            _shard_payload(
+                shards={
+                    "data/a.parquet": {
+                        "sha256": "a" * 64,
+                        "row_count": 2,
+                        "cells": [
+                            {"h3_cell": "cell", "polygon_count": 1},
+                            {"h3_cell": "cell", "polygon_count": 1},
+                        ],
+                    }
+                },
+            ),
+            "duplicate cell",
+        ),
+        (
+            _shard_payload(
+                shards={
+                    "data/a.parquet": {
+                        "sha256": "a" * 64,
+                        "row_count": 2,
+                        "cells": [{"h3_cell": "cell", "polygon_count": 1}],
+                    }
+                },
+            ),
+            "mismatched cell total",
+        ),
+    ],
+)
+def test_shard_cache_rejects_invalid_payloads(tmp_path: Path, payload: object, reason: str) -> None:
+    _write_json(tmp_path, "shards.json", payload)
+
+    assert load_shard_cache(tmp_path) is None, reason
+
+
+def test_shard_cache_rejects_non_string_shard_key() -> None:
+    assert _parse_shards({1: {}}) is None
+
+
+@pytest.mark.parametrize(
     ("value", "expected"),
     [
         ({"h3_cell": "cell", "polygon_count": 2}, ("cell", 2)),
@@ -131,3 +229,56 @@ def test_stats_cache_round_trip_and_schema_validation(tmp_path: Path) -> None:
     payload["schema_version"] = CACHE_SCHEMA_VERSION - 1
     path.write_text(json.dumps(payload), encoding="utf-8")
     assert load_stats_cache(cache_root) is None
+
+
+def test_cache_loaders_return_none_for_missing_files(tmp_path: Path) -> None:
+    assert load_shard_cache(tmp_path) is None
+    assert load_stats_cache(tmp_path) is None
+
+
+def test_shard_cache_returns_none_when_read_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_json(tmp_path, "shards.json", _shard_payload())
+
+    def fail_read_text(*_args: object, **_kwargs: object) -> str:
+        raise OSError("cache unavailable")
+
+    monkeypatch.setattr(Path, "read_text", fail_read_text)
+
+    assert load_shard_cache(tmp_path) is None
+
+
+def test_stats_cache_returns_none_when_read_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_json(tmp_path, "pipeline.json", {})
+
+    def fail_read_text(*_args: object, **_kwargs: object) -> str:
+        raise OSError("cache unavailable")
+
+    monkeypatch.setattr(Path, "read_text", fail_read_text)
+
+    assert load_stats_cache(tmp_path) is None
+
+
+def test_stats_cache_rejects_malformed_json(tmp_path: Path) -> None:
+    cache_root = tmp_path / "cache"
+    cache_root.mkdir()
+    (cache_root / "pipeline.json").write_text("not-json", encoding="utf-8")
+
+    assert load_stats_cache(cache_root) is None
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        [],
+        {"schema_version": CACHE_SCHEMA_VERSION - 1, "h3_resolution": DEFAULT_H3_RESOLUTION},
+        {"schema_version": CACHE_SCHEMA_VERSION, "h3_resolution": DEFAULT_H3_RESOLUTION + 1},
+    ],
+)
+def test_stats_cache_rejects_invalid_payloads(tmp_path: Path, payload: object) -> None:
+    _write_json(tmp_path, "pipeline.json", payload)
+
+    assert load_stats_cache(tmp_path) is None

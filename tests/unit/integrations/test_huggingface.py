@@ -8,6 +8,7 @@ from osm_polygon_image_tag.artifacts.publication import EXPECTED_REPO
 from osm_polygon_image_tag.artifacts.publication_types import HubCommit, PublicationFile
 from osm_polygon_image_tag.core.errors import PublicationError
 from osm_polygon_image_tag.core.manifest import file_sha256
+from osm_polygon_image_tag.integrations import huggingface as huggingface_integration
 from osm_polygon_image_tag.integrations.huggingface import HuggingFaceHub
 
 
@@ -29,8 +30,8 @@ def test_real_hub_adapter_uses_dataset_commit_and_pinned_download(
         remote.write_bytes(b"content")
         return str(remote)
 
-    monkeypatch.setattr("osm_polygon_image_tag.integrations.huggingface.HfApi", Api)
-    monkeypatch.setattr("osm_polygon_image_tag.integrations.huggingface.hf_hub_download", download)
+    monkeypatch.setattr(huggingface_integration, "HfApi", Api)
+    monkeypatch.setattr(huggingface_integration, "hf_hub_download", download)
     hub = HuggingFaceHub()
     commit_id = hub.commit(
         HubCommit(
@@ -55,7 +56,7 @@ def test_real_hub_adapter_wraps_client_failures(monkeypatch: pytest.MonkeyPatch)
         def create_commit(self, **_kwargs: object) -> object:
             raise RuntimeError("secret client detail")
 
-    monkeypatch.setattr("osm_polygon_image_tag.integrations.huggingface.HfApi", Api)
+    monkeypatch.setattr(huggingface_integration, "HfApi", Api)
     hub = HuggingFaceHub()
 
     with pytest.raises(PublicationError, match="commit failed"):
@@ -64,9 +65,6 @@ def test_real_hub_adapter_wraps_client_failures(monkeypatch: pytest.MonkeyPatch)
     def fail_download(**_kwargs: object) -> str:
         raise RuntimeError("secret client detail")
 
-    monkeypatch.setattr(
-        "osm_polygon_image_tag.integrations.huggingface.hf_hub_download",
-        fail_download,
-    )
+    monkeypatch.setattr(huggingface_integration, "hf_hub_download", fail_download)
     with pytest.raises(PublicationError, match="verification failed"):
         hub.download(EXPECTED_REPO, "README.md", "abc")
