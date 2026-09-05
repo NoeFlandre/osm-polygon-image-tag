@@ -124,8 +124,14 @@ async def test_https_redirect_cannot_downgrade_or_forward_authorization() -> Non
 
 
 @pytest.mark.asyncio
-async def test_redirect_loop_is_bounded() -> None:
+@pytest.mark.parametrize("operation", [SafeHttpClient.get_json, SafeHttpClient.probe_image])
+async def test_redirect_loop_is_bounded(
+    operation: Callable[[SafeHttpClient, str], Awaitable[object]],
+) -> None:
+    requests: list[httpx.Request] = []
+
     async def handle(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
         return httpx.Response(302, headers={"location": str(request.url)})
 
     client = SafeHttpClient(
@@ -135,7 +141,8 @@ async def test_redirect_loop_is_bounded() -> None:
     )
 
     with pytest.raises(SafeHttpError, match="too many redirects"):
-        await client.get_json("https://example.test/start")
+        await operation(client, "https://example.test/start")
+    assert len(requests) == 3
     await client.aclose()
 
 

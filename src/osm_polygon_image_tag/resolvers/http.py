@@ -303,10 +303,7 @@ class SafeHttpClient:
                 httpcore.ProtocolError,
                 httpcore.TimeoutException,
             ) as error:
-                unsafe = _unsafe_url_cause(error)
-                if unsafe is not None:
-                    raise unsafe from error
-                raise SafeHttpError(f"provider request failed: {_redacted_url(current)}") from error
+                _raise_safe_request_error(error, current)
         raise SafeHttpError("too many redirects")
 
     async def _probe_image_once(self, current: str) -> tuple[str, ImageProbe | None]:

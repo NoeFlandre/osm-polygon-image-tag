@@ -70,7 +70,7 @@ class ConsoleRenderer:
         self._console.print(f"[cyan]{name}[/cyan]{_event_details(event)}")
 
     def _handle_bar_event(self, name: str, event: dict[str, object]) -> bool:
-        if _is_asset_start(name):
+        if name == "asset_backfill_started":
             self._start_asset_bar(event)
             return True
         if _is_asset_completion(name, self._bar is not None):
@@ -90,10 +90,6 @@ class ConsoleRenderer:
             file=self._stderr,
             dynamic_ncols=True,
         )
-
-
-def _is_asset_start(name: str) -> bool:
-    return name == "asset_backfill_started"
 
 
 def _is_asset_completion(name: str, has_bar: bool) -> bool:

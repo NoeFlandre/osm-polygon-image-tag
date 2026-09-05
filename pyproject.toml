@@ -75,6 +75,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-ra --strict-markers --import-mode=importlib --cov=osm_polygon_image_tag --cov-report=term-missing"
 markers = ["integration: requires the real osmium executable"]
 

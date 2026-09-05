@@ -1,13 +1,12 @@
-import sys
 from importlib.metadata import metadata, version
 from pathlib import Path
 from tomllib import loads
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
 import osm_polygon_image_tag
-from scripts.run_mutmut import _keep_loaded_modules
+from scripts import run_mutmut as mutation_runner
 
 
 def test_distribution_and_package_versions_match() -> None:
@@ -104,17 +103,14 @@ def test_mutation_configuration_covers_all_covered_source() -> None:
 def test_mutation_runner_reloads_project_modules_but_keeps_native_modules(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    baseline = dict(sys.modules)
     project_module = ModuleType("osm_polygon_image_tag.synthetic")
     native_module = ModuleType("native_extension.synthetic")
     test_namespace = ModuleType("tests.synthetic")
-    baseline[project_module.__name__] = project_module
-    monkeypatch.setitem(sys.modules, project_module.__name__, project_module)
-    monkeypatch.setitem(sys.modules, native_module.__name__, native_module)
-    monkeypatch.setitem(sys.modules, test_namespace.__name__, test_namespace)
+    loaded_modules = {
+        module.__name__: module for module in (project_module, native_module, test_namespace)
+    }
+    with monkeypatch.context() as context:
+        context.setattr(mutation_runner, "sys", SimpleNamespace(modules=loaded_modules))
+        mutation_runner._keep_loaded_modules({project_module.__name__: project_module})
 
-    _keep_loaded_modules(baseline)
-
-    assert project_module.__name__ not in sys.modules
-    assert sys.modules[native_module.__name__] is native_module
-    assert test_namespace.__name__ not in sys.modules
+    assert loaded_modules == {native_module.__name__: native_module}

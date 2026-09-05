@@ -57,10 +57,9 @@ async def _resolve(
     reference: SourceReference,
     row: Mapping[str, object],
     *,
-    cache: ResolutionCache,
     registry: Registry,
     resolver_contract_version: int,
-    cached_records: Mapping[ResolutionKey, ResolutionRecord] | None = None,
+    cached_records: Mapping[ResolutionKey, ResolutionRecord],
 ) -> tuple[ResolutionRecord, bool, bool]:
     key = _key(reference, resolver_contract_version)
     if not is_cacheable_canonical_reference(reference.canonical_reference):
@@ -73,7 +72,7 @@ async def _resolve(
             resolver_contract_version=resolver_contract_version,
         )
         return record, False, False
-    cached = cache.get(key) if cached_records is None else cached_records.get(key)
+    cached = cached_records.get(key)
     if cached is not None and _cached_is_reusable(cached, reference, registry.capability):
         return cached, True, True
     record = await registry.resolve_reference(
@@ -158,7 +157,6 @@ class AssetBatchProcessor:
             record, cache_hit, cacheable = await _resolve(
                 reference,
                 row,
-                cache=self._cache,
                 registry=self._registry,
                 resolver_contract_version=self._resolver_contract_version,
                 cached_records=cached_records,

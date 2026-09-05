@@ -354,6 +354,8 @@ def test_asset_statistics_separates_direct_and_indirect_image_rows(tmp_path: Pat
     statistics = asset_statistics(tmp_path / "catalog.sqlite", [(manifest, output)])
 
     assert statistics["direct_urls"] == 2
+    assert statistics["asset_schema_versions"] == {str(ASSET_SCHEMA_VERSION): 1}
+    assert statistics["resolver_contract_versions"] == {str(RESOLVER_CONTRACT_VERSION): 1}
     assert statistics["image_relation_counts"] == {
         "category_membership": 1,
         "direct_reference": 1,
@@ -401,6 +403,8 @@ def test_metadata_derives_factual_asset_statistics(tmp_path: Path) -> None:
     statistics = json.loads(result.statistics_path.read_bytes())
 
     assert statistics["assets"]["shards"] == 1
+    assert statistics["assets"]["asset_schema_versions"] == {str(ASSET_SCHEMA_VERSION): 1}
+    assert statistics["assets"]["resolver_contract_versions"] == {str(RESOLVER_CONTRACT_VERSION): 1}
     assert statistics["assets"]["rows"] == 0
     assert statistics["assets"]["provider_counts"] == {}
     assert statistics["assets"]["status_counts"] == {}

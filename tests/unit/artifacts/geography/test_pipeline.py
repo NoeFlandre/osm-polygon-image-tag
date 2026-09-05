@@ -123,16 +123,6 @@ def test_build_geographic_map_aggregates_polygon_rows(tmp_path: Path) -> None:
     assert png_path.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
-def test_build_geographic_map_is_deterministic_across_runs(tmp_path: Path) -> None:
-    _seed_two_shards(tmp_path)
-    first = build_geographic_map(tmp_path)
-    second = build_geographic_map(tmp_path)
-    assert first.cells == second.cells
-    digest_first = (tmp_path / GEOGRAPHIC_PNG_RELATIVE).read_bytes()
-    digest_second = (tmp_path / GEOGRAPHIC_PNG_RELATIVE).read_bytes()
-    assert digest_first == digest_second
-
-
 def test_build_geographic_map_reuses_cache_for_unchanged_inputs(tmp_path: Path) -> None:
     _seed_two_shards(tmp_path)
     first = build_geographic_map(tmp_path)

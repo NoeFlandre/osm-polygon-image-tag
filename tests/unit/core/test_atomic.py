@@ -68,14 +68,12 @@ def test_atomic_write_bytes_can_sync_parent_directory(tmp_path: Path) -> None:
 
 
 def test_promote_temporary_file_replaces_destination_and_removes_source(tmp_path: Path) -> None:
-    promote = getattr(atomic, "promote_temporary_file", None)
-    assert promote is not None
     temporary = tmp_path / ".artifact.tmp"
     destination = tmp_path / "artifact.json"
     temporary.write_bytes(b"payload")
     destination.write_bytes(b"previous")
 
-    promote(temporary, destination, sync_directory=True)
+    atomic.promote_temporary_file(temporary, destination, sync_directory=True)
 
     assert destination.read_bytes() == b"payload"
     assert not temporary.exists()
@@ -133,8 +131,6 @@ def test_atomic_write_bytes_uses_stable_default_temporary_options(
 def test_promote_temporary_file_cleans_source_when_replace_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    promote = getattr(atomic, "promote_temporary_file", None)
-    assert promote is not None
     temporary = tmp_path / ".artifact.tmp"
     destination = tmp_path / "artifact.json"
     temporary.write_bytes(b"payload")
@@ -146,17 +142,14 @@ def test_promote_temporary_file_cleans_source_when_replace_fails(
     monkeypatch.setattr(atomic.os, "replace", fail_replace)
 
     with pytest.raises(OSError, match="replace failed"):
-        promote(temporary, destination)
+        atomic.promote_temporary_file(temporary, destination)
 
     assert destination.read_bytes() == b"previous"
     assert not temporary.exists()
 
 
 def test_temporary_file_path_yields_named_path_and_cleans_it(tmp_path: Path) -> None:
-    temporary_file_path = getattr(atomic, "temporary_file_path", None)
-    assert temporary_file_path is not None
-
-    with temporary_file_path(tmp_path, prefix=".artifact.", suffix=".tmp") as path:
+    with atomic.temporary_file_path(tmp_path, prefix=".artifact.", suffix=".tmp") as path:
         assert path.parent == tmp_path
         assert path.name.startswith(".artifact.")
         assert path.name.endswith(".tmp")
@@ -167,10 +160,10 @@ def test_temporary_file_path_yields_named_path_and_cleans_it(tmp_path: Path) -> 
 
 
 def test_temporary_file_path_cleans_up_when_scope_raises(tmp_path: Path) -> None:
-    temporary_file_path = getattr(atomic, "temporary_file_path", None)
-    assert temporary_file_path is not None
-
-    with pytest.raises(RuntimeError, match="scope failed"), temporary_file_path(tmp_path) as path:
+    with (
+        pytest.raises(RuntimeError, match="scope failed"),
+        atomic.temporary_file_path(tmp_path) as path,
+    ):
         path.write_bytes(b"payload")
         raise RuntimeError("scope failed")
 
@@ -178,10 +171,7 @@ def test_temporary_file_path_cleans_up_when_scope_raises(tmp_path: Path) -> None
 
 
 def test_temporary_path_owns_file_until_close(tmp_path: Path) -> None:
-    temporary_path = getattr(atomic, "TemporaryPath", None)
-    assert temporary_path is not None
-
-    owner = temporary_path(tmp_path, prefix=".asset.", suffix=".sqlite")
+    owner = atomic.TemporaryPath(tmp_path, prefix=".asset.", suffix=".sqlite")
     path = owner.path
 
     assert path.parent == tmp_path
@@ -195,10 +185,7 @@ def test_temporary_path_owns_file_until_close(tmp_path: Path) -> None:
 
 
 def test_temporary_path_close_is_idempotent(tmp_path: Path) -> None:
-    temporary_path = getattr(atomic, "TemporaryPath", None)
-    assert temporary_path is not None
-
-    owner = temporary_path(tmp_path)
+    owner = atomic.TemporaryPath(tmp_path)
     owner.close()
     owner.close()
 
@@ -206,10 +193,7 @@ def test_temporary_path_close_is_idempotent(tmp_path: Path) -> None:
 
 
 def test_temporary_path_context_cleans_up(tmp_path: Path) -> None:
-    temporary_path = getattr(atomic, "TemporaryPath", None)
-    assert temporary_path is not None
-
-    with temporary_path(tmp_path) as path:
+    with atomic.TemporaryPath(tmp_path) as path:
         assert path.exists()
 
     assert not path.exists()

@@ -170,7 +170,7 @@ def public_asset_statistics(
     cannot accidentally describe rows that are not in the public release.
     """
     source_manifests = list(manifests)
-    schema_versions, resolver_versions = _public_manifest_versions(source_manifests)
+    schema_versions, resolver_versions = _manifest_version_counts(source_manifests)
 
     image_stats = _scan_public_images(image_path)
     image_relation_counts, relationship_rows = _scan_public_links(
@@ -205,17 +205,6 @@ def public_asset_statistics(
         "asset_schema_versions": _stringify_counts(schema_versions),
         "resolver_contract_versions": _stringify_counts(resolver_versions),
     }
-
-
-def _public_manifest_versions(
-    manifests: list[tuple[AssetManifest, Path]],
-) -> tuple[Counter[int], Counter[int]]:
-    schema_versions: Counter[int] = Counter()
-    resolver_versions: Counter[int] = Counter()
-    for manifest, _output in manifests:
-        schema_versions[manifest.asset_schema_version] += 1
-        resolver_versions[manifest.resolver_contract_version] += 1
-    return schema_versions, resolver_versions
 
 
 class _PublicImageStats(TypedDict):

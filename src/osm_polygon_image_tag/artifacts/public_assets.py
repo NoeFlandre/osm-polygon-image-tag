@@ -129,14 +129,14 @@ def build_public_asset_tables(
     finally:
         accumulator.close()
         _cleanup_public_asset_checkpoints(cleanup_paths, succeeded)
-    return _public_asset_result(
-        image_path,
-        link_path,
-        image_rows,
-        link_rows,
-        duplicate_images,
-        duplicate_links,
-        accumulator.orphan_rows,
+    return PublicAssetsResult(
+        image_path=image_path,
+        link_path=link_path,
+        image_rows=image_rows,
+        link_rows=link_rows,
+        duplicate_image_rows=duplicate_images,
+        duplicate_link_rows=duplicate_links,
+        orphan_rows=accumulator.orphan_rows,
     )
 
 
@@ -171,7 +171,15 @@ def _empty_public_asset_tables(
     for path in cleanup_paths:
         remove_checkpoint_files(path)
     _write_public_asset_outputs(None, image_path, link_path)
-    return _public_asset_result(image_path, link_path, 0, 0, 0, 0, 0)
+    return PublicAssetsResult(
+        image_path=image_path,
+        link_path=link_path,
+        image_rows=0,
+        link_rows=0,
+        duplicate_image_rows=0,
+        duplicate_link_rows=0,
+        orphan_rows=0,
+    )
 
 
 def _process_asset_sources(
@@ -238,26 +246,6 @@ def _write_public_asset_outputs(
         link_rows = accumulator.links()
     _write_parquet(image_rows, image_path, public_image_schema())
     _write_parquet(link_rows, link_path, public_link_schema())
-
-
-def _public_asset_result(
-    image_path: Path,
-    link_path: Path,
-    image_rows: int,
-    link_rows: int,
-    duplicate_image_rows: int,
-    duplicate_link_rows: int,
-    orphan_rows: int,
-) -> PublicAssetsResult:
-    return PublicAssetsResult(
-        image_path=image_path,
-        link_path=link_path,
-        image_rows=image_rows,
-        link_rows=link_rows,
-        duplicate_image_rows=duplicate_image_rows,
-        duplicate_link_rows=duplicate_link_rows,
-        orphan_rows=orphan_rows,
-    )
 
 
 __all__ = [

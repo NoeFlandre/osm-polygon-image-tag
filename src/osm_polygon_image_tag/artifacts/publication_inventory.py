@@ -18,17 +18,8 @@ from osm_polygon_image_tag.assets.manifest import (
     read_asset_manifest,
     read_asset_manifest_header,
 )
-from osm_polygon_image_tag.assets.schema import (
-    ASSET_SCHEMA_VERSION,
-    RESOLVER_CONTRACT_VERSION,
-)
 from osm_polygon_image_tag.core.errors import PublicationError
-from osm_polygon_image_tag.core.manifest import (
-    DATASET_SCHEMA_VERSION,
-    PROCESSING_CONTRACT_VERSION,
-    file_sha256,
-    read_manifest,
-)
+from osm_polygon_image_tag.core.manifest import file_sha256, read_manifest
 from osm_polygon_image_tag.core.paths import resolve_managed_output
 
 
@@ -82,9 +73,8 @@ def _validated_png_digests(root: Path) -> dict[str, str]:
     return digests
 
 
-def _managed_polygon_artifacts(root: Path) -> tuple[set[str], set[str]]:
+def _managed_polygon_artifacts(root: Path) -> set[str]:
     managed: set[str] = set()
-    eligible_manifests: set[str] = set()
     for path in sorted((root / "manifests").glob("*.manifest.json")):
         manifest = read_manifest(path)
         relative_manifest = path.relative_to(root).as_posix()
@@ -95,45 +85,29 @@ def _managed_polygon_artifacts(root: Path) -> tuple[set[str], set[str]]:
             label="managed output",
         )
         managed.add(output.relative_to(root).as_posix())
-        if (
-            manifest.processing_contract_version == PROCESSING_CONTRACT_VERSION
-            and manifest.dataset_schema_version == DATASET_SCHEMA_VERSION
-        ):
-            eligible_manifests.add(relative_manifest)
-    return managed, eligible_manifests
+    return managed
 
 
-def _managed_asset_artifacts(root: Path) -> tuple[set[str], set[str]]:
+def _managed_asset_artifacts(root: Path) -> set[str]:
     managed: set[str] = set()
-    eligible_manifests: set[str] = set()
     for path in sorted((root / "asset-manifests").glob("*.assets.manifest.json")):
         relative_manifest = path.relative_to(root).as_posix()
         managed.add(relative_manifest)
-        output, eligible = _asset_manifest_artifact(path, root)
+        output = _asset_manifest_artifact(path, root)
         managed.add(output.relative_to(root).as_posix())
-        if eligible:
-            eligible_manifests.add(relative_manifest)
-    return managed, eligible_manifests
+    return managed
 
 
-def _asset_manifest_artifact(path: Path, root: Path) -> tuple[Path, bool]:
+def _asset_manifest_artifact(path: Path, root: Path) -> Path:
     try:
         manifest = read_asset_manifest(path)
         output_relative = manifest.output.relative_path
     except AssetManifestError:
         header = read_asset_manifest_header(path, data_root=root)
-        return (
-            _resolve_publication_output(
-                root, header.output_relative_path, label="managed asset output"
-            ),
-            False,
+        return _resolve_publication_output(
+            root, header.output_relative_path, label="managed asset output"
         )
-    output = _resolve_publication_output(root, output_relative, label="managed asset output")
-    eligible = (
-        manifest.asset_schema_version == ASSET_SCHEMA_VERSION
-        and manifest.resolver_contract_version == RESOLVER_CONTRACT_VERSION
-    )
-    return output, eligible
+    return _resolve_publication_output(root, output_relative, label="managed asset output")
 
 
 def _actual_files(root: Path) -> set[str]:
@@ -176,9 +150,7 @@ def publication_inventory(data_root: Path) -> tuple[PublicationFile, ...]:
     png_digests = _validated_png_digests(root)
     allowed.update(png_digests)
     manifested_digests.update(png_digests)
-    polygon_managed, _polygon_eligible = _managed_polygon_artifacts(root)
-    asset_managed, _asset_eligible = _managed_asset_artifacts(root)
-    managed = polygon_managed | asset_managed
+    managed = _managed_polygon_artifacts(root) | _managed_asset_artifacts(root)
     internal = _internal_files(managed, allowed)
     actual = _actual_files(root)
     private = {relative for relative in actual if relative.startswith("cache/")}

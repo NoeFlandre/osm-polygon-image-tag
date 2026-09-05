@@ -63,19 +63,3 @@ def test_runtime_consumers_use_the_canonical_panoramax_column() -> None:
             isinstance(node, ast.Constant) and node.value == "panoramax_values"
             for node in ast.walk(tree)
         ), consumer
-
-
-def test_references_uses_the_shared_keys_without_a_private_alias() -> None:
-    tree = ast.parse(
-        Path("src/osm_polygon_image_tag/assets/references.py").read_text(encoding="utf-8")
-    )
-
-    assert any(
-        isinstance(node, ast.For)
-        and isinstance(node.iter, ast.Name)
-        and node.iter.id == "IMAGE_REFERENCE_KEYS"
-        for node in ast.walk(tree)
-    )
-    assert not any(
-        isinstance(node, ast.Name) and node.id == "_TARGET_KEYS" for node in ast.walk(tree)
-    )

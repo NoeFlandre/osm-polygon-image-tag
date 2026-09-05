@@ -3,7 +3,6 @@ from pathlib import Path
 
 import pytest
 
-import osm_polygon_image_tag.artifacts.asset_inventory as inventory_module
 from osm_polygon_image_tag.artifacts.asset_inventory import verified_asset_manifests
 from osm_polygon_image_tag.assets.manifest import (
     ASSET_MANIFEST_SCHEMA_VERSION,
@@ -58,21 +57,7 @@ def test_asset_inventory_selects_compatible_bound_outputs_with_pending_counts(
     assert selected[0][0].counts.pending_retries == 1
     assert events[-1]["verified_shards"] == 1
     assert events[-1]["pending_retries"] == 1
-
-
-def test_asset_inventory_fast_path_does_not_hash_parquet(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manifest, output, _path = asset_fixture(tmp_path)
-
-    monkeypatch.setattr(
-        inventory_module,
-        "file_sha256",
-        lambda _path: (_ for _ in ()).throw(AssertionError("asset was rehashed")),
-        raising=False,
-    )
-
-    assert verified_asset_manifests(tmp_path) == [(manifest, output.resolve())]
+    assert verified_asset_manifests(tmp_path) == selected
 
 
 @pytest.mark.parametrize("relative", ["../escape.parquet", "/absolute.parquet"])

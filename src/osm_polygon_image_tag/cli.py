@@ -150,14 +150,14 @@ class _Runtime:
             return _execute_metadata_command(self, paths, asset_checkpoint_root)
         if command in {"preflight", "run", "verify"}:
             return {
-                "preflight": lambda: self.execute_preflight(paths),
-                "run": lambda: self.execute_run(paths),
-                "verify": lambda: self.execute_verify(paths),
-            }[command]()
+                "preflight": self.execute_preflight,
+                "run": self.execute_run,
+                "verify": self.execute_verify,
+            }[command](paths)
         return {
-            "publish": lambda: self.execute_publish(paths, confirmation or ""),
-            "run-and-publish": lambda: self.execute_run_publish(paths, confirmation or ""),
-        }[command]()
+            "publish": self.execute_publish,
+            "run-and-publish": self.execute_run_publish,
+        }[command](paths, confirmation or "")
 
 
 def _validate_confirmation(confirmation: str | None) -> None:
@@ -186,12 +186,12 @@ def run(
     execute_run_publish: Callable[[PipelinePaths, str], RunSummary] = _run_and_publish,
 ) -> int:
     arguments = list(argv) if argv is not None else sys.argv[1:]
-    runtime = _build_runtime(
+    runtime = _Runtime(
         execute_preflight,
         execute_run,
         execute_verify,
         execute_metadata,
-        execute_metadata_with_checkpoint,
+        execute_metadata_with_checkpoint or _execute_metadata_with_checkpoint,
         execute_publish,
         execute_run_publish,
     )
@@ -207,33 +207,13 @@ def _invoke_runtime(arguments: Sequence[str], runtime: _Runtime) -> int:
         _invoke_app(arguments, runtime)
     except click.exceptions.Exit as error:
         raise SystemExit(error.exit_code) from error
-    except (click.ClickException, click.exceptions.BadParameter) as error:
+    except click.ClickException as error:
         error.show(file=sys.stderr)
         return 2
     except ImageTagPipelineError as error:
         _render_pipeline_error(runtime, error)
         return 2
     return 0
-
-
-def _build_runtime(
-    execute_preflight: Callable[[PipelinePaths], PreflightReport],
-    execute_run: Callable[[PipelinePaths], RunSummary],
-    execute_verify: Callable[[PipelinePaths], VerifySummary],
-    execute_metadata: Callable[[Path], MetadataResult],
-    execute_metadata_with_checkpoint: Callable[[Path, Path], MetadataResult] | None,
-    execute_publish: Callable[[PipelinePaths, str], PublicationResult],
-    execute_run_publish: Callable[[PipelinePaths, str], RunSummary],
-) -> _Runtime:
-    return _Runtime(
-        execute_preflight,
-        execute_run,
-        execute_verify,
-        execute_metadata,
-        execute_metadata_with_checkpoint or _execute_metadata_with_checkpoint,
-        execute_publish,
-        execute_run_publish,
-    )
 
 
 def _invoke_app(arguments: Sequence[str], runtime: _Runtime) -> None:

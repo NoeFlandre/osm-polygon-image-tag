@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 
+from osm_polygon_image_tag.assets.references import _iter_pairs
 from osm_polygon_image_tag.core.contracts import (
     PANORAMAX_VALUES_COLUMN,
     REFERENCE_COLUMNS,
@@ -46,15 +47,7 @@ def _panoramax_pairs(value: object) -> tuple[tuple[object, object], ...]:
         return tuple(value.items())
     if not isinstance(value, list):
         return ()
-    return tuple(pair for item in value if (pair := _panoramax_pair(item)) is not None)
-
-
-def _panoramax_pair(value: object) -> tuple[object, object] | None:
-    if isinstance(value, Mapping):
-        return value.get("key"), value.get("value")
-    if isinstance(value, tuple | list) and len(value) == 2:
-        return value[0], value[1]
-    return None
+    return tuple(_iter_pairs(value))
 
 
 def count_polygon_references(path: Path, *, batch_size: int = 4096) -> int:

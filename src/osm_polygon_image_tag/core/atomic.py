@@ -60,11 +60,8 @@ def temporary_file_path(
     suffix: str = "",
 ) -> Iterator[Path]:
     """Yield an adjacent temporary file path and clean it up on exit."""
-    temporary = TemporaryPath(directory, prefix=prefix, suffix=suffix)
-    try:
-        yield temporary.path
-    finally:
-        temporary.close()
+    with TemporaryPath(directory, prefix=prefix, suffix=suffix) as path:
+        yield path
 
 
 def promote_temporary_file(

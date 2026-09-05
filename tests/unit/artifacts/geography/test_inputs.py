@@ -200,14 +200,6 @@ def test_read_polygon_centroids_fails_closed_on_malformed_wkb(tmp_path: Path) ->
     assert "row" in message.lower()
 
 
-def test_iter_polygon_geometry_is_a_callable_iterator() -> None:
-    """The helper exposes a typed iterator over (row_index, wkb, geometry_type)."""
-    from pyarrow.parquet import ParquetFile as _PF
-
-    assert callable(iter_polygon_geometry)
-    assert callable(_PF.iter_batches)
-
-
 def test_iter_polygon_geometry_rejects_nonpositive_batch_size(tmp_path: Path) -> None:
     with pytest.raises(GeographicMapError, match="batch_size must be positive"):
         list(iter_polygon_geometry(tmp_path / "missing.parquet", batch_size=0))

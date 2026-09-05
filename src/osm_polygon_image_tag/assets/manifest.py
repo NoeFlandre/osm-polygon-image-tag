@@ -65,14 +65,10 @@ class AssetManifestHeader:
     output_relative_path: str
 
 
-def _canonical_bytes(manifest: AssetManifest) -> bytes:
-    return canonical_json_bytes(asdict(manifest), newline=True)
-
-
 def write_asset_manifest(manifest: AssetManifest, path: Path) -> None:
     atomic_write_bytes(
         path,
-        _canonical_bytes(manifest),
+        canonical_json_bytes(asdict(manifest), newline=True),
         prefix=f".{path.name}.",
         suffix=".tmp",
         sync_directory=True,

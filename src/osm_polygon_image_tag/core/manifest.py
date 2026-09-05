@@ -72,14 +72,10 @@ def source_identity(path: Path, *, relative_path: str) -> SourceIdentity:
     )
 
 
-def _canonical_bytes(manifest: Manifest) -> bytes:
-    return canonical_json_bytes(asdict(manifest), newline=True)
-
-
 def write_manifest(manifest: Manifest, path: Path) -> None:
     atomic_write_bytes(
         path,
-        _canonical_bytes(manifest),
+        canonical_json_bytes(asdict(manifest), newline=True),
         prefix=f".{path.name}.",
         suffix=".tmp",
         sync_directory=True,

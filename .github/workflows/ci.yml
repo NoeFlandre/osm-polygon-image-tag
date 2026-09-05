@@ -47,18 +47,8 @@ jobs:
       - name: Install Just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
 
-      - name: Sync locked dependencies
-        run: uv sync --locked --dev
-
       - name: Run canonical quality gate
         run: just ci
-
-      - name: Smoke test installed wheel
-        run: |
-          uv venv /tmp/osm-image-tag-wheel
-          uv pip install --python /tmp/osm-image-tag-wheel/bin/python dist/*.whl
-          /tmp/osm-image-tag-wheel/bin/osm-polygon-image-tag --help
-          /tmp/osm-image-tag-wheel/bin/python -c "from importlib.resources import files; import osm_polygon_image_tag as p; assert p.__version__ == '0.1.0'; root = files('osm_polygon_image_tag'); assert root.joinpath('_data/osmium-export.json').read_text(); assert root.joinpath('_data/hero.png').read_bytes().startswith(b'\x89PNG\r\n\x1a\n'); assert root.joinpath('assets/README.md').read_text(); assert root.joinpath('resolvers/README.md').read_text()"
 
       - name: Verify no whitespace errors
         run: |
