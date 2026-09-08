@@ -17,25 +17,36 @@ RECORD_1 = b"0103\tway\t1\t1\t1\t2026-01-01T00:00:00Z\t{}\n"
 RECORD_2 = b"0103\trelation\t2\t1\t1\t2026-01-01T00:00:00Z\t{}\n"
 
 
-def test_osmium_defaults_to_the_osmium_path_command(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    program = tmp_path / "osmium"
+def _write_python_executable(program: Path, lines: list[str]) -> Path:
+    """Write an executable running ``lines`` under the active interpreter.
+
+    A ``/bin/sh`` launcher stands in for a ``#!`` line because the kernel splits
+    shebangs on whitespace, so an interpreter path containing a space is
+    unusable there.
+    """
+    source = program.with_name(f"{program.name}-body.py")
+    source.write_text("\n".join(lines) + "\n", encoding="utf-8")
     program.write_text(
-        "\n".join(
-            [
-                f"#!{sys.executable}",
-                "import sys",
-                "if len(sys.argv) > 1 and sys.argv[1] == '--version':",
-                "    sys.stdout.buffer.write(b'osmium version 1.19.1\\n')",
-                "else:",
-                f"    sys.stdout.buffer.write({RECORD_1!r})",
-            ]
-        )
-        + "\n",
+        f'#!/bin/sh\nexec "{sys.executable}" "{source}" "$@"\n',
         encoding="utf-8",
     )
     program.chmod(0o755)
+    return program
+
+
+def test_osmium_defaults_to_the_osmium_path_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_python_executable(
+        tmp_path / "osmium",
+        [
+            "import sys",
+            "if len(sys.argv) > 1 and sys.argv[1] == '--version':",
+            "    sys.stdout.buffer.write(b'osmium version 1.19.1\\n')",
+            "else:",
+            f"    sys.stdout.buffer.write({RECORD_1!r})",
+        ],
+    )
     monkeypatch.setenv("PATH", os.pathsep.join((str(tmp_path), os.environ.get("PATH", ""))))
 
     records = list(stream_export(Path("input.osm.pbf"), Path("policy.json")))
@@ -103,8 +114,8 @@ def _fake_osmium(
     exit_code: int = 0,
     loop: bool = False,
 ) -> Path:
-    program = tmp_path / "fake-osmium.py"
-    lines = [f"#!{sys.executable}", "import sys"]
+    program = tmp_path / "fake-osmium"
+    lines = ["import sys"]
     if loop:
         lines.extend(
             [
@@ -119,9 +130,7 @@ def _fake_osmium(
         lines.append(f"sys.stdout.buffer.write({stdout!r})")
     lines.append(f"sys.stderr.buffer.write({stderr!r})")
     lines.append(f"sys.exit({exit_code})")
-    program.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    program.chmod(0o755)
-    return program
+    return _write_python_executable(program, lines)
 
 
 def test_stream_export_yields_ordered_records(tmp_path: Path) -> None:
