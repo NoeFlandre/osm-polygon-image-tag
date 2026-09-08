@@ -29,7 +29,7 @@ mounted; substitute your own paths on other machines.
 - Read-only PBF source root:
   `/Volumes/Seagate M3/projects/osm-polygon-wikidata-only/raw`
 - Managed data root:
-  `/Volumes/Seagate M3/projects/osm-polygon-image-tag`
+  `/Volumes/Seagate M3/projects/osm-polygon-image-tag/data-root`
 
 When you are not running against the live production data, pass a separate
 throwaway data root explicitly. Set
@@ -215,7 +215,7 @@ Then resume:
 ```bash
 uv run osm-polygon-image-tag run-and-publish \
   --source-root "/Volumes/Seagate M3/projects/osm-polygon-wikidata-only/raw" \
-  --data-root "/Volumes/Seagate M3/projects/osm-polygon-image-tag" \
+  --data-root "/Volumes/Seagate M3/projects/osm-polygon-image-tag/data-root" \
   --confirm-repo NoeFlandre/osm-polygon-image-tag
 ```
 

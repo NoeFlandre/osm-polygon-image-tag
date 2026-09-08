@@ -23,7 +23,7 @@ uv sync --locked --dev
 Use a small test tree first, then move to the production paths. The source
 tree is read-only; all writes go below the selected data root. On the configured
 macOS workspace, omitting `--data-root` selects
-`/Volumes/Seagate M3/projects/osm-polygon-image-tag` when the volume is
+`/Volumes/Seagate M3/projects/osm-polygon-image-tag/data-root` when the volume is
 mounted. On other machines, pass `--data-root` or set
 `OSM_POLYGON_IMAGE_TAG_DATA_ROOT`; the CLI does not write a fallback directory
 inside the repository.
@@ -121,7 +121,7 @@ These are examples, not defaults:
 
 ```text
 source: /Volumes/Seagate M3/projects/osm-polygon-wikidata-only/raw
-data:   /Volumes/Seagate M3/projects/osm-polygon-image-tag
+data:   /Volumes/Seagate M3/projects/osm-polygon-image-tag/data-root
 ```
 
 Keep the source path read-only and never place PBFs, Parquet files, caches, or

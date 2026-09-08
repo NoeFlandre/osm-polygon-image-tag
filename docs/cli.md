@@ -17,7 +17,7 @@ These options have the same meaning on every command:
 The source root is required and must be a real directory. The data root is
 resolved in this order: explicit `--data-root`,
 `OSM_POLYGON_IMAGE_TAG_DATA_ROOT`, then
-`/Volumes/Seagate M3/projects/osm-polygon-image-tag` when its external volume
+`/Volumes/Seagate M3/projects/osm-polygon-image-tag/data-root` when its external volume
 is mounted. If none is available, the command exits with an error rather than
 writing inside the repository. The source and data roots may not overlap.
 Publication also rejects symlinks or unexpected entries inside the managed data

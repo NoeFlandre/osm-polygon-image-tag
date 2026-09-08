@@ -31,6 +31,17 @@ improvements, and documentation fixes.
    touches behaviour covered by [`docs/data-contract.md`](docs/data-contract.md),
    call that out explicitly.
 
+### Saturated-volume flakiness
+
+A few `tests/unit/ingest/test_extraction_stream.py` cases spawn a real
+interpreter subprocess and are bounded by the 5s and 10s deadlines in
+`ingest/osmium.py`. Those deadlines are generous when the volume holding the
+checkout is idle, but another process doing bulk I/O on the same volume can
+stall interpreter startup past them and produce up to three spurious failures.
+Suite duration is the tell: an idle run finishes in well under a minute, while
+a contended one takes several. Check for competing I/O and re-run before
+treating such a failure as a regression.
+
 ## House rules
 
 - One independently green commit per logical change.

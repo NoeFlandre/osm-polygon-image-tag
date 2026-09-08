@@ -74,7 +74,7 @@ Ctrl-C once and wait; the next run continues from the last finalized boundary.
 The source tree is always read-only, and all writes stay under the selected
 data root.
 On this macOS workspace, omitting `--data-root` uses
-`/Volumes/Seagate M3/projects/osm-polygon-image-tag` while that volume is
+`/Volumes/Seagate M3/projects/osm-polygon-image-tag/data-root` while that volume is
 mounted. Set `OSM_POLYGON_IMAGE_TAG_DATA_ROOT` or pass `--data-root` to select
 another writable root; the CLI never silently falls back to the repository.
 

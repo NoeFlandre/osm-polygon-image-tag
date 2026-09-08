@@ -5,7 +5,7 @@ from pathlib import Path
 from osm_polygon_image_tag.core.errors import ConfigurationError
 
 DATA_ROOT_ENVIRONMENT_VARIABLE = "OSM_POLYGON_IMAGE_TAG_DATA_ROOT"
-DEFAULT_DATA_ROOT = Path("/Volumes/Seagate M3/projects/osm-polygon-image-tag")
+DEFAULT_DATA_ROOT = Path("/Volumes/Seagate M3/projects/osm-polygon-image-tag/data-root")
 
 
 def resolve_data_root(data_root: Path | None) -> Path:

@@ -34,7 +34,7 @@ one operation and log the current deterministic statistics snapshot:
 
 ```bash
 uv run --with trackio python -m osm_polygon_image_tag.integrations.trackio \
-  "/Volumes/Seagate M3/projects/osm-polygon-image-tag"
+  "/Volumes/Seagate M3/projects/osm-polygon-image-tag/data-root"
 ```
 
 The command creates or updates
