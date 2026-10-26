@@ -124,14 +124,10 @@ def test_dataset_card_includes_geography_section(tmp_path: Path) -> None:
     result = generate_metadata(tmp_path)
     body = result.card_path.read_text()
 
-    assert "## Where the features are" in body
-    assert "### Polygon density map" in body
-    assert "![Geographic OSM Polygon Density](assets/geographic_polygon_density.png)" in body
-    assert "published polygon rows" in body
-    assert "geometry's center" in body
-    assert "H3 resolution" in body
-    assert "one row per OSM type and ID" in body
-    assert "logarithmic" in body.lower()
+    assert "![Polygons per H3 cell](assets/geographic_polygon_density.png)" in body
+    assert "Polygons per [H3](https://h3geo.org) cell (resolution 3, log scale)" in body
+    assert "counted once, at its center" in body
+    assert "One row per\n   `osm_type` + `osm_id` is kept" in body
     assert "polygon_images" in body
 
 

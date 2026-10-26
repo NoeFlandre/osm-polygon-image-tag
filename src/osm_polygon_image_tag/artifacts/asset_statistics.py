@@ -173,21 +173,24 @@ def public_asset_statistics(
     schema_versions, resolver_versions = _manifest_version_counts(source_manifests)
 
     image_stats = _scan_public_images(image_path)
-    image_relation_counts, relationship_rows = _scan_public_links(
-        link_path, image_stats["usable_image_ids"]
-    )
+    links = _scan_public_links(link_path, image_stats["usable_image_ids"])
+    image_relation_counts = links["relation_counts"]
 
     return {
         "shards": len(source_manifests),
         "rows": image_stats["image_rows"],
-        "relationship_rows": relationship_rows,
+        "relationship_rows": links["rows"],
         "output_bytes": image_path.stat().st_size + link_path.stat().st_size,
         "provider_counts": image_stats["provider_counts"],
         "status_counts": image_stats["status_counts"],
+        "provider_direct_urls": dict(sorted(image_stats["provider_direct_urls"].items())),
         "direct_urls": image_stats["direct_urls"],
         "stable_direct_urls": image_stats["stable_direct_urls"],
         "image_relation_counts": dict(sorted(image_relation_counts.items())),
         "usable_relationship_rows": sum(image_relation_counts.values()),
+        "link_provider_counts": dict(sorted(links["provider_counts"].items())),
+        "usable_link_provider_counts": dict(sorted(links["usable_provider_counts"].items())),
+        "polygons_with_direct_url": links["polygons_with_direct_url"],
         "page_urls": image_stats["page_urls"],
         "expiring_urls": image_stats["expiring_urls"],
         "licensed_assets": image_stats["licensed_assets"],
@@ -211,6 +214,7 @@ class _PublicImageStats(TypedDict):
     image_rows: int
     provider_counts: Counter[str]
     status_counts: Counter[str]
+    provider_direct_urls: Counter[str]
     usable_image_ids: set[str]
     direct_urls: int
     stable_direct_urls: int
@@ -226,6 +230,7 @@ def _scan_public_images(path: Path) -> _PublicImageStats:
         "image_rows": 0,
         "provider_counts": Counter(),
         "status_counts": Counter(),
+        "provider_direct_urls": Counter(),
         "usable_image_ids": set(),
         "direct_urls": 0,
         "stable_direct_urls": 0,
@@ -270,6 +275,7 @@ def _add_public_image_row(stats: _PublicImageStats, values: tuple[object, ...]) 
     stats["status_counts"][str(status)] += 1
     usable = image_url is not None
     stats["direct_urls"] += int(usable)
+    stats["provider_direct_urls"][str(provider)] += int(usable)
     stats["stable_direct_urls"] += int(usable and expires_at is None)
     stats["expiring_urls"] += int(usable and expires_at is not None)
     stats["page_urls"] += int(page_url is not None)
@@ -280,18 +286,34 @@ def _add_public_image_row(stats: _PublicImageStats, values: tuple[object, ...]) 
         stats["usable_image_ids"].add(str(image_id_value))
 
 
-def _scan_public_links(path: Path, usable_image_ids: set[str]) -> tuple[Counter[str], int]:
-    counts: Counter[str] = Counter({"category_membership": 0, "direct_reference": 0})
-    relationship_rows = 0
-    for batch in pq.ParquetFile(path).iter_batches(
-        columns=["image_id", "relation_kind"], batch_size=65_536
-    ):
-        relationship_rows += batch.num_rows
-        for image_id, relation_kind in zip(
-            batch.column("image_id").to_pylist(),
-            batch.column("relation_kind").to_pylist(),
-            strict=True,
-        ):
+class _PublicLinkStats(TypedDict):
+    rows: int
+    relation_counts: Counter[str]
+    provider_counts: Counter[str]
+    usable_provider_counts: Counter[str]
+    polygons_with_direct_url: int
+
+
+def _scan_public_links(path: Path, usable_image_ids: set[str]) -> _PublicLinkStats:
+    relation_counts: Counter[str] = Counter({"category_membership": 0, "direct_reference": 0})
+    provider_counts: Counter[str] = Counter()
+    usable_provider_counts: Counter[str] = Counter()
+    polygons: set[tuple[str, int]] = set()
+    rows = 0
+    columns = ["osm_type", "osm_id", "image_id", "provider", "relation_kind"]
+    for batch in pq.ParquetFile(path).iter_batches(columns=columns, batch_size=65_536):
+        rows += batch.num_rows
+        values = [batch.column(name).to_pylist() for name in columns]
+        for osm_type, osm_id, image_id, provider, relation_kind in zip(*values, strict=True):
+            provider_counts[str(provider)] += 1
             if str(image_id) in usable_image_ids:
-                counts[str(relation_kind)] += 1
-    return counts, relationship_rows
+                relation_counts[str(relation_kind)] += 1
+                usable_provider_counts[str(provider)] += 1
+                polygons.add((str(osm_type), int(osm_id)))
+    return {
+        "rows": rows,
+        "relation_counts": relation_counts,
+        "provider_counts": provider_counts,
+        "usable_provider_counts": usable_provider_counts,
+        "polygons_with_direct_url": len(polygons),
+    }

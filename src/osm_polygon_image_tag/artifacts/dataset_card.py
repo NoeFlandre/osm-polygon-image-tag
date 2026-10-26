@@ -1,17 +1,157 @@
 """Render the deterministic Hugging Face dataset card."""
 
-import json
-import re
-from collections.abc import Mapping, Sequence
-from typing import Any, cast
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Any
 
 import yaml
 
 from osm_polygon_image_tag.artifacts.geography.render import GEOGRAPHIC_PNG_RELATIVE
 from osm_polygon_image_tag.artifacts.hero import HERO_PNG_RELATIVE
 
-_SECRET_QUERY = re.compile(
-    r"(?i)(access_token|api_key|apikey|key|token|secret|signature)=([^&#\s]+)"
+REPO_ID = "NoeFlandre/osm-polygon-image-tag"
+_CODE_URL = "https://github.com/NoeFlandre/osm-polygon-image-tag"
+_TRACKIO_URL = "https://huggingface.co/spaces/NoeFlandre/osm-polygon-image-tag-trackio"
+_ODBL_URL = "https://opendatacommons.org/licenses/odbl/1-0/"
+_RELEASE = "v0.1.1"
+
+_QUICK_START_SQL = """```sql
+SELECT p.osm_type, p.osm_id, p.area_m2, i.image_url, i.license_id
+FROM 'hf://datasets/NoeFlandre/osm-polygon-image-tag/public/polygon_images.parquet' l
+JOIN 'hf://datasets/NoeFlandre/osm-polygon-image-tag/public/polygons.parquet' p
+  USING (osm_type, osm_id)
+JOIN 'hf://datasets/NoeFlandre/osm-polygon-image-tag/public/images.parquet' i USING (image_id)
+WHERE l.relation_kind = 'direct_reference' AND i.image_url IS NOT NULL
+LIMIT 10;
+```"""
+
+_PROVIDER_TAGS = {
+    "wikimedia_commons": "`wikimedia_commons`, `image=File:…` / `Category:…`",
+    "image": "`image` (any other URL)",
+    "mapillary": "`mapillary`",
+    "panoramax": "`panoramax`, `panoramax:N`",
+    "kartaview": "`kartaview`",
+    "flickr": "`flickr`",
+    "streetside": "`bubbleid`",
+}
+
+_STATUS_MEANINGS = {
+    "resolved": "Direct image URL found",
+    "resolved_page_only": (
+        "Provider page only: no API credential (Mapillary, Flickr) "
+        "or no raw-image API (Bing Streetside)"
+    ),
+    "not_found": "The provider or URL says the image does not exist",
+    "not_direct_image": "The URL answers, but not with an `image/*` type (usually a web page)",
+    "invalid_reference": "The tag value is not a valid reference for its provider",
+    "category_empty": "Commons category with no file directly in it",
+    "category_truncated": "Commons category over the 500-file cap whose kept files gave no image",
+    "temporary_failure": "Provider error or rate limit; `retry_after` says when to retry",
+}
+
+_FIELD_HEADER = ("Field", "Type", "Description")
+
+_POLYGON_FIELDS = (
+    (
+        "`osm_type`, `osm_id`",
+        "string, int64",
+        "OSM object (`way` or `relation`) and its ID; unique together",
+    ),
+    (
+        "`osm_version`, `osm_changeset`, `osm_timestamp`",
+        "int32, int64, timestamp",
+        "Version kept (the newest seen) and its edit metadata",
+    ),
+    (
+        "`geometry`",
+        "WKB",
+        "[GeoParquet](https://geoparquet.org) geometry, CRS84",
+    ),
+    ("`geometry_type`", "string", "`Polygon` or `MultiPolygon`"),
+    ("`area_m2`", "float64", "Geodesic area on WGS 84, m²"),
+    (
+        "`bbox_min_lon`, `bbox_min_lat`, `bbox_max_lon`, `bbox_max_lat`",
+        "float64",
+        "Bounding box",
+    ),
+    ("`tags`", "list[{key, value}]", "All original OSM tags"),
+    (
+        "`image`, `wikimedia_commons`, `mapillary`, `kartaview`, `flickr`, `bubbleid`",
+        "string",
+        "Raw value of each image tag, or null",
+    ),
+    (
+        "`panoramax`, `panoramax_values`",
+        "string, list[{key, value}]",
+        "`panoramax` tag, and every `panoramax` / `panoramax:N` tag",
+    ),
+    (
+        "`source_pbf`, `source_feature_id`",
+        "string",
+        "Geofabrik extract of the kept row, and its row ID",
+    ),
+    ("`source_pbfs`", "list[string]", "Every extract that contained the polygon"),
+)
+
+_IMAGE_FIELDS = (
+    ("`image_id`", "string", "Stable image ID (`img_` + SHA-256)"),
+    (
+        "`provider`",
+        "string",
+        "`wikimedia_commons`, `image`, `mapillary`, `panoramax`, `kartaview`, "
+        "`flickr` or `streetside`",
+    ),
+    (
+        "`canonical_reference`",
+        "string",
+        "Normalized reference that was looked up (file, category, URL, ID)",
+    ),
+    ("`provider_asset_id`", "string", "Provider's own image ID"),
+    ("`page_url`", "string", "Provider page for the image"),
+    ("`image_url`", "string", "Direct image URL; null when none was found"),
+    ("`thumbnail_url`", "string", "Thumbnail URL, when the provider gives one"),
+    ("`image_url_expires_at`", "timestamp", "When `image_url` expires; null if it does not"),
+    ("`mime_type`, `width`, `height`", "string, int32", "Image type and size in pixels"),
+    (
+        "`license_id`, `license_url`, `author`",
+        "string",
+        "License and author as stated by the provider (`author` may be HTML)",
+    ),
+    (
+        "`status`, `reason`",
+        "string",
+        "Lookup result and detail, see [Lookup status](#lookup-status)",
+    ),
+    ("`category_truncated`", "bool", "Came from a Commons category over the 500-file cap"),
+    ("`retry_after`", "timestamp", "When a `temporary_failure` can be retried"),
+    (
+        "`resolver_contract_version`, `response_sha256`",
+        "int32, string",
+        "Lookup code version and digest of the provider response",
+    ),
+    ("`source_pbfs`", "list[string]", "Extracts whose polygons reference the image"),
+)
+
+_LINK_FIELDS = (
+    (
+        "`osm_type`, `osm_id`, `osm_version`",
+        "string, int64, int32",
+        "Polygon; join to `polygons` on `osm_type`, `osm_id`",
+    ),
+    ("`image_id`", "string", "Image; join to `images`"),
+    ("`provider`", "string", "Provider of the image"),
+    (
+        "`source_tag_key`, `source_tag_value`",
+        "string",
+        "OSM tag the link comes from, as written",
+    ),
+    ("`canonical_reference`", "string", "Normalized reference that was looked up"),
+    ("`asset_index`", "int32", "Position of the image among the reference's results"),
+    ("`relation_kind`", "string", "`direct_reference` or `category_membership`"),
+    (
+        "`source_pbfs`, `observed_osm_versions`",
+        "list[string], list[int32]",
+        "Extracts and OSM versions where the link was seen",
+    ),
 )
 
 
@@ -28,300 +168,332 @@ def _percentage(part: Any, total: Any) -> str:
     return f"{int(part) / denominator * 100:.1f}%"
 
 
-def _safe_example_value(value: object) -> object:
-    """Make an example JSON-safe while redacting secret-like query values."""
-    if isinstance(value, bytes):
-        return f"0x{value.hex()}"
-    if isinstance(value, str):
-        return _SECRET_QUERY.sub(r"\1=[redacted]", value)
-    if isinstance(value, Mapping):
-        return _safe_example_mapping(cast(Mapping[object, object], value))
-    if isinstance(value, list):
-        return _safe_example_list(value)
-    return _safe_example_scalar(value)
+def _area(value: float) -> str:
+    """Format an area in m², hectares, or km², whichever reads best."""
+    if value < 10_000:
+        return f"{value:,.0f} m²"
+    if value < 1_000_000:
+        return f"{value / 10_000:,.1f} ha"
+    return f"{value / 1_000_000:,.1f} km²"
 
 
-def _safe_example_mapping(value: Mapping[object, object]) -> dict[str, object]:
-    return {str(key): _safe_example_value(item) for key, item in value.items()}
+def _table(header: Sequence[str], rows: Iterable[Sequence[str]], *, numeric: int = 0) -> str:
+    """Render a Markdown table whose last ``numeric`` columns are right-aligned."""
+    alignment = ["---"] * (len(header) - numeric) + ["---:"] * numeric
+    lines = [header, alignment, *rows]
+    return "\n".join("| " + " | ".join(line) + " |" for line in lines)
 
 
-def _safe_example_list(value: Sequence[object]) -> list[object]:
-    return [_safe_example_value(item) for item in value]
-
-
-def _safe_example_scalar(value: object) -> object:
-    isoformat = getattr(value, "isoformat", None)
-    return isoformat() if callable(isoformat) else value
-
-
-def _example_json(example: Mapping[str, object] | None) -> str:
-    """Render one deterministic example row, or a clear empty-state sentence."""
-    if example is None:
-        return "No finalized row is available in this snapshot."
-    rendered = json.dumps(_safe_example_value(example), ensure_ascii=False, indent=2)
-    return f"```json\n{rendered}\n```"
-
-
-def _provider_lines(statistics: Mapping[str, Any]) -> str:
-    return "\n".join(
-        f"- `{provider}`: {_count(count)}"
-        for provider, count in statistics["provider_counts"].items()
+def _size_category(rows: int) -> str:
+    bounds = (
+        (1_000, "n<1K"),
+        (10_000, "1K<n<10K"),
+        (100_000, "10K<n<100K"),
+        (1_000_000, "100K<n<1M"),
+        (10_000_000, "1M<n<10M"),
+        (100_000_000, "10M<n<100M"),
     )
+    return next((label for bound, label in bounds if rows < bound), "100M<n<1B")
 
 
-def _geography_values(statistics: Mapping[str, Any]) -> tuple[int, int, int, int, int]:
-    geography = statistics.get("geography") or {}
-    return (
-        _geography_value(geography, "h3_resolution", 3),
-        _geography_value(geography, "cell_count", 0),
-        _geography_value(geography, "min_cell_count", 0),
-        _geography_value(geography, "max_cell_count", 0),
-        int(statistics["rows"]),
-    )
-
-
-def _geography_value(geography: Mapping[str, Any], key: str, default: int) -> int:
-    return int(geography.get(key) or default)
-
-
-def _source_pbf_phrase(source_pbf_count: int) -> str:
-    if source_pbf_count == 1:
-        return f"the {_count(source_pbf_count)} processed source PBF file"
-    return f"all {_count(source_pbf_count)} processed source PBF files"
-
-
-def dataset_card(
-    statistics: dict[str, Any],
-    *,
-    examples: Mapping[str, Mapping[str, object] | None] | None = None,
-) -> bytes:
-    """Render a card containing only facts derived from the statistics payload."""
-    providers = _provider_lines(statistics)
+def _frontmatter(statistics: Mapping[str, Any]) -> str:
+    assets = statistics["assets"]
+    largest = max(int(statistics["rows"]), int(assets["rows"]), int(assets["relationship_rows"]))
+    configs = [
+        {
+            "config_name": name,
+            **({"default": True} if name == "polygons" else {}),
+            "data_files": [{"split": "train", "path": f"public/{name}.parquet"}],
+        }
+        for name in ("polygons", "images", "polygon_images")
+    ]
     metadata = {
         "license": "odbl",
-        "tags": ["openstreetmap", "geospatial", "geoparquet", "image"],
-        "configs": [
-            {
-                "config_name": "polygons",
-                "default": True,
-                "data_files": [{"split": "train", "path": "public/polygons.parquet"}],
-            },
-            {
-                "config_name": "images",
-                "data_files": [{"split": "train", "path": "public/images.parquet"}],
-            },
-            {
-                "config_name": "polygon_images",
-                "data_files": [{"split": "train", "path": "public/polygon_images.parquet"}],
-            },
+        "pretty_name": "OSM Polygon Image Tag",
+        "tags": [
+            "openstreetmap",
+            "geospatial",
+            "geoparquet",
+            "image",
+            "wikimedia-commons",
+            "street-level-imagery",
         ],
+        "size_categories": [_size_category(largest)],
+        "configs": configs,
     }
-    frontmatter = yaml.safe_dump(metadata, sort_keys=False, allow_unicode=True)
+    return yaml.safe_dump(metadata, sort_keys=False, allow_unicode=True)
+
+
+def _summary(statistics: Mapping[str, Any]) -> str:
     assets = statistics["assets"]
-    image_relation_counts = assets.get("image_relation_counts", {})
-    direct_image_rows = int(image_relation_counts.get("direct_reference", 0))
-    indirect_image_rows = int(image_relation_counts.get("category_membership", 0))
-    usable_relationship_rows = int(assets.get("usable_relationship_rows", 0))
-    direct_image_summary = (
-        f"- Directly linked from an OSM tag: {_count(direct_image_rows)} "
-        f"({_percentage(direct_image_rows, usable_relationship_rows)})"
+    regions = int(statistics["shards"])
+    return (
+        f"**{_count(assets['direct_urls'])} images with a direct URL, linked to "
+        f"{_count(assets.get('polygons_with_direct_url', 0))} of "
+        f"{_count(statistics['rows'])} OpenStreetMap polygons in {_count(regions)} "
+        f"{'region' if regions == 1 else 'regions'}.**"
     )
-    indirect_image_summary = (
-        "- Indirectly reached through a Wikimedia Commons category: "
-        f"{_count(indirect_image_rows)} "
-        f"({_percentage(indirect_image_rows, usable_relationship_rows)})"
+
+
+def _map_caption(statistics: Mapping[str, Any]) -> str:
+    geography = statistics.get("geography") or {}
+    resolution = int(geography.get("h3_resolution") or 3)
+    cells = int(geography.get("cell_count") or 0)
+    peak = int(geography.get("max_cell_count") or 0)
+    return (
+        f"Polygons per [H3](https://h3geo.org) cell (resolution {resolution}, log scale): "
+        f"{_count(cells)} cells, up to {_count(peak)} polygons in one cell. "
+        "Each polygon is counted once, at its center."
     )
-    usable_link_summary = (
-        f"**Among {_count(usable_relationship_rows)} links with a usable direct image URL:**"
+
+
+def _config_table(statistics: Mapping[str, Any]) -> str:
+    assets = statistics["assets"]
+    return _table(
+        ("Config", "One row per", "Rows"),
+        (
+            ("`polygons` (default)", "OSM polygon", _count(statistics["rows"])),
+            ("`images`", "provider image", _count(assets["rows"])),
+            ("`polygon_images`", "polygon-image link", _count(assets["relationship_rows"])),
+        ),
+        numeric=1,
     )
-    page_url_summary = (
-        "- Unique images with a provider page URL (a page, not necessarily an image): "
-        f"{_count(assets['page_urls'])}"
+
+
+def _provider_table(assets: Mapping[str, Any]) -> str:
+    images = assets.get("provider_counts", {})
+    image_urls = assets.get("provider_direct_urls", {})
+    links = assets.get("link_provider_counts", {})
+    usable_links = assets.get("usable_link_provider_counts", {})
+    providers = sorted(set(images) | set(links), key=lambda name: (-int(links.get(name, 0)), name))
+    rows = [
+        (
+            name,
+            _PROVIDER_TAGS.get(name, ""),
+            _count(links.get(name, 0)),
+            _count(usable_links.get(name, 0)),
+            _count(images.get(name, 0)),
+            _count(image_urls.get(name, 0)),
+        )
+        for name in providers
+    ]
+    rows.append(
+        (
+            "**total**",
+            "",
+            _count(assets["relationship_rows"]),
+            _count(assets.get("usable_relationship_rows", 0)),
+            _count(assets["rows"]),
+            _count(assets["direct_urls"]),
+        )
     )
-    h3_resolution, cell_count, min_cell_count, max_cell_count, polygon_rows = _geography_values(
-        statistics
+    header = ("Provider", "OSM tags", "Links", "with image URL", "Images", "with image URL")
+    return _table(header, rows, numeric=4)
+
+
+def _relation_table(assets: Mapping[str, Any]) -> str:
+    counts = assets.get("image_relation_counts", {})
+    usable = int(assets.get("usable_relationship_rows", 0))
+    meanings = (
+        ("direct_reference", "The tag names this image"),
+        ("category_membership", "A file in the Commons category the tag names"),
     )
-    source_pbf_phrase = _source_pbf_phrase(int(statistics["shards"]))
-    map_summary = (
-        f"The map contains {_count(polygon_rows)} published polygon rows from {source_pbf_phrase}."
+    rows = (
+        (
+            f"`{kind}`",
+            meaning,
+            f"{_count(counts.get(kind, 0))} ({_percentage(counts.get(kind, 0), usable)})",
+        )
+        for kind, meaning in meanings
     )
-    example_values = examples or {}
-    text = f"""---\n{frontmatter}---
-![OSM Polygon Image Tag hero]({HERO_PNG_RELATIVE})
+    return _table(("`relation_kind`", "Meaning", "Links with image URL"), rows, numeric=1)
+
+
+def _tag_table(statistics: Mapping[str, Any]) -> str:
+    ordered = sorted(
+        statistics.get("provider_counts", {}).items(), key=lambda item: (-int(item[1]), item[0])
+    )
+    return _table(("OSM tag", "Polygons"), ((f"`{t}`", _count(n)) for t, n in ordered), numeric=1)
+
+
+def _polygon_summary(statistics: Mapping[str, Any]) -> str:
+    osm_types = statistics.get("osm_types", {})
+    first = str(statistics.get("timestamp_min") or "")[:10]
+    last = str(statistics.get("timestamp_max") or "")[:10]
+    edits = f" Kept versions were edited between {first} and {last}." if first and last else ""
+    return (
+        f"{_count(osm_types.get('way', 0))} ways and "
+        f"{_count(osm_types.get('relation', 0))} multipolygon relations.{edits}"
+    )
+
+
+def _area_table(statistics: Mapping[str, Any]) -> str:
+    quantiles = (statistics.get("area_m2") or {}).get("quantiles") or {}
+    labels = {"p10": "10%", "p25": "25%", "p50": "Median", "p75": "75%", "p90": "90%"}
+    keys = [key for key in labels if key in quantiles]
+    if not keys:
+        return ""
+    table = _table(
+        [labels[key] for key in keys],
+        [[_area(float(quantiles[key])) for key in keys]],
+        numeric=len(keys),
+    )
+    return f"Polygon areas:\n\n{table}"
+
+
+def _status_table(assets: Mapping[str, Any]) -> str:
+    ordered = sorted(
+        assets.get("status_counts", {}).items(), key=lambda item: (-int(item[1]), item[0])
+    )
+    rows = (
+        (f"`{status}`", _STATUS_MEANINGS.get(status, ""), _count(count))
+        for status, count in ordered
+    )
+    return _table(("`status`", "Meaning", "Images"), rows, numeric=1)
+
+
+def _methodology(statistics: Mapping[str, Any]) -> str:
+    assets = statistics["assets"]
+    regions = _count(statistics["shards"])
+    return f"""\
+1. **Polygons.** Closed ways and multipolygon relations exported with
+   [osmium](https://osmcode.org/osmium-tool/) from {regions} regional
+   [Geofabrik](https://download.geofabrik.de) extracts, kept when an image tag is non-empty.
+   Area is geodesic on WGS 84; polygons without a positive area are dropped.
+2. **Deduplication.** Extracts overlap, so one object can appear several times. One row per
+   `osm_type` + `osm_id` is kept, newest version first; `source_pbfs` lists every extract.
+   {_count(statistics.get("duplicate_observations_removed", 0))} polygon rows,
+   {_count(assets.get("duplicate_images_removed", 0))} image rows and
+   {_count(assets.get("duplicate_links_removed", 0))} links were removed.
+3. **References.** Each tag value is normalized for its provider. `image` values starting with
+   `File:`, `Image:` or `Category:` go to Wikimedia Commons; other `image` values must be
+   HTTP(S) URLs. Mapillary, Bing Streetside (`bubbleid`) and KartaView need numeric IDs,
+   Panoramax a UUID.
+4. **Lookup.**
+   * Wikimedia Commons: files through the MediaWiki API; a category gives its direct files,
+     sorted by page ID, up to 500.
+   * `image` URLs: fetched, and kept as an image only if the server answers with an
+     `image/*` type.
+   * Mapillary (Graph API), Panoramax (metacatalog), KartaView: provider APIs.
+     Flickr without an API key and Bing Streetside give a page URL only.
+   * URLs that resolve to non-public addresses are refused. Results are cached: this release
+     made {_count(assets.get("network_resolutions", 0))} new lookups and reused
+     {_count(assets.get("cache_hits", 0))}.
+5. **Release.** Images are deduplicated by provider and image identity, links by polygon,
+   image and tag. Every number in this card is computed from the published files.
+
+Code: [GitHub]({_CODE_URL}), release [{_RELEASE}]({_CODE_URL}/releases/tag/{_RELEASE}).
+Metrics for each release: [Trackio Space]({_TRACKIO_URL})."""
+
+
+def _fields() -> str:
+    return "\n\n".join(
+        f"**`{name}`**\n\n{_table(_FIELD_HEADER, rows)}"
+        for name, rows in (
+            ("polygons", _POLYGON_FIELDS),
+            ("images", _IMAGE_FIELDS),
+            ("polygon_images", _LINK_FIELDS),
+        )
+    )
+
+
+def dataset_card(statistics: dict[str, Any]) -> bytes:
+    """Render a card whose numbers all come from the statistics payload."""
+    assets = statistics["assets"]
+    text = f"""---
+{_frontmatter(statistics)}---
+
+![OSM Polygon Image Tag: OpenStreetMap polygons and the images their tags point to]\
+({HERO_PNG_RELATIVE})
 
 # OSM Polygon Image Tag
 
-This dataset connects OpenStreetMap polygons to image references found in their
-tags. It contains closed ways and relations only.
+{_summary(statistics)}
 
-The release has three files:
+Every polygon is a closed way or multipolygon relation that carries an image tag: `image`,
+`wikimedia_commons`, `mapillary`, `panoramax`, `kartaview`, `flickr` or `bubbleid`. Each tag
+value was looked up at its provider and turned into image rows with a direct URL, size,
+license and author when available. There are three tables: `polygons`, `images`, and
+`polygon_images` linking the two. Image files are not included, only their URLs.
 
-- `polygons`: one current row per OSM type and ID, including its geometry and
-  all original tags.
-- `images`: one row for each unique provider image. It keeps the provider's
-  reference and, when available, a direct image URL.
-- `polygon_images`: the links between features and images. This is a separate
-  file. One image can be linked to many features, and one feature can have many images.
+![Polygons per H3 cell]({GEOGRAPHIC_PNG_RELATIVE})
 
-A tag value is the original reference. It may be a URL, provider ID, UUID, or
-category name; it is not always an image URL. The `images` file records the
-lookup result. Use `polygons` for the original OSM tags and `images` for the
-lookup result.
+{_map_caption(statistics)}
 
-## Snapshot summary
-
-This snapshot contains:
-
-- Source PBF files processed: {_count(statistics["shards"])}
-- Published OSM features: {_count(statistics["rows"])}
-- Duplicate polygon rows removed: {_count(statistics.get("duplicate_observations_removed", 0))}
-- Unique image records: {_count(assets["rows"])}
-- Image-reference links checked: {_count(assets.get("relationship_rows", 0))}
-- Unique images with a usable direct image URL: {_count(assets["direct_urls"])}
-- Links with a usable direct image URL: {_count(usable_relationship_rows)}
-- Duplicate image records removed: {_count(assets.get("duplicate_images_removed", 0))}
-- Duplicate polygon-to-image links removed: {_count(assets.get("duplicate_links_removed", 0))}
-
-These percentages count polygon-to-image links, not unique images. A single
-image can be linked to more than one polygon.
-
-{usable_link_summary}
-
-{direct_image_summary}
-{indirect_image_summary}
-
-- Unique images with a non-expiring image URL: {_count(assets["stable_direct_urls"])}
-{page_url_summary}
-- Cached lookups reused: {_count(assets["cache_hits"])}
-- New provider lookups: {_count(assets["network_resolutions"])}
-
-The source-tag counts below are counts of polygons carrying each tag, not image
-counts.
-{providers}
-
-## Where the features are
-
-### Polygon density map
-
-![Geographic OSM Polygon Density]({GEOGRAPHIC_PNG_RELATIVE})
-
-Each colored H3 cell shows the number of published polygon rows in that cell.
-We place a polygon in the cell containing its geometry's center, so every
-polygon is counted once. The map uses H3 resolution {h3_resolution}, a global
-grid system. Colors use a logarithmic scale (`magma`) so sparse and dense areas
-are both visible. Cell counts range from {_count(min_cell_count)} to
-{_count(max_cell_count)} across {_count(cell_count)} cells. {map_summary} Image
-rows and links are not counted on this map.
-
-### How repeated rows are removed
-
-The same OSM feature can appear in more than one source PBF file, and an object
-can have several historical versions. The public `polygons` file keeps one row per OSM type and ID.
-Rows with the same OSM type, ID, and version are duplicates. The newest version
-(or newest timestamp when no version is available) wins.
-
-1. We keep one copy, chosen by a fixed rule so the result is reproducible.
-2. We list every source file in `source_pbfs`, so the provenance is not lost.
-3. We deduplicate `images` by provider and physical image identity. A usable
-   image URL is preferred; provider ID, reference, or page URL is used when no
-   image URL exists.
-4. We keep each distinct feature-to-image tag relationship in
-   `polygon_images`, merging its source files and observed OSM versions.
-
-The private per-PBF files remain available for resume and audit; the public files
-contain only this deduplicated view.
-
-## What is in the files
-
-### `polygons`
-
-Each row contains the OSM type, ID, version, changeset, timestamp, source
-information, geometry, area in square metres, bounding box, every original OSM
-tag, and the raw image-reference values: `image`, `wikimedia_commons`,
-`mapillary`, `panoramax`, `kartaview`, `flickr`, and `bubbleid`.
-
-`geometry` is compact WKB geometry in CRS84. `tags` and `panoramax_values` are
-lists of `{{"key": ..., "value": ...}}` objects, which makes every original
-tag easy to read in the Dataset Viewer. `source_pbfs` lists all source PBF files
-that contained the feature.
-
-### `images`
-
-Each row describes one unique provider image. It keeps the provider's reference,
-lookup status, provider page URL, direct image URL when one was found, expiration
-time, file type, dimensions, and license/author information when available.
-
-### `polygon_images`
-
-Each row connects one polygon to one image and keeps the original tag key/value,
-reference, relation type, source files, and observed OSM versions. Join it to
-`polygons` with `osm_type` and `osm_id`, and to `images` with `image_id`.
+## Quick start
 
 ```python
 from datasets import load_dataset
 
-polygons = load_dataset("NoeFlandre/osm-polygon-image-tag", "polygons")
-images = load_dataset("NoeFlandre/osm-polygon-image-tag", "images")
-polygon_images = load_dataset("NoeFlandre/osm-polygon-image-tag", "polygon_images")
+polygons = load_dataset("{REPO_ID}", "polygons", split="train")
+images = load_dataset("{REPO_ID}", "images", split="train")
+links = load_dataset("{REPO_ID}", "polygon_images", split="train")
 ```
 
-## Example rows
+Join polygons to their images with DuckDB, reading only what the query needs:
 
-These are real rows from this snapshot and show every column in each file.
-Geometry is shown as WKB hex (a compact binary format). Secret-like URL query
-values are redacted in this documentation example.
+{_QUICK_START_SQL}
 
-### `polygons`
+## Contents
 
-{_example_json(example_values.get("polygon"))}
+{_config_table(statistics)}
 
-### `images`
+By provider. A link joins one polygon to one image: an image shared by several polygons is
+one row in `images` and one link per polygon.
 
-{_example_json(example_values.get("image"))}
+{_provider_table(assets)}
 
-### `polygon_images`
+A Commons `Category:` tag links the polygon to every file directly in that category, not to
+one chosen image:
 
-{_example_json(example_values.get("polygon_image"))}
+{_relation_table(assets)}
 
-## Code and metrics
+Polygons per OSM tag (a polygon can carry several):
 
-The pipeline is maintained in the
-[OSM Polygon Image Tag GitHub repository](https://github.com/NoeFlandre/osm-polygon-image-tag).
+{_tag_table(statistics)}
 
-The [Trackio metrics Space](https://huggingface.co/spaces/NoeFlandre/osm-polygon-image-tag-trackio)
-shows the current row counts, image-URL coverage, duplicate removal, and map
-summary. It stores one data-derived snapshot for each published update.
+{_polygon_summary(statistics)}
 
-This snapshot is versioned as [GitHub release v0.1.1](https://github.com/NoeFlandre/osm-polygon-image-tag/releases/tag/v0.1.1).
+{_area_table(statistics)}
 
-## Source, license, and citation
+## Fields
 
-The source extracts come from Geofabrik's OpenStreetMap extracts. OpenStreetMap
-geometry, tags, and feature metadata are available under the Open Database License
-(ODbL). Attribution: © OpenStreetMap contributors.
+{_fields()}
 
-Image links are separate from the OSM data.
-The provider terms and image license are separate from ODbL.
-When available, the `images` row records this information in `license_id`
-and `license_url`. A URL is not permission to copy, redistribute, or use the image.
-Check the provider and the original image page before using an image.
-This dataset does not download or relicense image files.
+## Lookup status
 
-If you use this dataset, cite **Noé Flandre, OSM Polygon Image Tag, version
-0.1.0**. The machine-readable citation is in the [dataset's
-`citation.cff`](citation.cff) and the [project's `citation.cff`](https://github.com/NoeFlandre/osm-polygon-image-tag/blob/main/citation.cff).
+Every reference is kept, also when no image was found. `status` says what happened:
 
-## Limitations
+{_status_table(assets)}
 
-An image reference or URL can be stale, inaccessible, provider-specific, or
-unrelated to the mapped feature. A URL is not a guarantee that an image can be
-downloaded today. Inclusion does not establish copyright, license, safety, or
-that the image depicts the feature. A Wikimedia Commons category can contain
-many unrelated files; those rows are marked `category_membership`. The pipeline
-does not download image bodies.
+## Files
 
-Statistics in this card are generated only from finalized, size-checked public
-GeoParquet files. (See the generated statistics file for exact counts.)
-The map uses Natural Earth 1:110m landmass data (public domain) for context.
+```
+public/polygons.parquet             polygons (GeoParquet)
+public/images.parquet               images
+public/polygon_images.parquet       polygon-image links
+public/public-manifest.json         row counts and SHA-256 of the public files
+statistics/dataset-statistics.json  every number in this card
+citation.cff                        citation
+```
+
+## Methodology
+
+{_methodology(statistics)}
+
+## License
+
+* OpenStreetMap data (polygons, geometry, tags): [ODbL 1.0]({_ODBL_URL}),
+  © OpenStreetMap contributors.
+* Images are not part of this dataset and keep their own licenses. `license_id`,
+  `license_url` and `author` record what the provider states
+  ({_count(assets.get("licensed_assets", 0))} images have a license). A URL is not
+  permission to use an image: check the provider page first.
+* An image may be outdated, gone, or not show the polygon, above all through a Commons
+  category.
+
+## Citation
+
+See [`citation.cff`](citation.cff).
 """
     return text.encode("utf-8")

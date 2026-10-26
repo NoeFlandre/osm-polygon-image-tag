@@ -1158,6 +1158,10 @@ def test_public_dataset_keeps_latest_object_and_unique_images_with_links(tmp_pat
         "category_membership": 1,
         "direct_reference": 1,
     }
+    assert statistics["provider_direct_urls"] == {"image": 1}
+    assert statistics["link_provider_counts"] == {"image": 2}
+    assert statistics["usable_link_provider_counts"] == {"image": 2}
+    assert statistics["polygons_with_direct_url"] == 2
 
     default_statistics = public_asset_statistics(
         result.image_path,

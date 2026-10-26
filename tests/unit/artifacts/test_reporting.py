@@ -11,6 +11,7 @@ from osm_polygon_image_tag.artifacts.asset_statistics import asset_statistics
 from osm_polygon_image_tag.artifacts.dataset_card import dataset_card
 from osm_polygon_image_tag.artifacts.manifest_inventory import verified_manifests
 from osm_polygon_image_tag.artifacts.reporting import generate_metadata
+from osm_polygon_image_tag.artifacts.statistics import _area_quantiles
 from osm_polygon_image_tag.artifacts.storage import write_geoparquet
 from osm_polygon_image_tag.assets.manifest import (
     ASSET_MANIFEST_SCHEMA_VERSION,
@@ -58,10 +59,10 @@ def test_empty_metadata_is_deterministic_and_factual(tmp_path: Path) -> None:
         "panoramax": 0,
         "wikimedia_commons": 0,
     }
-    assert b"Open Database License" in first_card
-    assert b"does not establish copyright" in first_card
-    assert b"finalized, size-checked public" in first_card
-    assert b"cryptographically verified" not in first_card
+    assert b"[ODbL 1.0](https://opendatacommons.org/licenses/odbl/1-0/)" in first_card
+    assert b"A URL is not\n  permission to use an image" in first_card
+    assert b"Every number in this card is computed from the published files." in first_card
+    assert b"**0 images with a direct URL, linked to 0 of 0 OpenStreetMap polygons" in first_card
     assert statistics["assets"] == {
         "asset_schema_versions": {},
         "cache_hits": 0,
@@ -76,6 +77,7 @@ def test_empty_metadata_is_deterministic_and_factual(tmp_path: Path) -> None:
             "direct_reference": 0,
         },
         "licensed_assets": 0,
+        "link_provider_counts": {},
         "network_resolutions": 0,
         "orphan_rows": 0,
         "output_bytes": (
@@ -84,7 +86,9 @@ def test_empty_metadata_is_deterministic_and_factual(tmp_path: Path) -> None:
         ),
         "page_urls": 0,
         "pending_retries": 0,
+        "polygons_with_direct_url": 0,
         "provider_counts": {},
+        "provider_direct_urls": {},
         "relationship_rows": 0,
         "resolver_contract_versions": {},
         "rows": 0,
@@ -92,6 +96,7 @@ def test_empty_metadata_is_deterministic_and_factual(tmp_path: Path) -> None:
         "status_counts": {},
         "stable_direct_urls": 0,
         "truncated_categories": 0,
+        "usable_link_provider_counts": {},
         "usable_relationship_rows": 0,
     }
     frontmatter = yaml.safe_load(first_card.split(b"---", maxsplit=2)[1])
@@ -110,22 +115,22 @@ def test_empty_metadata_is_deterministic_and_factual(tmp_path: Path) -> None:
             "data_files": [{"split": "train", "path": "public/polygon_images.parquet"}],
         },
     ]
-    assert b"category can contain" in first_card
-    assert b"same OSM type, ID, and version" in first_card
-    assert b"### How repeated rows are removed" in first_card
-    assert b"No finalized row is available in this snapshot." in first_card
-    assert b"## Source, license, and citation" in first_card
-    assert "Noé Flandre".encode() in first_card
-    assert b"citation.cff" in first_card
-    assert b"GitHub release v0.1.1" in first_card
-    assert b"The provider terms and image license are separate from ODbL" in first_card
-    assert b"license_id" in first_card
-    assert b"not permission to copy, redistribute, or use the image" in first_card
-    assert b"does not download or relicense image files" in first_card
-    assert b"A tag value is the original reference." in first_card
-    assert b"it is not always an image URL." in first_card
-    assert b"Use `polygons` for the original OSM tags" in first_card
-    assert b"one feature can have many images" in first_card
+    assert frontmatter["pretty_name"] == "OSM Polygon Image Tag"
+    assert frontmatter["size_categories"] == ["n<1K"]
+    for heading in (
+        "## Quick start",
+        "## Contents",
+        "## Fields",
+        "## Lookup status",
+        "## Files",
+        "## Methodology",
+        "## License",
+        "## Citation",
+    ):
+        assert f"\n{heading}\n".encode() in first_card
+    assert b"See [`citation.cff`](citation.cff)." in first_card
+    assert b"releases/tag/v0.1.1" in first_card
+    assert b"Polygon areas:" not in first_card
 
 
 def test_metadata_syncs_packaged_hero(tmp_path: Path) -> None:
@@ -136,7 +141,8 @@ def test_metadata_syncs_packaged_hero(tmp_path: Path) -> None:
     assert file_sha256(hero) == "e36f4c54fe8c71f7df2574852b082a294ec66d3077aec2086451acd0f6a3a0bb"
     body = result.card_path.read_bytes().split(b"---", maxsplit=2)[2]
     assert body.startswith(
-        b"\n![OSM Polygon Image Tag hero](assets/hero.png)\n\n# OSM Polygon Image Tag\n"
+        b"\n\n![OSM Polygon Image Tag: OpenStreetMap polygons and the images their tags "
+        b"point to](assets/hero.png)\n\n# OSM Polygon Image Tag\n"
     )
 
     hero.write_bytes(b"stale")
@@ -415,78 +421,101 @@ def test_metadata_derives_factual_asset_statistics(tmp_path: Path) -> None:
     assert statistics["assets"]["cache_hits"] == 3
     assert statistics["assets"]["network_resolutions"] == 4
     assert statistics["assets"]["orphan_rows"] == 2
-    assert b"Cached lookups reused: 3" in result.card_path.read_bytes()
-    assert b"New provider lookups: 4" in result.card_path.read_bytes()
-    assert b"Unique image records: 0" in result.card_path.read_bytes()
+    card = result.card_path.read_bytes()
+    assert b"made 4 new lookups and reused\n     3." in card
+    assert b"| `images` | provider image | 0 |" in card
 
 
-def test_dataset_card_formats_counts_and_explains_examples() -> None:
-    statistics: dict[str, Any] = {
-        "provider_counts": {"image": 2_555_555},
+def _card_statistics() -> dict[str, Any]:
+    return {
+        "provider_counts": {"image": 1_500, "wikimedia_commons": 2_000, "bubbleid": 3},
         "shards": 12_345,
         "rows": 2_555_555,
-        "duplicate_observations": 123_456,
+        "osm_types": {"relation": 55_555, "way": 2_500_000},
+        "timestamp_min": "2009-10-11T06:31:07+00:00",
+        "timestamp_max": "2026-07-25T15:16:27+00:00",
+        "area_m2": {"quantiles": {"p10": 34.9, "p50": 281.7, "p90": 13_927.6}},
+        "duplicate_observations_removed": 16_621,
         "assets": {
-            "rows": 2_555_555,
-            "relationship_rows": 2_555_555,
-            "direct_urls": 2_555_555,
+            "rows": 2_292_957,
+            "relationship_rows": 2_457_001,
+            "direct_urls": 2_147_980,
+            "provider_counts": {"image": 124_426, "streetside": 521},
+            "provider_direct_urls": {"image": 11_364, "streetside": 0},
+            "link_provider_counts": {"image": 133_449, "streetside": 612},
+            "usable_link_provider_counts": {"image": 12_168},
+            "status_counts": {"resolved": 2_147_980, "not_found": 74_088, "mystery": 1},
             "image_relation_counts": {
-                "category_membership": 555_555,
-                "direct_reference": 2_000_000,
+                "category_membership": 2_184_427,
+                "direct_reference": 117_237,
             },
-            "usable_relationship_rows": 2_555_555,
-            "stable_direct_urls": 1_999_999,
-            "page_urls": 2_400_000,
-            "cache_hits": 8_888_888,
-            "network_resolutions": 7_777_777,
+            "usable_relationship_rows": 2_301_664,
+            "polygons_with_direct_url": 212_696,
+            "licensed_assets": 2_090_062,
+            "cache_hits": 215_872,
+            "network_resolutions": 161_499,
         },
-        "geography": {
-            "h3_resolution": 3,
-            "cell_count": 123_456,
-            "min_cell_count": 1,
-            "max_cell_count": 2_555_555,
-            "input_shard_count": 1,
-        },
+        "geography": {"h3_resolution": 3, "cell_count": 3_951, "max_cell_count": 8_699},
     }
-    card = dataset_card(
-        statistics,
-        examples={
-            "polygon": {"osm_id": 42},
-            "image": {"image_url": "https://example.test/x?token=secret"},
-            "polygon_image": {"image_id": "img_42"},
-        },
-    ).decode()
 
-    assert "Published OSM features: 2,555,555" in card
-    assert "New provider lookups: 7,777,777" in card
-    assert "Image-reference links checked: 2,555,555" in card
-    assert "Links with a usable direct image URL: 2,555,555" in card
-    assert (
-        "**Among 2,555,555 links with a usable direct image URL:**\n\n"
-        "- Directly linked from an OSM tag:" in card
-    )
-    assert "The next two percentages use" not in card
-    assert (
-        "- Indirectly reached through a Wikimedia Commons category:"
-        " 555,555 (21.7%)\n\n- Unique images with a non-expiring image URL:" in card
-    )
-    assert (
-        "The map contains 2,555,555 published polygon rows from all 12,345 "
-        "processed source PBF files." in card
-    )
-    assert "These percentages count polygon-to-image links, not unique images." in card
-    assert "The source-tag counts below are counts of polygons carrying each tag, not image" in card
-    assert "Unique images with a usable direct image URL: 2,555,555" in card
-    assert "Directly linked from an OSM tag: 2,000,000 (78.3%)" in card
-    assert "Indirectly reached through a Wikimedia Commons category: 555,555 (21.7%)" in card
-    assert "one row per OSM type and ID" in card
-    assert "We keep one copy" in card
-    assert '"osm_id": 42' in card
-    assert '"image_url": "https://example.test/x?token=[redacted]"' in card
-    assert "token=secret" not in card
 
-    single_source_card = dataset_card({**statistics, "shards": 1}).decode()
+def test_dataset_card_renders_every_number_from_statistics() -> None:
+    card = dataset_card(_card_statistics()).decode()
+
     assert (
-        "The map contains 2,555,555 published polygon rows from the 1 processed "
-        "source PBF file." in single_source_card
+        "**2,147,980 images with a direct URL, linked to 212,696 of 2,555,555 "
+        "OpenStreetMap polygons in 12,345 regions.**" in card
     )
+    assert "3,951 cells, up to 8,699 polygons in one cell." in card
+    assert "| `polygon_images` | polygon-image link | 2,457,001 |" in card
+    assert "| image | `image` (any other URL) | 133,449 | 12,168 | 124,426 | 11,364 |" in card
+    assert "| streetside | `bubbleid` | 612 | 0 | 521 | 0 |" in card
+    assert "| **total** |  | 2,457,001 | 2,301,664 | 2,292,957 | 2,147,980 |" in card
+    assert card.index("| image |") < card.index("| streetside |")
+    assert "| `category_membership` | A file in the Commons category the tag names |" in card
+    assert "2,184,427 (94.9%) |" in card
+    assert "117,237 (5.1%) |" in card
+    assert "| `wikimedia_commons` | 2,000 |\n| `image` | 1,500 |\n| `bubbleid` | 3 |" in card
+    assert "2,500,000 ways and 55,555 multipolygon relations." in card
+    assert "edited between 2009-10-11 and 2026-07-25." in card
+    assert "| 10% | Median | 90% |" in card
+    assert "| 35 m² | 282 m² | 1.4 ha |" in card
+    assert "| `resolved` | Direct image URL found | 2,147,980 |" in card
+    assert "| `mystery` |  | 1 |" in card
+    assert "16,621 polygon rows" in card
+    assert "made 161,499 new lookups" in card
+    assert "(2,090,062 images have a license)" in card
+    frontmatter = yaml.safe_load(card.split("---", maxsplit=2)[1])
+    assert frontmatter["size_categories"] == ["1M<n<10M"]
+
+
+def test_dataset_card_handles_a_single_region() -> None:
+    card = dataset_card({**_card_statistics(), "shards": 1}).decode()
+
+    assert "OpenStreetMap polygons in 1 region.**" in card
+    assert "from 1 regional" in card
+
+
+def test_area_quantiles_use_nearest_rank() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.execute("CREATE TABLE observations (area_m2 REAL)")
+    connection.executemany(
+        "INSERT INTO observations VALUES (?)", [(float(value),) for value in range(1, 11)]
+    )
+
+    assert _area_quantiles(connection, 10) == {
+        "p10": 1.0,
+        "p25": 3.0,
+        "p50": 5.0,
+        "p75": 8.0,
+        "p90": 9.0,
+    }
+    assert _area_quantiles(connection, 0) == {}
+
+
+def test_dataset_card_area_units() -> None:
+    statistics = _card_statistics()
+    statistics["area_m2"] = {"quantiles": {"p25": 9_999.0, "p75": 2_500_000.0}}
+    card = dataset_card(statistics).decode()
+
+    assert "| 9,999 m² | 2.5 km² |" in card

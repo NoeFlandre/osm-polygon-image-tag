@@ -1,8 +1,5 @@
-from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-
-import pyarrow.parquet as pq
 
 from osm_polygon_image_tag.artifacts.asset_inventory import verified_asset_manifests
 from osm_polygon_image_tag.artifacts.asset_statistics import public_asset_statistics
@@ -31,17 +28,6 @@ class MetadataResult:
             "statistics_path": str(self.statistics_path),
             "card_path": str(self.card_path),
         }
-
-
-def _first_row(shards: Sequence[tuple[object, Path]]) -> dict[str, object] | None:
-    """Read one deterministic example row from the first non-empty shard."""
-    for _manifest, output in shards:
-        parquet = pq.ParquetFile(output)
-        for batch in parquet.iter_batches(batch_size=1):
-            rows = batch.to_pylist()
-            if rows:
-                return dict(rows[0])
-    return None
 
 
 def _atomic_write(path: Path, content: bytes) -> None:
@@ -115,11 +101,6 @@ def generate_metadata(
         progress=emit,
     )
     statistics["geography"] = map_result.statistics.to_dict()
-    examples = {
-        "polygon": _first_row(public_manifests),
-        "image": _first_row([(None, public.image_path)]),
-        "polygon_image": _first_row([(None, public.link_path)]),
-    }
     _sync_hero(data_root)
     _sync_citation(data_root)
     statistics_path = data_root / "statistics" / "dataset-statistics.json"
@@ -127,7 +108,7 @@ def generate_metadata(
     serialized = canonical_json_bytes(statistics, newline=True)
     emit({"event": "metadata_write_started"})
     _atomic_write(statistics_path, serialized)
-    _atomic_write(card_path, dataset_card(statistics, examples=examples))
+    _atomic_write(card_path, dataset_card(statistics))
     emit(
         {
             "event": "metadata_write_completed",

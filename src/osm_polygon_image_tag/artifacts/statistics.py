@@ -43,6 +43,7 @@ def dataset_statistics(
             )
             """
         ).fetchone()[0]
+        area_quantiles = _area_quantiles(connection, rows)
         provider_counts = _provider_counts(connection)
         combinations = _provider_combinations(connection)
         osm_types = _pairs(connection, "osm_type")
@@ -60,11 +61,34 @@ def dataset_statistics(
         "provider_combinations": combinations,
         "timestamp_min": timestamp[0],
         "timestamp_max": timestamp[1],
-        "area_m2": {"sum": area[0], "min": area[1], "max": area[2], "mean": area[3]},
+        "area_m2": {
+            "sum": area[0],
+            "min": area[1],
+            "max": area[2],
+            "mean": area[3],
+            "quantiles": area_quantiles,
+        },
         "rejections": dict(sorted(rejections.items())),
         "duplicate_observations": int(duplicate),
         "shard_digests": _manifest_digests(manifests),
     }
+
+
+AREA_QUANTILES = (10, 25, 50, 75, 90)
+
+
+def _area_quantiles(connection: sqlite3.Connection, rows: int) -> dict[str, float]:
+    """Nearest-rank area percentiles, keyed ``p10`` to ``p90``."""
+    if rows == 0:
+        return {}
+    quantiles: dict[str, float] = {}
+    for percent in AREA_QUANTILES:
+        offset = max(0, -(-percent * rows // 100) - 1)
+        value = connection.execute(
+            "SELECT area_m2 FROM observations ORDER BY area_m2 LIMIT 1 OFFSET ?", (offset,)
+        ).fetchone()[0]
+        quantiles[f"p{percent}"] = float(value)
+    return quantiles
 
 
 def _rejection_counts(manifests: list[tuple[Manifest, Path]]) -> Counter[str]:
